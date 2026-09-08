@@ -1,0 +1,829 @@
+<template>
+  <div class="contract-templates">
+    <el-card>
+      <template #header>
+        <div class="card-header">
+          <span>合同模板管理</span>
+          <el-button type="primary" @click="handleAddTemplate">
+            <el-icon><Plus /></el-icon>
+            新增模板
+          </el-button>
+        </div>
+      </template>
+      <el-tabs v-model="activeTab" @tab-change="handleTabChange">
+        <el-tab-pane label="系统模板" name="system" />
+        <el-tab-pane label="个人模板" name="personal" />
+      </el-tabs>
+      <el-table :data="filteredTemplates" style="width: 100%">
+        <el-table-column prop="name" label="模板名称" width="200" />
+        <el-table-column prop="category" label="分类" width="150">
+          <template #default="scope">
+            <el-tag v-if="scope.row.category === 'decoration'">装修施工</el-tag>
+            <el-tag v-else-if="scope.row.category === 'design'" type="success">设计合同</el-tag>
+            <el-tag v-else-if="scope.row.category === 'entrust'" type="warning">委托代理</el-tag>
+            <el-tag v-else type="info">{{ scope.row.category }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="默认" width="80">
+          <template #default="scope">
+            <el-tag v-if="scope.row.is_default" type="success">是</el-tag>
+            <span v-else>否</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="scope">
+            <el-tag :type="scope.row.template_type === 'system' ? 'warning' : 'info'">
+              {{ scope.row.template_type === 'system' ? '系统' : '个人' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="280">
+          <template #default="scope">
+            <template v-if="scope.row.template_type === 'system' && !isAdmin">
+              <el-tag type="warning">系统模板无权限</el-tag>
+            </template>
+            <template v-else>
+              <el-button size="small" type="primary" @click="handleEdit(scope.row)">编辑</el-button>
+              <el-button size="small" type="success" @click="handleEditFields(scope.row)">变量</el-button>
+              <el-button type="danger" size="small" @click="handleDelete(scope.row.id)">删除</el-button>
+            </template>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="showAddDialog" :title="isEdit ? '编辑模板' : '新增模板'" width="1200px">
+      <div class="template-edit-layout">
+        <div class="template-form">
+          <el-form :model="form" label-width="100px">
+            <el-form-item label="模板名称">
+              <el-input v-model="form.name" placeholder="如：标准装修施工合同" />
+            </el-form-item>
+            <el-form-item label="模板分类">
+              <el-select v-model="form.category" style="width: 100%">
+                <el-option label="装修施工" value="decoration" />
+                <el-option label="设计合同" value="design" />
+                <el-option label="委托代理" value="entrust" />
+                <el-option label="其他" value="other" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="设为默认">
+              <el-switch v-model="form.is_default" />
+            </el-form-item>
+            <el-form-item label="模板类型">
+              <div style="display: flex; align-items: center; gap: 20px;">
+                <label v-if="isAdmin">
+                  <input type="radio" value="system" v-model="form.template_type" />
+                  系统模板
+                </label>
+                <label>
+                  <input type="radio" value="personal" v-model="form.template_type" />
+                  个人模板
+                </label>
+                <span v-if="!isAdmin" style="color: #999; font-size: 12px;">（普通用户只能创建个人模板）</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="插入变量">
+              <div class="variable-panel">
+                <el-button size="small" @click="insertVariable('{{contract_no}}')">编号</el-button>
+                <el-button size="small" @click="insertVariable('{{customer_name}}')">甲方</el-button>
+                <el-button size="small" @click="insertVariable('{{customer_phone}}')">电话</el-button>
+                <el-button size="small" @click="insertVariable('{{id_card}}')">身份证</el-button>
+                <el-button size="small" @click="insertVariable('{{engineering_address}}')">地址</el-button>
+                <el-button size="small" @click="insertVariable('{{total_amount}}')">金额</el-button>
+                <el-button size="small" @click="insertVariable('{{area}}')">面积</el-button>
+                <el-button size="small" @click="insertVariable('{{party_b_name}}')">乙方</el-button>
+                <el-button size="small" @click="insertVariable('{{sign_date}}')">签订日</el-button>
+                <el-button size="small" @click="insertVariable('{{start_date}}')">开工日</el-button>
+                <el-button size="small" @click="insertVariable('{{end_date}}')">竣工日</el-button>
+                <el-button size="small" @click="insertVariable('{{customer_address}}')">详细地址</el-button>
+                <el-button size="small" @click="insertVariable('{{design_fee}}')">设计费</el-button>
+                <el-button size="small" @click="insertVariable('{{manager_fee}}')">管理费</el-button>
+                <el-button size="small" @click="insertVariable('{{tax_amount}}')">税金</el-button>
+                <el-button size="small" @click="insertVariable('{{guarantee_period}}')">保修期</el-button>
+              </div>
+            </el-form-item>
+          </el-form>
+        </div>
+        <div class="template-editor-area">
+          <div ref="quillEditorRef" class="quill-editor-container"></div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="warning" @click="handleExportWord">导出Word</el-button>
+        <el-button type="primary" @click="handleExportPDF">导出PDF</el-button>
+        <el-button @click="showExportSettings = true">导出设置</el-button>
+        <el-button @click="closeDialog">取消</el-button>
+        <el-button type="primary" @click="handleSave">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showFieldsDialog" title="管理变量" width="600px">
+      <el-form :model="fieldsForm" label-width="100px">
+        <el-form-item label="变量列表">
+          <el-input
+            v-model="fieldsForm.fields"
+            type="textarea"
+            :rows="10"
+            placeholder="请输入变量列表，每行一个变量，例如：
+customer_name=甲方名称
+total_amount=合同金额
+sign_date=签订日期"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFieldsDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveFields">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showExportSettings" title="导出设置" width="500px">
+      <el-form :model="exportSettings" label-width="80px">
+        <el-form-item label="纸张大小">
+          <el-select v-model="exportSettings.pageSize" style="width: 100%;">
+            <el-option value="A4" label="A4" />
+            <el-option value="A5" label="A5" />
+            <el-option value="16k" label="16K" />
+            <el-option value="letter" label="Letter" />
+            <el-option value="legal" label="Legal" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="方向">
+          <el-radio-group v-model="exportSettings.orientation">
+            <el-radio value="portrait">纵向</el-radio>
+            <el-radio value="landscape">横向</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="页边距">
+          <div style="display: flex; gap: 10px;">
+            <el-input-number v-model="exportSettings.marginTop" :min="0" :max="50" controls-position="right" style="flex: 1;" />
+            <el-input-number v-model="exportSettings.marginBottom" :min="0" :max="50" controls-position="right" style="flex: 1;" />
+            <el-input-number v-model="exportSettings.marginLeft" :min="0" :max="50" controls-position="right" style="flex: 1;" />
+            <el-input-number v-model="exportSettings.marginRight" :min="0" :max="50" controls-position="right" style="flex: 1;" />
+          </div>
+        </el-form-item>
+        <el-form-item label="正文字体">
+          <el-input-number v-model="exportSettings.fontSize" :min="10" :max="24" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="行间距">
+          <el-select v-model="exportSettings.lineHeight" style="width: 100%;">
+            <el-option value="1.0" label="1.0" />
+            <el-option value="1.5" label="1.5" />
+            <el-option value="1.8" label="1.8" />
+            <el-option value="2.0" label="2.0" />
+            <el-option value="2.5" label="2.5" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showExportSettings = false">取消</el-button>
+        <el-button type="primary" @click="showExportSettings = false">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showTableDialog" title="插入表格" width="400px">
+      <el-form label-width="80px">
+        <el-form-item label="行数">
+          <el-input-number v-model="tableRows" :min="1" :max="20" />
+        </el-form-item>
+        <el-form-item label="列数">
+          <el-input-number v-model="tableCols" :min="1" :max="10" />
+        </el-form-item>
+        <el-form-item label="隐藏表格">
+          <el-switch v-model="tableHidden" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTableDialog = false">取消</el-button>
+        <el-button type="primary" @click="confirmInsertTable">插入</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, onMounted, computed, onBeforeUnmount, watch } from 'vue'
+import axios from 'axios'
+import { ElMessage, ElDivider, ElColorPicker, ElPopover } from 'element-plus'
+
+const templateList = ref([])
+const showAddDialog = ref(false)
+const showFieldsDialog = ref(false)
+const currentTemplateId = ref(null)
+const currentUser = ref(null)
+const isAdmin = ref(false)
+
+// 从 localStorage 获取当前用户信息
+const getCurrentUser = () => {
+  try {
+    const userStr = localStorage.getItem('user')
+    if (userStr) {
+      currentUser.value = JSON.parse(userStr)
+      // 检查是否是管理员（通过 role_code 判断）
+      isAdmin.value = currentUser.value.role_code === 'admin' || currentUser.value.role === 'admin'
+    }
+  } catch (e) {
+    console.error('获取用户信息失败:', e)
+  }
+}
+const fieldsForm = reactive({
+  fields: ''
+})
+const editorMode = ref('default')
+const showExportSettings = ref(false)
+const showTableDialog = ref(false)
+const tableRows = ref(3)
+const tableCols = ref(3)
+const tableHidden = ref(false)
+const quillEditorRef = ref(null)
+let wangEditorInstance = null
+const exportSettings = reactive({
+  pageSize: 'A4',
+  orientation: 'portrait',
+  marginTop: 20,
+  marginBottom: 20,
+  marginLeft: 20,
+  marginRight: 20,
+  fontSize: 14,
+  lineHeight: 1.8
+})
+let isInitializingEditor = false
+
+const initEditor = () => {
+  if (!window.Quill) {
+    console.error('Quill 未加载，等待...')
+    setTimeout(initEditor, 100)
+    return
+  }
+  
+  const initEditor = () => {
+  const container = quillEditorRef.value
+  if (!container) {
+    console.error('Quill 容器未找到')
+    return
+  }
+  
+  // 如果编辑器已存在，先销毁
+  if (wangEditorInstance) {
+    container.innerHTML = ''
+    wangEditorInstance = null
+  }
+  
+  // 创建 Quill 编辑器
+  wangEditorInstance = new window.Quill(container, {
+    theme: 'snow',
+    modules: {
+      toolbar: [
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ 'header': [1, 2, 3, false] }],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        [{ 'indent': '-1'}, { 'indent': '+1' }],
+        [{ 'align': [] }],
+        [{ 'color': [] }, { 'background': [] }],
+        ['blockquote', 'code-block'],
+        ['clean']
+      ]
+    },
+    placeholder: '请输入模板内容...',
+    readOnly: false
+  })
+  
+  // 设置初始内容
+  if (form.content) {
+    console.log('初始化时设置内容, 长度:', form.content.length)
+    wangEditorInstance.clipboard.dangerouslyPasteHTML(0, form.content)
+  }
+  
+  console.log('Quill 编辑器初始化完成, 内容长度:', form.content ? form.content.length : 0)
+}
+
+const destroyEditor = () => {
+  if (wangEditorInstance) {
+    wangEditorInstance = null
+  }
+  // 清空容器以确保重新初始化时干净
+  if (quillEditorRef.value) {
+    quillEditorRef.value.innerHTML = ''
+  }
+}
+
+const isEdit = ref(false)
+const activeTab = ref('system')
+const fontFamily = ref('SimSun')
+const fontSize = ref('16px')
+const fontColor = ref('#000000')
+const bgColor = ref('#ffffff')
+
+const filteredTemplates = computed(() => {
+  return templateList.value.filter(t => t.template_type === activeTab.value)
+})
+
+const handleTabChange = () => {
+}
+
+
+watch(showAddDialog, async (val) => {
+  if (val) {
+    // 等待对话框动画完成
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    await nextTick()
+    
+    console.log('检查容器元素:', quillEditorRef.value)
+    
+    // 等待容器渲染，最多等待3秒
+    let containerReady = false
+    for (let i = 0; i < 30; i++) {
+      if (quillEditorRef.value) {
+        containerReady = true
+        console.log('容器已找到')
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    
+    if (!containerReady) {
+      console.error('容器等待超时，元素未找到')
+      return
+    }
+    
+    // 等待 Quill 加载，最多等待5秒
+    let quillReady = false
+    for (let i = 0; i < 50; i++) {
+      if (window.Quill) {
+        quillReady = true
+        console.log('Quill 已加载')
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    
+    if (!quillReady) {
+      console.error('Quill 加载超时')
+      return
+    }
+    
+    // 初始化编辑器（内部已设置内容）
+    initEditor()
+  } else {
+    destroyEditor()
+    isEdit.value = false
+    form.id = null
+    form.name = ''
+    form.category = 'decoration'
+    form.content = ''
+    form.is_default = false
+    form.template_type = 'personal'
+    form.template_fields = ''
+  }
+})
+
+const form = reactive({
+  id: null,
+  name: '',
+  category: 'decoration',
+  content: '',
+  is_default: false,
+  template_type: 'personal',
+  template_fields: ''
+})
+
+const cleanHtmlForWangEditor = (html) => {
+  if (!html) return '<p></p>'
+  
+  let cleaned = html
+  
+  cleaned = cleaned.replace(/color:\s*rgb\(0,\s*0,\s*0\)/gi, '')
+  cleaned = cleaned.replace(/font-family:\s*["']?宋体["']?/gi, '')
+  cleaned = cleaned.replace(/font-family:\s*["']?SimSun["']?/gi, '')
+  
+  cleaned = cleaned.replace(/<span[^>]*>\s*<\/span>/gi, '')
+  cleaned = cleaned.replace(/<span[^>]*>\s*<br\s*\/?>\s*<\/span>/gi, '<br>')
+  
+  cleaned = cleaned.replace(/<p[^>]*>\s*<\/p>/gi, '<p><br></p>')
+  
+  if (cleaned.includes('contenteditable')) {
+    cleaned = cleaned.replace(/contenteditable="[^"]*"/gi, '')
+    cleaned = cleaned.replace(/data-slate-[^="]+="[^"]*"/gi, '')
+  }
+  
+  if (!cleaned || cleaned.trim() === '') {
+    return '<p><br></p>'
+  }
+  
+  return cleaned
+}
+
+const stripHtml = (html) => {
+  if (!html) return ''
+  return html.replace(/<[^>]+>/g, '')
+}
+
+const loadData = async () => {
+  try {
+    const res = await axios.get('/api/contract-templates')
+    templateList.value = res.data
+  } catch (error) {
+    console.error('加载失败:', error)
+  }
+}
+
+const handleAddTemplate = () => {
+  // 重置表单
+  isEdit.value = false
+  form.id = null
+  form.name = ''
+  form.category = 'decoration'
+  form.content = ''
+  form.is_default = false
+  // 根据当前标签页和用户角色设置模板类型
+  if (activeTab.value === 'system' && isAdmin.value) {
+    form.template_type = 'system'
+  } else {
+    form.template_type = 'personal'
+  }
+  form.template_fields = ''
+  showAddDialog.value = true
+}
+
+const handleEdit = (row) => {
+  isEdit.value = true
+  form.id = row.id
+  form.name = row.name
+  form.category = row.category
+  form.content = row.content || ''
+  form.is_default = row.is_default === 1
+  form.template_type = row.template_type || 'personal'
+  form.template_fields = row.template_fields || ''
+  showAddDialog.value = true
+}
+
+const handleEditFields = (row) => {
+  currentTemplateId.value = row.id
+  fieldsForm.fields = row.template_fields || ''
+  showFieldsDialog.value = true
+}
+
+const saveFields = async () => {
+  try {
+    await axios.put(`/api/contract-templates/${currentTemplateId.value}`, {
+      template_fields: fieldsForm.fields
+    }, {
+      headers: { 'x-user-id': currentUser.value?.id }
+    })
+    ElMessage.success('保存成功')
+    showFieldsDialog.value = false
+    loadData()
+  } catch (error) {
+    ElMessage.error('操作失败')
+  }
+}
+
+const handleSave = async () => {
+  // 使用 Quill 获取内容
+  if (wangEditorInstance) {
+    form.content = wangEditorInstance.root.innerHTML
+  }
+  
+  if (!form.name) {
+    ElMessage.warning('请输入模板名称')
+    return
+  }
+  
+  try {
+    console.log('Saving template_type:', form.template_type)
+    console.log('Full form:', JSON.stringify(form))
+    
+    const saveData = {
+      name: form.name,
+      category: form.category,
+      content: form.content,
+      is_default: form.is_default ? 1 : 0,
+      template_type: form.template_type,
+      template_fields: form.template_fields || ''
+    }
+    console.log('Save data:', JSON.stringify(saveData))
+    
+    if (isEdit.value) {
+      await axios.put(`/api/contract-templates/${form.id}`, saveData, {
+        headers: { 'x-user-id': currentUser.value?.id }
+      })
+      ElMessage.success('更新成功')
+    } else {
+      await axios.post('/api/contract-templates', saveData, {
+        headers: { 'x-user-id': currentUser.value?.id }
+      })
+      ElMessage.success('添加成功')
+    }
+    closeDialog()
+    loadData()
+  } catch (error) {
+    ElMessage.error('操作失败')
+  }
+}
+
+const handleDelete = async (id) => {
+  try {
+    await axios.delete(`/api/contract-templates/${id}`, {
+      headers: { 'x-user-id': currentUser.value?.id }
+    })
+    ElMessage.success('删除成功')
+    loadData()
+  } catch (error) {
+    ElMessage.error('删除失败')
+  }
+}
+
+const closeDialog = () => {
+  showAddDialog.value = false
+  isEdit.value = false
+  form.id = null
+  form.name = ''
+  form.category = 'decoration'
+  form.content = ''
+  form.is_default = false
+  form.template_type = 'personal'
+  setTimeout(() => {
+    const editor = document.getElementById('template-editor')
+    if (editor) {
+      editor.innerHTML = ''
+    }
+  }, 100)
+}
+
+const handleExportWord = () => {
+  // 使用 WangEditor 获取内容
+  const rawContent = wangEditorInstance ? wangEditorInstance.root.innerHTML : form.content
+  
+  const pageSize = exportSettings.pageSize
+  const isLandscape = exportSettings.orientation === 'landscape'
+  let width, height
+  switch(pageSize) {
+    case 'A4': width = '210mm'; height = '297mm'; break
+    case 'A5': width = '148mm'; height = '210mm'; break
+    case '16k': width = '195mm'; height = '270mm'; break
+    case 'letter': width = '215.9mm'; height = '279.4mm'; break
+    case 'legal': width = '215.9mm'; height = '355.6mm'; break
+    default: width = '210mm'; height = '297mm'
+  }
+  
+  const mt = exportSettings.marginTop + 'mm'
+  const mb = exportSettings.marginBottom + 'mm'
+  const ml = exportSettings.marginLeft + 'mm'
+  const mr = exportSettings.marginRight + 'mm'
+  
+  const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>Export HTML to Word Document with JavaScript</title>
+<style>
+@page {
+  size: ${isLandscape ? 'landscape' : 'portrait'};
+  margin: ${mt} ${mr} ${mb} ${ml};
+  mso-page-orientation: ${isLandscape ? 'landscape' : 'portrait'};
+}
+body {
+  font-family: Microsoft YaHei, SimSun, serif;
+  font-size: ${exportSettings.fontSize}px;
+  line-height: ${exportSettings.lineHeight};
+  margin: 0;
+  padding: ${mt} ${ml};
+}
+</style>
+</head>
+<body>
+${rawContent}
+</body>
+</html>`
+  
+  const blob = new Blob([html], { type: 'application/msword' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${form.name || '合同模板'}.doc`
+  link.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('Word导出成功')
+}
+
+const handleExportPDF = async () => {
+  // 使用 WangEditor 获取内容
+  const rawContent = wangEditorInstance ? wangEditorInstance.root.innerHTML : form.content
+  
+  const pageSize = exportSettings.pageSize
+  const isLandscape = exportSettings.orientation === 'landscape'
+  let format
+  switch(pageSize) {
+    case 'A4': format = 'a4'; break
+    case 'A5': format = 'a5'; break
+    case '16k': format = [195, 270]; break
+    case 'letter': format = 'letter'; break
+    case 'legal': format = 'legal'; break
+    default: format = 'a4'
+  }
+  
+  const element = document.createElement('div')
+  element.innerHTML = `
+    <div style="font-family: Microsoft YaHei, SimSun, serif; font-size: ${exportSettings.fontSize}px; line-height: ${exportSettings.lineHeight}; padding: 0;">
+      ${rawContent.replace(/<p[^>]*data-w-e-type="insertBreak"[^>]*>/gi, '<div style="page-break-after: always;"></div>').replace(/<br>/gi, '')}
+    </div>
+  `
+  
+  const opt = {
+    margin: [exportSettings.marginTop, exportSettings.marginRight, exportSettings.marginBottom, exportSettings.marginLeft],
+    filename: `${form.name || '合同模板'}.pdf`,
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, pagebreak: { mode: ['css', 'legacy'], after: '.page-break' } },
+    jsPDF: { unit: 'mm', format: format, orientation: isLandscape ? 'landscape' : 'portrait' }
+  }
+  
+  try {
+    await window.html2pdf().set(opt).from(element).save()
+    ElMessage.success('PDF导出成功')
+  } catch (e) {
+    ElMessage.error('PDF导出失败: ' + e.message)
+  }
+}
+
+const execCommand = (command, value = null) => {
+  try {
+    const editor = document.getElementById('template-editor')
+    if (!editor) return
+    editor.focus()
+    document.execCommand(command, false, value)
+  } catch (e) {
+    console.error('Exec command error:', e)
+  }
+}
+
+const predefineColors = ['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#409EFF', '#67C23A', '#E6A23C', '#F56C6C']
+
+let savedSelection = null
+
+const saveSelection = () => {
+  const selection = window.getSelection()
+  if (selection && selection.rangeCount > 0) {
+    savedSelection = selection.getRangeAt(0).cloneRange()
+  }
+}
+
+const restoreSelection = () => {
+  if (savedSelection) {
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(savedSelection)
+  }
+}
+
+const handleFontChange = () => {
+  saveSelection()
+  setTimeout(() => {
+    restoreSelection()
+    execCommand('fontName', fontFamily.value)
+  }, 10)
+}
+
+const switchToDefaultEditor = () => {
+  const editor = document.getElementById('template-editor')
+  if (editor) {
+    editor.innerHTML = form.content || ''
+  }
+}
+
+const handleFontSizeChange = () => {
+  restoreSelection()
+  setTimeout(() => {
+    const editor = document.getElementById('template-editor')
+    if (editor) {
+      editor.focus()
+      document.execCommand('styleWithCSS', false, true)
+      document.execCommand('fontSize', false, '4')
+      const selection = window.getSelection()
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0)
+        const span = document.createElement('span')
+        span.style.fontSize = fontSize.value
+        range.surroundContents(span)
+        selection.removeAllRanges()
+      }
+    }
+  }, 10)
+}
+
+const handleFontColor = () => {
+  restoreSelection()
+  const editor = document.getElementById('template-editor')
+  if (editor) {
+    editor.focus()
+    document.execCommand('foreColor', false, fontColor.value)
+  }
+}
+
+const handleBgColor = () => {
+  restoreSelection()
+  const editor = document.getElementById('template-editor')
+  if (editor) {
+    editor.focus()
+    document.execCommand('backColor', false, bgColor.value)
+  }
+}
+
+const confirmInsertTable = () => {
+  let html = '<table '
+  if (tableHidden.value) {
+    html += 'data-hidden="true" style="display: none;"'
+  } else {
+    html += 'border="1" style="border-collapse: collapse; width: 100%; margin: 10px 0;"'
+  }
+  html += '>'
+  for (let r = 0; r < tableRows.value; r++) {
+    html += '<tr>'
+    for (let c = 0; c < tableCols.value; c++) {
+      html += r === 0 ? '<th style="padding: 8px; border: 1px solid #333; background: #f5f5f5;">单元格</th>' : '<td style="padding: 8px; border: 1px solid #333;"> </td>'
+    }
+    html += '</tr>'
+  }
+  html += '</table>'
+  
+  const editor = document.getElementById('template-editor')
+  if (editor) {
+    editor.focus()
+    document.execCommand('insertHTML', false, html)
+  }
+  showTableDialog.value = false
+}
+
+const handleInsertPageBreak = () => {
+  const editor = document.getElementById('template-editor')
+  if (editor) {
+    editor.focus()
+    document.execCommand('insertHTML', false, '<div style="page-break-after: always; border-top: 1px dashed #ccc; margin: 10px 0; position: relative;"><span style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #fff; padding: 0 10px; color: #999; font-size: 12px;">分页符</span></div>')
+  }
+}
+
+const updateToolbarState = () => {
+  try {
+    const selection = window.getSelection()
+    if (!selection || selection.rangeCount === 0) return
+    
+    const anchorNode = selection.anchorNode
+    if (!anchorNode) return
+    
+    let element = anchorNode.nodeType === 3 ? anchorNode.parentNode : anchorNode
+    const computedStyle = element ? window.getComputedStyle(element) : null
+    
+    if (computedStyle) {
+      fontFamily.value = computedStyle.fontFamily?.replace(/['"]/g, '') || 'SimSun'
+      fontSize.value = computedStyle.fontSize || '16px'
+    }
+  } catch (e) {
+    console.log('Update toolbar state error:', e)
+  }
+}
+
+const handleEditorInput = (e) => {
+  form.content = wangEditorInstance ? wangEditorInstance.root.innerHTML : e.target.innerHTML
+}
+
+const insertVariable = (variable) => {
+  // 使用 Quill 插入变量
+  if (wangEditorInstance) {
+    wangEditorInstance.clipboard.dangerouslyPasteHTML(`<span style="color: #409EFF; font-weight: bold;">${variable}</span>`)
+    form.content = wangEditorInstance.root.innerHTML
+  }
+}
+
+const handleFormatBlock = (tag) => {
+  saveSelection()
+  setTimeout(() => {
+    restoreSelection()
+    execCommand('formatBlock', tag)
+  }, 10)
+}
+
+onMounted(() => { getCurrentUser(); loadData() })
+</script>
+
+<style scoped>
+/* WangEditor 样式已通过 CDN 加载 */
+
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.preview-text { color: #666; font-size: 12px; }
+.template-edit-layout { display: flex; gap: 20px; }
+.template-edit-layout .template-form { width: 320px; flex-shrink: 0; position: sticky; top: 0; height: fit-content; }
+.template-edit-layout .template-editor-area { flex: 1; display: flex; flex-direction: column; min-width: 0; border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden; position: sticky; top: 0; }
+.template-editor-area .editor-toolbar { display: flex; gap: 5px; flex-wrap: wrap; padding: 10px; background: #f5f7fa; border-bottom: 1px solid #dcdfe6; align-items: center; position: sticky; top: 0; z-index: 100; }
+.template-editor-area .editor-toolbar .el-button { padding: 6px 10px; min-width: 30px; }
+.template-editor-area .editor-toolbar .el-select { }
+.template-editor-area .editor-content { flex: 1; min-height: 350px; padding: 15px; background: white; font-family: Microsoft YaHei, SimSun, sans-serif; font-size: 14px; line-height: 1.8; outline: none; overflow: auto; }
+.template-editor-area .editor-content:focus { border-color: #409EFF; }
+.toolbar-divider { width: 1px; height: 24px; background: #dcdfe6; margin: 0 5px; }
+.color-picker-area { padding: 10px; text-align: center; }
+.variable-panel { display: flex; flex-wrap: wrap; gap: 5px; }
+.variable-panel .el-button { margin-right: 0; margin-bottom: 5px; }
+.el-dialog__footer { position: sticky; bottom: 0; z-index: 1000; background: white; }
+.quill-editor-container { height: 400px; border: 1px solid #dcdfe6; }
+.ql-container { height: calc(100% - 42px); font-family: SimSun, Microsoft YaHei, sans-serif; font-size: 14px; }
+.ql-toolbar { border-bottom: 1px solid #dcdfe6; }
+</style>

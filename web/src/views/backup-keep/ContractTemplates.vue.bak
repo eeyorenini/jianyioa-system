@@ -1,0 +1,780 @@
+<template>
+  <div class="contract-templates">
+    <el-card>
+      <template #header>
+        <div class="card-header">
+          <span>合同模板管理</span>
+          <el-button type="primary" @click="openEditor(null)">新增模板</el-button>
+        </div>
+      </template>
+      
+      <el-tabs v-model="activeTab" @tab-change="loadData">
+        <el-tab-pane label="系统模板" name="system" />
+        <el-tab-pane label="个人模板" name="personal" />
+      </el-tabs>
+      
+      <el-table :data="filteredTemplates" style="width:100%">
+        <el-table-column prop="name" label="名称" />
+        <el-table-column prop="category" label="分类" />
+        <el-table-column label="操作" width="150">
+          <template #default="{row}">
+            <el-button size="small" type="primary" @click="openEditor(row)">编辑</el-button>
+            <el-button size="small" type="danger" @click="handleDelete(row.id)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 编辑对话框 -->
+    <el-dialog v-model="showDialog" :title="form.id?'编辑模板':'新增模板'" width="95%" top="3vh" destroy-on-close>
+      <div class="editor-wrapper">
+        <!-- 变量快捷栏 -->
+        <div class="var-bar">
+          <span class="var-label">插入变量：</span>
+          <el-tag 
+            v-for="v in allVariables" 
+            :key="v.name" 
+            class="var-item" 
+            type="success" 
+            effect="plain" 
+            @mousedown.prevent="insertVar(v)"
+            closable
+            @close="deleteCustomVar(v)"
+            style="cursor:pointer"
+          >
+            {{ v.label }}
+          </el-tag>
+          <el-button size="small" type="primary" plain @click="showAddVar = true">+ 添加</el-button>
+        </div>
+        
+        <!-- 自定义编辑器工具栏 -->
+        <div class="rich-editor-toolbar">
+          <button type="button" @click="execCmd('undo')" title="撤销">↩</button>
+          <button type="button" @click="execCmd('redo')" title="重做">↪</button>
+          <div class="toolbar-divider"></div>
+          
+          <select @change="execCmd('formatBlock', $event.target.value)" title="标题">
+            <option value="p">正文</option>
+            <option value="h1">标题1</option>
+            <option value="h2">标题2</option>
+            <option value="h3">标题3</option>
+            <option value="h4">标题4</option>
+          </select>
+          <div class="toolbar-divider"></div>
+          
+          <select @change="execCmd('fontName', $event.target.value)" title="字体">
+            <option value="微软雅黑">微软雅黑</option>
+            <option value="宋体">宋体</option>
+            <option value="黑体">黑体</option>
+            <option value="仿宋">仿宋</option>
+            <option value="Arial">Arial</option>
+          </select>
+          
+          <select @change="execCmd('fontSize', $event.target.value)" title="字号">
+            <option value="1">小</option>
+            <option value="3" selected>中</option>
+            <option value="5">大</option>
+            <option value="7">特大</option>
+          </select>
+          <div class="toolbar-divider"></div>
+          
+          <button type="button" @click="execCmd('bold')" title="加粗"><b>B</b></button>
+          <button type="button" @click="execCmd('italic')" title="斜体"><i>I</i></button>
+          <button type="button" @click="execCmd('underline')" title="下划线"><u>U</u></button>
+          <button type="button" @click="execCmd('strikeThrough')" title="删除线"><s>S</s></button>
+          <div class="toolbar-divider"></div>
+          
+          <select @change="execCmd('foreColor', $event.target.value)" title="文字颜色">
+            <option value="">颜色</option>
+            <option value="#000000">黑色</option>
+            <option value="#ff0000">红色</option>
+            <option value="#00aa00">绿色</option>
+            <option value="#0000ff">蓝色</option>
+            <option value="#ff6600">橙色</option>
+            <option value="#ffff00">黄色</option>
+          </select>
+          
+          <select @change="execCmd('hiliteColor', $event.target.value)" title="背景颜色">
+            <option value="">背景</option>
+            <option value="#ffcccc">红色</option>
+            <option value="#ccffcc">绿色</option>
+            <option value="#ccccff">紫色</option>
+            <option value="#ffffcc">黄色</option>
+            <option value="#ecf5ff">浅蓝</option>
+          </select>
+          <div class="toolbar-divider"></div>
+          
+          <button type="button" @click="execCmd('justifyLeft')" title="左对齐">⫷</button>
+          <button type="button" @click="execCmd('justifyCenter')" title="居中">≡</button>
+          <button type="button" @click="execCmd('justifyRight')" title="右对齐">⫸</button>
+          <div class="toolbar-divider"></div>
+          
+          <button type="button" @click="execCmd('insertUnorderedList')" title="无序列表">•</button>
+          <button type="button" @click="execCmd('insertOrderedList')" title="有序列表">1.</button>
+          <div class="toolbar-divider"></div>
+          
+          <button type="button" @click="insertLink" title="插入链接">🔗</button>
+          <button type="button" @click="doInsertTable" title="插入表格">▦</button>
+          <button type="button" @click="insertBreak" title="分页符">⏏</button>
+          <div class="toolbar-divider"></div>
+          <button type="button" @click="triggerImportWord" title="导入Word">📄Word</button>
+          <input type="file" ref="wordFileInput" accept=".docx" style="display:none" @change="handleImportWord" />
+        </div>
+        
+        <!-- A4编辑区 -->
+        <div class="a4-editor-wrapper">
+          <div class="a4-paper">
+            <div class="a4-paper-header">简逸装饰——{{ categoryMap[form.category] || '合同' }}</div>
+            <div ref="editorRef" class="a4-paper-content" contenteditable="true" @input="onInput" @paste="handlePaste" @click="saveSelection" @keyup="saveSelection" v-html="form.content"></div>
+            <div class="a4-paper-footer">
+              <span>内容输出完毕</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 表单 -->
+        <div class="form-row">
+          <el-form :model="form" inline>
+            <el-form-item label="名称"><el-input v-model="form.name" style="width:180px" /></el-form-item>
+            <el-form-item label="分类">
+              <el-select v-model="form.category" style="width:120px">
+                <el-option label="装修合同" value="decoration" />
+                <el-option label="设计合同" value="design" />
+                <el-option label="其他" value="other" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSave">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加自定义变量对话框 -->
+    <el-dialog v-model="showAddVar" title="添加自定义变量" width="400px">
+      <el-form :model="newVar" label-width="80px">
+        <el-form-item label="变量名称">
+          <el-input v-model="newVar.name" placeholder="如: custom_field" />
+        </el-form-item>
+        <el-form-item label="显示标签">
+          <el-input v-model="newVar.label" placeholder="如: 自定义字段" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddVar=false">取消</el-button>
+        <el-button type="primary" @click="addCustomVar">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- AI识别变量确认对话框 -->
+    <el-dialog v-model="showAIVarDialog" title="AI识别到以下变量" width="600px" destroy-on-close>
+      <div style="max-height:400px;overflow-y:auto;">
+        <p style="color:#666;margin-bottom:15px;">
+          <b>AI已从Word文档中识别到以下需要填写的字段：</b><br/>
+          <span style="font-size:12px;">请确认或修改变量名称，模板将自动把对应位置转换为可填写表单</span>
+        </p>
+        <el-form label-width="120px">
+          <el-form-item v-for="(v, idx) in aiVariables" :key="idx" :label="v.label">
+            <el-input v-model="v.name" placeholder="变量名(英文)" style="margin-bottom:5px;" />
+            <el-input v-model="v.label" placeholder="显示名称(中文)" />
+          </el-form-item>
+        </el-form>
+        <div v-if="aiVariables.length === 0" style="text-align:center;color:#999;">
+          未识别到明显变量，将直接导入内容
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="skipAIVariables">取消</el-button>
+        <el-button type="primary" @click="confirmAIVariables">生成智能模板</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
+import axios from 'axios'
+import mammoth from 'mammoth'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+const editorRef = ref(null)
+const wordFileInput = ref(null)
+const showAddVar = ref(false)
+const showDialog = ref(false)
+const showAIVarDialog = ref(false)
+const aiVariables = ref([])
+const aiExtractedContent = ref('')
+let savedRange = null
+
+const newVar = reactive({ name: '', label: '' })
+
+// 内置变量
+const builtInVariables = ref([
+  { name: 'contract_no', label: '合同编号' },
+  { name: 'customer_name', label: '客户姓名' },
+  { name: 'customer_phone', label: '客户电话' },
+  { name: 'id_card', label: '身份证号' },
+  { name: 'engineering_address', label: '施工地址' },
+  { name: 'customer_address', label: '客户地址' },
+  { name: 'project_name', label: '项目名称' },
+  { name: 'total_amount', label: '合同总额' },
+  { name: 'design_fee', label: '设计费' },
+  { name: 'manager_fee', label: '管理费' },
+  { name: 'start_date', label: '开工日期' },
+  { name: 'end_date', label: '竣工日期' },
+  { name: 'sign_date', label: '签订日期' },
+  { name: 'company_name', label: '公司名称' },
+  { name: 'company_phone', label: '公司电话' },
+  { name: 'company_address', label: '公司地址' },
+  { name: 'party_a', label: '甲方（客户）' },
+  { name: 'party_b', label: '乙方（施工方）' },
+])
+
+// 自定义变量 - 从 localStorage 读取
+const customVariables = ref([])
+
+// 所有变量（内置+自定义）
+const allVariables = computed(() => [...builtInVariables.value, ...customVariables.value])
+
+// 分类映射
+const categoryMap = {
+  decoration: '装修合同',
+  design: '设计合同',
+  other: '其他'
+}
+
+// 从API加载自定义变量（全局共享）
+const loadCustomVars = async () => {
+  try {
+    const res = await axios.get('/api/contract-variables')
+    customVariables.value = res.data || []
+  } catch (e) {
+    console.error('加载变量失败:', e)
+  }
+}
+
+// 添加自定义变量（保存到全局API）
+const addCustomVar = async () => {
+  if (!newVar.name || !newVar.label) {
+    ElMessage.warning('请填写变量名称和标签')
+    return
+  }
+  // 检查是否已存在
+  const exists = allVariables.value.some(v => v.name === newVar.name)
+  if (exists) {
+    ElMessage.warning('变量名已存在')
+    return
+  }
+  try {
+    const res = await axios.post('/api/contract-variables', {
+      name: newVar.name,
+      label: newVar.label
+    })
+    if (res.data.success) {
+      customVariables.value.push({ id: res.data.id, name: newVar.name, label: newVar.label })
+      newVar.name = ''
+      newVar.label = ''
+      ElMessage.success('添加成功')
+    }
+  } catch (e) {
+    ElMessage.error('添加失败')
+  }
+}
+
+// 删除自定义变量
+const deleteCustomVar = async (varItem) => {
+  if (!varItem.id) {
+    ElMessage.error('无法删除内置变量或ID不存在')
+    return
+  }
+  try {
+    await axios.delete('/api/contract-variables/' + varItem.id)
+    const idx = customVariables.value.findIndex(v => v.id === varItem.id)
+    if (idx >= 0) customVariables.value.splice(idx, 1)
+    ElMessage.success('删除成功')
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+const templateList = ref([])
+const activeTab = ref('system')
+
+const form = reactive({
+  id: null, name: '', category: 'decoration', content: '', template_type: 'personal'
+})
+
+const filteredTemplates = computed(() => templateList.value.filter(t => t.template_type === activeTab.value))
+
+const loadData = async () => {
+  try {
+    const res = await axios.get('/api/contract-templates')
+    templateList.value = res.data || []
+  } catch (e) { console.error(e) }
+}
+
+const saveSelection = () => {
+  const sel = window.getSelection()
+  if (sel && sel.rangeCount > 0) {
+    savedRange = sel.getRangeAt(0).cloneRange()
+  }
+}
+
+const execCmd = (cmd, value = null) => {
+  if (!editorRef.value) return
+  editorRef.value.focus()
+  if (value !== null) {
+    document.execCommand(cmd, false, value)
+  } else {
+    document.execCommand(cmd, false, null)
+  }
+}
+
+const insertLink = () => {
+  const url = prompt('输入链接地址:')
+  if (url) execCmd('createLink', url)
+}
+
+const doInsertTable = () => {
+  if (!editorRef.value) return
+  editorRef.value.focus()
+  const html = '<table border="1" cellspacing="0" cellpadding="8" style="width:100%;border-collapse:collapse;">' +
+    '<tr><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td></tr>' +
+    '<tr><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td></tr>' +
+    '<tr><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td><td style="border:1px solid #dcdfe6;padding:8px;"></td></tr>' +
+    '</table><p></p>'
+  document.execCommand('insertHTML', false, html)
+}
+
+const insertBreak = () => {
+  execCmd('insertHTML', '<hr style="page-break-after:always;border:none;border-top:2px dashed #409eff;margin:20px 0;"><p></p>')
+}
+
+const insertVar = (v) => {
+  if (!editorRef.value) return
+  editorRef.value.focus()
+  if (savedRange) {
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(savedRange)
+  }
+  const displayVal = `{${v.name}}`
+  const html = `<span style="color:#409eff;font-weight:bold;padding:2px 6px;background:#ecf5ff;border-radius:3px;">${displayVal}</span>&nbsp;`
+  document.execCommand('insertHTML', false, html)
+}
+
+const onInput = () => {
+  if (editorRef.value) form.content = editorRef.value.innerHTML
+}
+
+const handlePaste = (e) => {
+  e.preventDefault()
+  let html = (e.clipboardData || window.clipboardData).getData('text/html')
+  if (!html) {
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain')
+    document.execCommand('insertHTML', false, text)
+    return
+  }
+  
+  // 清理危险内容
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+  html = html.replace(/on\w+="[^"]*"/gi, '')
+  html = html.replace(/on\w+='[^']*'/gi, '')
+  html = html.replace(/<\?xml[^>]*>/gi, '')
+  html = html.replace(/<!--[\s\S]*?-->/g, '')
+  
+  // 移除 Word 命名空间标签但保留内容
+  html = html.replace(/<\/?o:[^>]*>/gi, '')
+  html = html.replace(/<\/?w:[^>]*>/gi, '')
+  html = html.replace(/<\/?m:[^>]*>/gi, '')
+  
+  // 移除 Word class
+  html = html.replace(/\s*class="[^"]*mso[^"]*"/gi, '')
+  
+  // 清理 mso 样式但保留其他有用样式
+  html = html.replace(/style="([^"]*)"/gi, (m, val) => {
+    const parts = val.split(';').filter(s => {
+      s = s.trim().toLowerCase()
+      return s && !s.includes('mso') && !s.includes('tab-')
+    })
+    if (parts.length) return 'style="' + parts.join(';') + ';"'
+    return ''
+  })
+  
+  // 转换 font 标签到 span
+  html = html.replace(/<font\s+([^>]*)>/gi, (m, attrs) => {
+    const color = attrs.match(/color=["']([^"']*)["']/i)
+    const face = attrs.match(/face=["']([^"']*)["']/i)
+    const styles = []
+    if (color) styles.push('color:' + color[1])
+    if (face) styles.push('font-family:' + face[1])
+    return styles.length ? '<span style="' + styles.join(';') + ';">' : '<span>'
+  })
+  html = html.replace(/<\/font>/gi, '</span>')
+  
+  document.execCommand('insertHTML', false, html)
+}
+
+const openEditor = (row) => {
+  if (row) {
+    Object.assign(form, row)
+  } else {
+    Object.keys(form).forEach(k => form[k] = k === 'category' ? 'decoration' : k === 'template_type' ? 'personal' : '')
+    form.content = ''
+  }
+  showDialog.value = true
+  savedRange = null
+  nextTick(() => {
+    if (editorRef.value) editorRef.value.innerHTML = form.content || '<p></p>'
+  })
+}
+
+const handleSave = async () => {
+  if (!form.name) return ElMessage.warning('请输入名称')
+  if (editorRef.value) form.content = editorRef.value.innerHTML
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    const payload = { ...form, user_id: user.id }
+    if (form.id) {
+      await axios.put(`/api/contract-templates/${form.id}`, payload, {
+        headers: { 'x-user-id': user.id || 0 }
+      })
+    } else {
+      await axios.post('/api/contract-templates', payload, {
+        headers: { 'x-user-id': user.id || 0 }
+      })
+    }
+    ElMessage.success('保存成功')
+    showDialog.value = false
+    loadData()
+  } catch (e) { ElMessage.error(e?.response?.data?.message || '保存失败') }
+}
+
+const handleDelete = async (id) => {
+  try {
+    await ElMessageBox.confirm('确定删除?', '提示', { type: 'warning' })
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    await axios.delete(`/api/contract-templates/${id}`, {
+      headers: { 'x-user-id': user.id || 0 }
+    })
+    ElMessage.success('删除成功')
+    loadData()
+  } catch (e) { 
+    if (e !== 'cancel') ElMessage.error(e?.response?.data?.message || '删除失败') 
+  }
+}
+
+// 导入Word功能
+const triggerImportWord = () => {
+  wordFileInput.value?.click()
+}
+
+const handleImportWord = async (e) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  
+  try {
+    ElMessage.info('正在解析Word文档...')
+    
+    const arrayBuffer = await file.arrayBuffer()
+    const result = await mammoth.convertToHtml({ arrayBuffer })
+    const html = result.value
+    
+    if (result.messages.length > 0) {
+      console.log('Word解析消息:', result.messages)
+    }
+    
+    // 保存提取的内容用于AI分析
+    aiExtractedContent.value = html
+    
+    // 调用AI识别变量
+    ElMessage.info('正在AI识别变量...')
+    await recognizeAIVariables(html)
+    
+  } catch (err) {
+    console.error('Word解析失败:', err)
+    ElMessage.error('Word文档解析失败: ' + err.message)
+  }
+  
+  // 清空input允许重复选择同一文件
+  e.target.value = ''
+}
+
+const recognizeAIVariables = async (html) => {
+  try {
+    // 从HTML中提取纯文本
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    
+    // 调用AI识别变量
+    const response = await axios.post('/api/ai/recognize-variables', {
+      content: text,
+      type: 'contract_template'
+    })
+    
+    if (response.data?.variables && response.data.variables.length > 0) {
+      aiVariables.value = response.data.variables.map(v => ({
+        name: v.name,
+        label: v.label,
+        defaultValue: '',
+        isNew: true
+      }))
+      showAIVarDialog.value = true
+    } else {
+      // 如果AI没有返回变量，直接插入内容
+      insertHTMLContent(html)
+      ElMessage.success('Word文档已导入（未识别到变量）')
+    }
+  } catch (err) {
+    console.error('AI识别失败:', err)
+    // AI识别失败时直接插入内容
+    insertHTMLContent(html)
+    ElMessage.success('Word文档已导入（变量识别跳过）')
+  }
+}
+
+const insertHTMLContent = (html) => {
+  if (!editorRef.value) return
+  
+  // 在光标位置插入内容
+  if (savedRange) {
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(savedRange)
+  }
+  
+  editorRef.value.focus()
+  document.execCommand('insertHTML', false, html)
+}
+
+const confirmAIVariables = async () => {
+  // 使用AI识别结果自动替换内容中的占位符
+  let content = aiExtractedContent.value
+  
+  // 为每个变量创建占位符样式
+  aiVariables.value.forEach(v => {
+    // 在内容中查找对应标签的位置并替换为变量占位符
+    // 这里简化处理，实际生产环境需要更精确的文本匹配
+    const varPlaceholder = '<span style="background:#fff3cd;padding:2px 4px;border-radius:3px;color:#856404;">【' + v.label + '】</span>'
+    
+    // 检查内容中是否包含这个标签文本
+    if (content.includes(v.label) || content.includes('【' + v.label + '】')) {
+      // 替换第一个匹配项为变量占位符
+      content = content.replace(v.label, '{' + v.name + '}')
+    }
+  })
+  
+  // 插入修改后的内容
+  insertHTMLContent(content)
+  
+  // 添加识别出的变量到全局API
+  for (const aiVar of aiVariables.value) {
+    // 检查是否已存在（通过API加载的变量）
+    const exists = customVariables.value.some(v => v.name === aiVar.name)
+    if (!exists) {
+      try {
+        const res = await axios.post('/api/contract-variables', {
+          name: aiVar.name,
+          label: aiVar.label
+        })
+        if (res.data.success) {
+          customVariables.value.push({ id: res.data.id, name: aiVar.name, label: aiVar.label })
+        }
+      } catch (e) {
+        console.error('保存变量失败:', aiVar.name, e)
+      }
+    }
+  }
+  
+  ElMessage.success('Word文档已导入，' + aiVariables.value.length + '个变量已识别')
+  showAIVarDialog.value = false
+}
+
+const skipAIVariables = () => {
+  // 不导入，保持原有内容
+  showAIVarDialog.value = false
+}
+
+onMounted(() => {
+  loadData()
+  loadCustomVars()
+})
+</script>
+
+<style scoped>
+.card-header { display:flex; justify-content:space-between; }
+.editor-wrapper { display:flex; flex-direction:column; gap:10px; }
+.var-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px; background:#f0f9eb; border-radius:4px; max-height:120px; overflow-y:auto; }
+.var-label { font-weight:bold; color:#409eff; flex-shrink:0; }
+.var-item { cursor:pointer; }
+.form-row { padding:10px 0; border-top:1px solid #dcdfe6; }
+
+.rich-editor-toolbar {
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  padding:10px;
+  background:#f5f7fa;
+  border:1px solid #dcdfe6;
+  border-radius:4px 4px 0 0;
+  align-items:center;
+}
+.rich-editor-toolbar button {
+  width:32px;
+  height:32px;
+  border:1px solid #dcdfe6;
+  background:#fff;
+  border-radius:4px;
+  cursor:pointer;
+  font-size:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.rich-editor-toolbar button:hover {
+  background:#409eff;
+  color:#fff;
+  border-color:#409eff;
+}
+.rich-editor-toolbar select {
+  height:32px;
+  padding:0 8px;
+  border:1px solid #dcdfe6;
+  border-radius:4px;
+  background:#fff;
+  cursor:pointer;
+}
+.toolbar-divider {
+  width:1px;
+  height:32px;
+  background:#dcdfe6;
+  margin:0 4px;
+}
+
+.rich-editor-content {
+  min-height:400px;
+  max-height:60vh;
+  overflow-y:auto;
+  padding:15px;
+  border:1px solid #dcdfe6;
+  border-top:none;
+  outline:none;
+  font-family:Microsoft YaHei,SimSun,serif;
+  font-size:14px;
+  line-height:1.8;
+  background:#fff;
+}
+.rich-editor-content:focus { border-color:#409eff; }
+.rich-editor-content table { border-collapse:collapse; width:100%; }
+.rich-editor-content td { border:1px solid #dcdfe6; padding:8px; }
+
+/* A4预览样式 */
+/* A4编辑区样式 */
+.a4-editor-wrapper {
+  background:#e0e0e0;
+  padding:20px;
+  margin-top:10px;
+  display:flex;
+  justify-content:center;
+  min-height:500px;
+  overflow:auto;
+}
+.a4-paper {
+  width:210mm;
+  min-height:297mm;
+  background:#fff;
+  box-shadow:0 2px 10px rgba(0,0,0,0.2);
+  padding:15mm 20mm;
+  font-family:SimSun,Microsoft YaHei,serif;
+  font-size:12pt;
+  line-height:1.8;
+  text-align:justify;
+  color:#000;
+  box-sizing:border-box;
+  position:relative;
+}
+.a4-paper-header {
+  font-size:10pt;
+  color:#666;
+  border-bottom:1px solid #ddd;
+  padding-bottom:5mm;
+  margin-bottom:8mm;
+}
+.a4-paper-content {
+  height:240mm;
+  max-height:240mm;
+  overflow-y:auto;
+  outline:none;
+  text-indent:2em;
+}
+.a4-paper-content p {
+  margin:0.5em 0;
+}
+.a4-paper-content table {
+  border-collapse:collapse;
+  width:100%;
+  margin:10px 0;
+}
+.a4-paper-content td {
+  border:1px solid #dcdfe6;
+  padding:8px;
+}
+.a4-paper-footer {
+  position:absolute;
+  bottom:10mm;
+  left:20mm;
+  right:20mm;
+  padding-top:5mm;
+  border-top:1px solid #ddd;
+  text-align:center;
+  font-size:9pt;
+  color:#888;
+}
+
+/* A4预览样式（保留） */
+.a4-preview {
+  width:210mm;
+  min-height:297mm;
+  background:#fff;
+  border:1px solid #ccc;
+  box-shadow:0 4px 12px rgba(0,0,0,0.15);
+  padding:15mm 20mm;
+  font-family:SimSun,Microsoft YaHei,serif;
+  font-size:11pt;
+  line-height:1.8;
+  text-align:justify;
+  color:#000;
+  box-sizing:border-box;
+}
+.a4-preview-header {
+  font-size:10pt;
+  color:#666;
+  border-bottom:1px solid #ddd;
+  padding-bottom:5mm;
+  margin-bottom:8mm;
+}
+.a4-preview-content {
+  text-indent:2em;
+}
+.a4-preview-content p {
+  margin:0.5em 0;
+}
+.a4-preview-content table {
+  border-collapse:collapse;
+  width:100%;
+  margin:10px 0;
+}
+.a4-preview-content td {
+  border:1px solid #dcdfe6;
+  padding:8px;
+}
+.a4-preview-footer {
+  margin-top:15mm;
+  padding-top:5mm;
+  border-top:1px solid #ddd;
+  text-align:center;
+  font-size:9pt;
+  color:#888;
+}
+</style>
