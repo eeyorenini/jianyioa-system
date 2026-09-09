@@ -1,0 +1,10 @@
+# 构建产物
+web/dist/
+
+# 系统文件
+.DS_Store
+*.log
+
+# 备份文件
+*.backup
+*.broken_backup

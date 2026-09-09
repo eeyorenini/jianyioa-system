@@ -11,7 +11,9 @@ export const customerApi = {
   detail: (id) => request.get(`/customers/${id}`),
   create: (data) => request.post('/customers', data),
   update: (id, data) => request.put(`/customers/${id}`, data),
-  delete: (id) => request.delete(`/customers/${id}`)
+  overwrite: (id, data) => request.put(`/customers/${id}/overwrite`, data),
+  delete: (id) => request.delete(`/customers/${id}`),
+  checkPhone: (phone) => request.get('/customers/check-phone', { params: { phone } })
 }
 
 // ============ 员工相关 ============

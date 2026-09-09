@@ -8,6 +8,8 @@ const dbModule = require('./db-mysql-async.js');
 const Database = dbModule;
 const pool = dbModule.pool;
 const path = require('path');
+const crypto = require('crypto');
+const https = require('https');
 const fs = require('fs');
 const multer = require('multer');
 const os = require('os');
@@ -236,11 +238,78 @@ app.get('/api/customers', async (req, res) => {
 app.post('/api/customers', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date } = req.body;
-    const stmt = db.prepare('INSERT INTO customers (name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const result = await stmt.run(name, phone, source, status || '意向客户', level || '普通', follow_user, address, area, budget, demand, next_follow_date, userId);
+    const { customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags } = req.body;
+    
+    // 检查手机号是否存在（phone 为空则跳过查重）
+    const existing = phone ? await db.prepare('SELECT id, creator_id FROM customers WHERE phone = ?').get(phone) : null;
+    if (existing) {
+      // 手机号已存在，判断是否可认领（creator_id 为 null 表示无主，可被任何人认领）
+      const isSameCreator = existing.creator_id === userId;
+      const isUnclaimed = existing.creator_id === null || existing.creator_id === 0;
+      if (isSameCreator || isUnclaimed) {
+        // 同添加人 或 无主客户 → 前端询问是否覆盖
+        return res.status(409).json({ 
+          code: 'SAME_CREATOR',
+          message: '该手机号已被您添加，是否更新客户信息？',
+          existing_id: existing.id
+        });
+      } else {
+        // 不同添加人 → 查出对方姓名返回
+        const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(existing.creator_id);
+        const adderName = emp ? emp.name : '其他员工';
+        return res.status(409).json({ 
+          code: 'DIFFERENT_CREATOR', 
+          message: `此客户已被 ${adderName} 添加`,
+          existing_id: existing.id
+        });
+      }
+    }
+    
+    // 自动生成客户编号
+    let finalCustomerNo = customer_no;
+    if (!finalCustomerNo || finalCustomerNo.trim() === '') {
+      const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const rows = await db.prepare("SELECT customer_no FROM customers WHERE customer_no LIKE ? ORDER BY customer_no DESC LIMIT 1").all('KH' + today + '%');
+      const maxRow = rows[0];
+      let seq = 1;
+      if (maxRow && maxRow.customer_no) {
+        const lastSeq = parseInt(maxRow.customer_no.slice(-4));
+        seq = lastSeq + 1;
+      }
+      finalCustomerNo = 'KH' + today + String(seq).padStart(4, '0');
+    }
+    
+    const tagsJson = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
+    const stmt = db.prepare('INSERT INTO customers (customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, creator_id, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const result = await stmt.run(finalCustomerNo, name, phone, source, status || '新客户', level || '普通', follow_user, address, area, budget, demand, next_follow_date, userId, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tagsJson);
     await addLog(userId, '', '新增', '客户管理', result.lastInsertRowid, name, `客户名称: ${name}, 电话: ${phone}`, req.ip);
-    res.json({ id: result.lastInsertRowid, message: '添加成功' });
+    res.json({ id: result.lastInsertRowid, customer_no: finalCustomerNo, message: '添加成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 手机号查重（实时检查，blur 时前端调用）
+app.get('/api/customers/check-phone', async (req, res) => {
+  try {
+    const { phone } = req.query;
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    if (!phone) return res.json({ exists: false });
+
+    const existing = await db.prepare('SELECT id, creator_id FROM customers WHERE phone = ?').get(phone);
+    if (!existing) return res.json({ exists: false });
+
+    // 无主客户 → 可认领
+    if (existing.creator_id === null || existing.creator_id === 0) {
+      return res.json({ exists: true, code: 'UNCLAIMED', message: '此号码客户尚无归属，您可以直接认领' });
+    }
+    // 同添加人
+    if (existing.creator_id === userId) {
+      return res.json({ exists: true, code: 'SAME_CREATOR', message: '此号码是您添加的客户' });
+    }
+    // 不同添加人 → 查出对方姓名
+    const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(existing.creator_id);
+    return res.json({ exists: true, code: 'DIFFERENT_CREATOR', message: `此客户已被 ${emp?.name || '其他员工'} 添加` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -249,10 +318,31 @@ app.post('/api/customers', async (req, res) => {
 app.put('/api/customers/:id', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date } = req.body;
-    const stmt = db.prepare('UPDATE customers SET name=?, phone=?, source=?, status=?, level=?, follow_user=?, address=?, area=?, budget=?, demand=?, next_follow_date=? WHERE id=?');
-    await stmt.run(name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, req.params.id);
+    const { customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags } = req.body;
+    const tagsJson = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
+    const stmt = db.prepare('UPDATE customers SET customer_no=?, name=?, phone=?, source=?, status=?, level=?, follow_user=?, address=?, area=?, budget=?, demand=?, next_follow_date=?, gender=?, entry_date=?, contact_name2=?, contact_phone2=?, other_phone=?, email=?, qq=?, provider=?, tags=? WHERE id=?');
+    await stmt.run(customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tagsJson, req.params.id);
     await addLog(userId, '', '编辑', '客户管理', req.params.id, name, `更新客户: ${name}`, req.ip);
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 强制覆盖更新（用于手机号冲突时用户确认覆盖）
+app.put('/api/customers/:id/overwrite', async (req, res) => {
+  try {
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    const { name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags } = req.body;
+    const tagsJson = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
+
+    // 先查现有客户，判断 creator_id 是否为 NULL（无主客户可认领）
+    const existing = await db.prepare('SELECT creator_id FROM customers WHERE id = ?').get(req.params.id);
+    const newCreatorId = (existing?.creator_id === null || existing?.creator_id === 0) ? userId : existing?.creator_id;
+
+    const stmt = db.prepare('UPDATE customers SET name=?, phone=?, source=?, status=?, level=?, follow_user=?, address=?, area=?, budget=?, demand=?, next_follow_date=?, gender=?, entry_date=?, contact_name2=?, contact_phone2=?, other_phone=?, email=?, qq=?, provider=?, tags=?, creator_id=? WHERE id=?');
+    await stmt.run(name, phone, source, status || '新客户', level || '普通', follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tagsJson, newCreatorId, req.params.id);
+    await addLog(userId, '', '覆盖更新', '客户管理', req.params.id, name, `覆盖更新客户: ${name}`, req.ip);
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -878,7 +968,11 @@ app.get('/api/projects', async (req, res) => {
     const projects = await stmt.all(...params);
 
     // 附加每个项目的节点列表
-    const nodeStmt = db.prepare('SELECT * FROM project_progress_nodes WHERE project_id = ? ORDER BY sort_order ASC');
+    const nodeStmt = db.prepare(`SELECT ps.*, s.name as sms_template_name
+      FROM project_progress_nodes ps
+      LEFT JOIN sms_templates s ON s.id = ps.sms_template_id
+      WHERE ps.project_id = ?
+      ORDER BY ps.sort_order ASC, ps.id ASC`);
     for (const p of projects) {
       p.nodes = await nodeStmt.all(p.id);
     }
@@ -943,23 +1037,65 @@ app.delete('/api/projects/:id', async (req, res) => {
   }
 });
 
-app.get('/api/project-stages/:projectId', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM project_stages WHERE project_id = ? ORDER BY id');
-  res.json(await stmt.all(req.params.projectId));
+app.get('/api/project-stages', async (req, res) => {
+  const stmt = db.prepare(`SELECT ps.*, s.name as sms_template_name
+    FROM project_progress_nodes ps
+    LEFT JOIN sms_templates s ON s.id = ps.sms_template_id
+    WHERE ps.project_id = ?
+    ORDER BY ps.sort_order, ps.id`);
+  res.json(await stmt.all(req.query.project_id));
 });
 
 app.post('/api/project-stages', async (req, res) => {
-  const { project_id, stage_name, plan_start_date, plan_end_date, actual_start_date, actual_end_date, status, progress, note } = req.body;
-  const stmt = db.prepare('INSERT INTO project_stages (project_id, stage_name, plan_start_date, plan_end_date, actual_start_date, actual_end_date, status, progress, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(project_id, stage_name, plan_start_date, plan_end_date, actual_start_date, actual_end_date, status || '待开始', progress || 0, note);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  const { project_id, node_name, plan_date, status, progress, note, sms_template_id, after_node_id } = req.body;
+  try {
+    if (after_node_id !== undefined && after_node_id !== null) {
+      const [after] = await db.prepare('SELECT sort_order FROM project_progress_nodes WHERE id = ?').all(after_node_id);
+      if (after) {
+        await db.prepare('UPDATE project_progress_nodes SET sort_order = sort_order + 1 WHERE project_id = ? AND sort_order > ?').run(project_id, after.sort_order);
+        const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        const result = await stmt.run(project_id, node_name, plan_date, after.sort_order + 1, status || 'pending', note, sms_template_id || null);
+        return res.json({ id: result.lastInsertRowid, message: '添加成功' });
+      }
+    }
+    const [max] = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM project_progress_nodes WHERE project_id = ?').all(project_id);
+    const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const result = await stmt.run(project_id, node_name, plan_date, max.m + 1, status || 'pending', note, sms_template_id || null);
+    res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/project-stages/:id', async (req, res) => {
-  const { stage_name, plan_start_date, plan_end_date, actual_start_date, actual_end_date, status, progress, note } = req.body;
-  const stmt = db.prepare('UPDATE project_stages SET stage_name=?, plan_start_date=?, plan_end_date=?, actual_start_date=?, actual_end_date=?, status=?, progress=?, note=? WHERE id=?');
-  await stmt.run(stage_name, plan_start_date, plan_end_date, actual_start_date, actual_end_date, status, progress, note, req.params.id);
-  res.json({ message: '更新成功' });
+  try {
+    const [row] = await db.prepare('SELECT * FROM project_progress_nodes WHERE id = ?').all(req.params.id);
+    if (!row) return res.status(404).json({ error: '节点不存在' });
+    const { node_name, plan_date, actual_date, status, note, sms_template_id } = req.body;
+    const updated = {
+      node_name: node_name !== undefined ? node_name : row.node_name,
+      plan_date: plan_date !== undefined ? plan_date : row.plan_date,
+      actual_date: actual_date !== undefined ? actual_date : row.actual_date,
+      status: status !== undefined ? status : row.status,
+      note: note !== undefined ? note : row.note,
+      sms_template_id: sms_template_id !== undefined ? (sms_template_id || null) : row.sms_template_id
+    };
+    const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, actual_date=?, status=?, note=?, sms_template_id=? WHERE id=?');
+    await stmt.run(updated.node_name, updated.plan_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, req.params.id);
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/project-stages/:id', async (req, res) => {
+  try {
+    const stmt = db.prepare('DELETE FROM project_progress_nodes WHERE id = ?');
+    await stmt.run(req.params.id);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/project-logs/:projectId', async (req, res) => {
@@ -2748,6 +2884,146 @@ app.delete('/api/sms-templates/:id', async (req, res) => {
   try {
     await db.prepare('DELETE FROM sms_templates WHERE id=?').run([req.params.id]);
     res.json({ message: '短信模板删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 阿里云短信发送函数 ====================
+function sendAliyunSms({ accessKeyId, accessKeySecret, signName, templateCode, phone, templateParam }) {
+  return new Promise((resolve, reject) => {
+    const domain = 'dysmsapi.aliyuncs.com';
+    const version = '2017-05-25';
+    const action = 'SendSms';
+
+    const params = {
+      Format: 'JSON',
+      Version: version,
+      AccessKeyId: accessKeyId,
+      SignatureMethod: 'HMAC-SHA1',
+      Timestamp: new Date().toISOString(),
+      SignatureVersion: '1.0',
+      SignatureNonce: Math.random().toString(),
+      Action: action,
+      SignName: signName,
+      TemplateCode: templateCode,
+      PhoneNumbers: phone,
+      TemplateParam: templateParam
+    };
+
+    // 构造待签名字符串
+    const sortedKeys = Object.keys(params).sort();
+    const canonicalized = sortedKeys.map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+    const stringToSign = 'GET&%2F&' + encodeURIComponent(canonicalized);
+    const signature = crypto.createHmac('sha1', accessKeySecret + '&')
+      .update(stringToSign).digest('base64');
+
+    const queryString = canonicalized + '&Signature=' + encodeURIComponent(signature);
+    const options = {
+      hostname: domain,
+      method: 'GET',
+      path: '/?' + queryString
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { reject(new Error(data)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('请求超时')); });
+    req.end();
+  });
+}
+
+// ==================== 短信发送 API ====================
+app.post('/api/sms-send', async (req, res) => {
+  try {
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    const { node_id, project_id, customer_phone } = req.body;
+    
+    // 获取节点、项目、模板信息
+    const [node] = await db.prepare('SELECT n.*, p.name as project_name, c.name as customer_name, c.phone as customer_phone FROM project_progress_nodes n LEFT JOIN projects p ON n.project_id=p.id LEFT JOIN customers c ON p.customer_id=c.id WHERE n.id=?').all(node_id);
+    if (!node) return res.status(404).json({ error: '节点不存在' });
+    
+    const templateId = node.sms_template_id;
+    let smsContent = '';
+    let templateName = '';
+    
+    if (templateId) {
+      const [tmpl] = await db.prepare('SELECT * FROM sms_templates WHERE id=?').all(templateId);
+      if (tmpl) {
+        templateName = tmpl.name;
+        // 替换变量
+        smsContent = tmpl.content
+          .replace(/\{客户姓名\}/g, node.customer_name || '')
+          .replace(/\{项目名称\}/g, node.project_name || '')
+          .replace(/\{节点名称\}/g, node.node_name || '')
+          .replace(/\{日期\}/g, new Date().toLocaleDateString('zh-CN'));
+      }
+    }
+    
+    // 国内手机号加86前缀（阿里云要求）
+    const phone = customer_phone || node.customer_phone;
+    const phoneWithCode = /^86/.test(phone) ? phone : '86' + phone;
+    if (!phone) {
+      // 写入失败日志
+      await db.prepare(
+        'INSERT INTO sms_send_logs (project_id, node_id, customer_name, customer_phone, template_id, template_name, sms_content, send_time, status, fail_reason) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)'
+      ).run(project_id, node_id, node.customer_name || '', '', templateId, templateName, smsContent, 'failed', '客户手机号为空');
+      return res.status(400).json({ error: '客户手机号为空' });
+    }
+    
+    // 读取阿里云短信配置
+    const [smsSettings] = await db.prepare("SELECT setting_value FROM system_settings WHERE category='sms'").all();
+    const smsConfig = smsSettings ? JSON.parse(smsSettings.setting_value) : null;
+    const smsApiConfigured = smsConfig && smsConfig.provider === 'aliyun' && smsConfig.access_key_id && smsConfig.access_key_secret;
+
+    let sendStatus = 'failed';
+    let failReason = '';
+
+    if (smsApiConfigured) {
+      // 真实发送阿里云短信
+      try {
+        const result = await sendAliyunSms({
+          accessKeyId: smsConfig.access_key_id,
+          accessKeySecret: smsConfig.access_key_secret,
+          signName: smsConfig.sign_name,
+          templateCode: smsConfig.template_code,
+          phone: phoneWithCode,
+          templateParam: JSON.stringify({
+            name: node.customer_name || '',
+            project: node.project_name || '',
+            node: node.node_name || '',
+            date: new Date().toLocaleDateString('zh-CN')
+          })
+        });
+        if (result.Code === 'OK') {
+          sendStatus = 'success';
+        } else {
+          sendStatus = 'failed';
+          failReason = result.Message || '发送失败';
+        }
+      } catch (e) {
+        sendStatus = 'failed';
+        failReason = e.message;
+      }
+    } else {
+      sendStatus = 'failed';
+      failReason = '短信接口未配置（APIKEY/Secret未申请），发送队列等待中';
+    }
+    
+    // 写入发送日志
+    await db.prepare(
+      'INSERT INTO sms_send_logs (project_id, node_id, customer_name, customer_phone, template_id, template_name, sms_content, send_time, status, fail_reason) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)'
+    ).run(project_id, node_id, node.customer_name || '', phone, templateId, templateName, smsContent, sendStatus, failReason);
+    
+    // 更新节点是否已发送短信标记
+    await db.prepare('UPDATE project_progress_nodes SET is_sms_sent=? WHERE id=?').run(sendStatus === 'success' ? 1 : 0, node_id);
+    
+    res.json({ status: sendStatus, message: failReason || '发送成功', content: smsContent, phone, log_id: null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

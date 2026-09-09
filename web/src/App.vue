@@ -280,6 +280,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .el-main { background-color: #f0f2f5; padding: 20px; }
 .el-card { margin-bottom: 20px; }
 
+/* ==================== 表格全局样式 ==================== */
+.el-table__header th {
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  color: #303133 !important;
+  background-color: #f5f7fa !important;
+}
+.el-table__header td {
+  font-weight: 600 !important;
+}
+
 /* ==================== 移动端样式 ==================== */
 @media screen and (max-width: 768px) {
   .layout-container { flex-direction: column; }

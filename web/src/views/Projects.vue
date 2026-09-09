@@ -18,64 +18,68 @@
           </template>
         </el-table-column>
         <!-- 节点管理横轴 -->
-        <el-table-column label="进度节点" min-width="420">
+        <el-table-column label="进度节点" min-width="500">
           <template #default="scope">
-            <div class="node-mgmt-cell">
-              <!-- 里程碑时间线 -->
-              <div class="milestone-timeline" v-if="scope.row.nodes && scope.row.nodes.filter(n => n.node_name).length > 0">
-                <template v-for="(node, index) in scope.row.nodes.filter(n => n.node_name)" :key="node.id">
-                  <!-- 连接线+箭头 -->
-                  <div v-if="index > 0" class="milestone-track" :class="{ 'track-done': isNodeCompletedBefore(scope.row, index) }">
-                    <div class="track-line"></div>
-                    <div class="track-arrow"></div>
-                  </div>
-                  <!-- 里程碑节点 -->
-                  <el-popover placement="top" :width="160" trigger="click">
+            <div class="node-mgmt-cell" v-if="scope.row.nodes && scope.row.nodes.length > 0">
+              <div class="step-bar">
+                <div
+                  v-for="(node, index) in scope.row.nodes"
+                  :key="node.id"
+                  class="step-item"
+                  :class="`step-${node.status}`"
+                >
+                  <!-- 连接线（第一个节点前没有线） -->
+                  <div v-if="index > 0" class="step-line" :class="getLineClass(scope.row.nodes, index)"></div>
+
+                  <!-- 步骤主体 -->
+                  <el-popover placement="bottom" :width="160" trigger="click" :show-after="0" :hide-after="0">
                     <template #reference>
-                      <div class="milestone-node" :class="`status-${node.status}`">
-                        <div class="milestone-dot">
-                          <el-icon v-if="node.status === 'completed'" :size="10" color="#fff"><Check /></el-icon>
-                          <el-icon v-else-if="node.status === 'skipped'" :size="10" color="#fff"><Minus /></el-icon>
-                          <div v-else class="dot-center"></div>
+                      <div class="step-node" @click.stop>
+                        <div class="step-circle">
+                          <!-- 待开始：小圆点 -->
+                          <span v-if="node.status === 'pending'" class="dot-inner"></span>
+                          <!-- 进行中：双环旋转 -->
+                          <span v-else-if="node.status === 'in_progress'" class="spin-ring"></span>
+                          <!-- 已完成：打勾 -->
+                          <el-icon v-else-if="node.status === 'completed'" :size="14" color="#fff"><Check /></el-icon>
+                          <!-- 已跳过：关闭 -->
+                          <el-icon v-else-if="node.status === 'skipped'" :size="14" color="#fff"><Close /></el-icon>
                         </div>
-                        <div class="milestone-name" :class="{
-                          'name-done': node.status === 'completed',
-                          'name-skipped': node.status === 'skipped',
-                          'name-active': node.status === 'pending' && isFirstPending(scope.row, index)
-                        }">{{ node.node_name }}</div>
+                        <div class="step-name" :class="{ 'name-done': node.status === 'completed', 'name-skipped': node.status === 'skipped', 'name-active': node.status === 'in_progress' || (node.status === 'pending' && isFirstPending(scope.row.nodes, index)) }">
+                          {{ node.node_name || node.stage_name }}
+                        </div>
                       </div>
                     </template>
-                    <div class="node-status-menu">
-                      <div class="status-menu-title">{{ node.node_name }}</div>
+                    <!-- 状态选择菜单 -->
+                    <div class="status-menu">
+                      <div class="status-menu-title">{{ node.node_name || node.stage_name }}</div>
                       <div class="status-menu-items">
-                        <div class="status-menu-item" :class="{ active: node.status === 'pending' }" @click="switchNodeStatus('pending', node)">
+                        <div class="status-menu-item" :class="{ active: node.status === 'pending' }" @click="switchNodeStatus('pending', node, scope.row)">
                           <span class="dot dot-pending"></span> 待开始
                         </div>
-                        <div class="status-menu-item" :class="{ active: node.status === 'in_progress' }" @click="switchNodeStatus('in_progress', node)">
+                        <div class="status-menu-item" :class="{ active: node.status === 'in_progress' }" @click="switchNodeStatus('in_progress', node, scope.row)">
                           <span class="dot dot-in-progress"></span> 进行中
                         </div>
-                        <div class="status-menu-item" :class="{ active: node.status === 'completed' }" @click="switchNodeStatus('completed', node)">
+                        <div class="status-menu-item" :class="{ active: node.status === 'completed' }" @click="switchNodeStatus('completed', node, scope.row)">
                           <span class="dot dot-completed"></span> 已完成
                         </div>
-                        <div class="status-menu-item" :class="{ active: node.status === 'skipped' }" @click="switchNodeStatus('skipped', node)">
+                        <div class="status-menu-item" :class="{ active: node.status === 'skipped' }" @click="switchNodeStatus('skipped', node, scope.row)">
                           <span class="dot dot-skipped"></span> 已跳过
                         </div>
                       </div>
                     </div>
                   </el-popover>
-                </template>
+                </div>
               </div>
-              <span v-else style="color: #c0c4cc; font-size: 12px;">暂无节点</span>
-              <!-- 设置按钮 -->
-              <el-button size="small" type="primary" link class="node-settings-btn" @click="openNodeDrawer(scope.row)">
-                <el-icon><Setting /></el-icon> 设置
-              </el-button>
             </div>
+            <span v-else style="color: #c0c4cc; font-size: 12px;">暂无节点</span>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column label="节点设置" width="120">
           <template #default="scope">
-            <el-tag :type="getStatusType(scope.row.status)">{{ scope.row.status }}</el-tag>
+            <el-button size="small" type="primary" link @click="openNodeDrawer(scope.row)">
+              <el-icon><Setting /></el-icon> 节点管理
+            </el-button>
           </template>
         </el-table-column>
         <el-table-column prop="start_date" label="开始日期" width="120" />
@@ -141,13 +145,20 @@
         <!-- 快速操作提示 -->
         <div class="quick-tip">
           <el-icon><InfoFilled /></el-icon>
-          点击上方圆点快速切换状态，或在此处管理节点详情
+          点击节点名称可编辑，点击状态可切换
+        </div>
+
+        <!-- 操作按钮 -->
+        <div style="margin-bottom: 12px;">
+          <el-button type="primary" size="small" @click="openAddNodeDialog">
+            <el-icon><Plus /></el-icon>新增节点
+          </el-button>
         </div>
 
         <!-- 节点列表 -->
         <div class="node-list">
           <div
-            v-for="(node, index) in currentProject?.nodes?.filter(n => n.node_name)"
+            v-for="(node, index) in currentProject?.nodes"
             :key="node.id"
             class="node-item"
             :class="`node-item-${node.status}`"
@@ -155,7 +166,12 @@
             <div class="node-item-left">
               <div class="node-index">{{ index + 1 }}</div>
               <div class="node-info">
-                <div class="node-name">{{ node.node_name }}</div>
+                <!-- 点击编辑节点名称 -->
+                <div class="node-name-edit" v-if="editingNodeId !== node.id" @click="startEditNode(node)">
+                  {{ node.node_name || node.stage_name || '未命名' }}
+                  <el-icon class="edit-icon"><Edit /></el-icon>
+                </div>
+                <el-input v-else size="small" v-model="editingNodeName" @keyup.enter="saveNodeName(node)" @blur="saveNodeName(node)" @keyup.escape="cancelEditNode" ref="nodeNameInput" style="width: 160px;" />
                 <div class="node-meta">
                   <el-tag size="small" :type="getNodeStatusTagType(node.status)">{{ getNodeStatusText(node.status) }}</el-tag>
                   <span class="node-date" v-if="node.actual_end_date">完成于 {{ node.actual_end_date }}</span>
@@ -163,12 +179,23 @@
               </div>
             </div>
             <div class="node-item-right">
+              <el-select v-model="node.sms_template_id" size="small" placeholder="无模板" clearable style="width: 120px; margin-right: 8px" @change="handleNodeSmsTemplateChange(node)">
+                <el-option
+                  v-for="t in smsTemplateList"
+                  :key="t.id"
+                  :label="t.name"
+                  :value="t.id"
+                />
+              </el-select>
               <el-select v-model="node.status" size="small" style="width: 100px" @change="handleNodeStatusChange(node)">
                 <el-option label="待开始" value="pending" />
                 <el-option label="进行中" value="in_progress" />
                 <el-option label="已完成" value="completed" />
                 <el-option label="已跳过" value="skipped" />
               </el-select>
+              <el-button size="small" type="danger" link style="margin-left: 8px" @click="handleDeleteNode(node)">
+                <el-icon><Close /></el-icon>
+              </el-button>
             </div>
           </div>
         </div>
@@ -179,6 +206,40 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 新增节点弹窗 -->
+    <el-dialog v-model="showAddNodeDialog" title="新增节点" width="450px">
+      <el-form :model="addNodeForm" label-width="90px">
+        <el-form-item label="节点名称" required>
+          <el-input v-model="addNodeForm.node_name" placeholder="如：水电工程" />
+        </el-form-item>
+        <el-form-item label="插入位置">
+          <el-select v-model="addNodeForm.after_node_id" placeholder="默认追加到最后" style="width: 100%">
+            <el-option label="插入到最前面" :value="0" />
+            <el-option
+              v-for="node in currentProject?.nodes"
+              :key="node.id"
+              :label="`插入到「${node.node_name || node.stage_name}」之后`"
+              :value="node.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="短信通知">
+          <el-select v-model="addNodeForm.sms_template_id" placeholder="不发送短信" clearable style="width: 100%">
+            <el-option
+              v-for="t in smsTemplateList"
+              :key="t.id"
+              :label="t.name"
+              :value="t.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddNodeDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleAddNode">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -186,7 +247,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Minus, More, Setting, InfoFilled } from '@element-plus/icons-vue'
+import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus } from '@element-plus/icons-vue'
 
 const projectList = ref([])
 const loading = ref(false)
@@ -194,6 +255,12 @@ const showAddDialog = ref(false)
 const showNodeDrawer = ref(false)
 const isEdit = ref(false)
 const currentProject = ref(null)
+const editingNodeId = ref(null)
+const editingNodeName = ref('')
+const nodeNameInput = ref(null)
+const showAddNodeDialog = ref(false)
+const addNodeForm = reactive({ node_name: '', after_node_id: null, sms_template_id: null })
+const smsTemplateList = ref([])
 
 const form = reactive({
   id: null,
@@ -241,16 +308,15 @@ const getNodeStatusText = (status) => {
   return map[status] || status
 }
 
-// 判断当前节点前是否已完成
-const isNodeCompletedBefore = (project, index) => {
-  const nodes = project.nodes?.filter(n => n.node_name) || []
+// 判断连接线是否已完成（看前一个节点）
+const isLineDone = (nodes, index) => {
   if (index <= 0) return false
-  return nodes[index - 1].status === 'completed'
+  const prev = nodes[index - 1]
+  return prev.status === 'completed'
 }
 
-// 判断是否是第一个待开始节点
-const isFirstPending = (project, index) => {
-  const nodes = project.nodes?.filter(n => n.node_name) || []
+// 判断是否是当前第一个待开始节点
+const isFirstPending = (nodes, index) => {
   for (let i = 0; i < index; i++) {
     if (nodes[i].status !== 'completed' && nodes[i].status !== 'skipped') {
       return false
@@ -259,12 +325,188 @@ const isFirstPending = (project, index) => {
   return true
 }
 
-// 切换节点状态
-const switchNodeStatus = async (status, node) => {
+// 获取连接线样式类
+const getLineClass = (nodes, index) => {
+  if (index <= 0) return ''
+  const prev = nodes[index - 1]
+  if (prev.status === 'completed') return 'line-done'
+  if (prev.status === 'skipped') return 'line-skipped'
+  return 'line-pending'
+}
+
+// 开始编辑节点名称
+const startEditNode = (node) => {
+  editingNodeId.value = node.id
+  editingNodeName.value = node.node_name || node.stage_name || ''
+  // 等待 DOM 更新后聚焦输入框
+  setTimeout(() => {
+    if (nodeNameInput.value && nodeNameInput.value.$el) {
+      nodeNameInput.value.$el.querySelector('input').focus()
+    }
+  }, 50)
+}
+
+// 保存节点名称
+const saveNodeName = async (node) => {
+  const name = editingNodeName.value.trim()
+  if (!name) {
+    ElMessage.warning('节点名称不能为空')
+    return
+  }
   try {
-    await axios.put(`/api/project-nodes/${node.id}`, { status })
+    await axios.put(`/api/project-stages/${node.id}`, {
+      node_name: name
+    })
+    node.node_name = name
+    node.stage_name = name
+    ElMessage.success('节点名称已更新')
+  } catch (error) {
+    ElMessage.error('更新失败')
+  }
+  editingNodeId.value = null
+  editingNodeName.value = ''
+}
+
+// 取消编辑节点名称
+const cancelEditNode = () => {
+  editingNodeId.value = null
+  editingNodeName.value = ''
+}
+
+// 打开新增节点弹窗
+const openAddNodeDialog = () => {
+  addNodeForm.node_name = ''
+  addNodeForm.after_node_id = null
+  addNodeForm.sms_template_id = null
+  showAddNodeDialog.value = true
+}
+
+// 加载短信模板
+const loadSmsTemplates = async () => {
+  try {
+    const res = await axios.get('/api/sms-templates')
+    smsTemplateList.value = res.data
+  } catch (error) {
+    console.error('加载短信模板失败:', error)
+  }
+}
+
+// 新增节点
+const handleAddNode = async () => {
+  const name = addNodeForm.node_name.trim()
+  if (!name) {
+    ElMessage.warning('请输入节点名称')
+    return
+  }
+  try {
+    const payload = {
+      project_id: currentProject.value.id,
+      node_name: name,
+      status: 'pending'
+    }
+    if (addNodeForm.sms_template_id) {
+      payload.sms_template_id = addNodeForm.sms_template_id
+    }
+    // after_node_id: null = 追加到最后，0 = 插入最前面
+    if (addNodeForm.after_node_id === 0) {
+      payload.after_node_id = null
+      // 后端会用 sort_order=0 方式插入最前
+    } else {
+      payload.after_node_id = addNodeForm.after_node_id || null
+    }
+    await axios.post('/api/project-stages', payload)
+    showAddNodeDialog.value = false
+    ElMessage.success('节点添加成功')
+    await loadData()
+    // 重新获取最新的项目数据刷新抽屉
+    const updated = projectList.value.find(p => p.id === currentProject.value.id)
+    if (updated) currentProject.value = updated
+  } catch (error) {
+    ElMessage.error('添加失败')
+  }
+}
+
+// 删除节点
+const handleDeleteNode = async (node) => {
+  try {
+    await ElMessageBox.confirm(`确定删除节点"${node.node_name || node.stage_name}"？`, '确认删除', { type: 'warning' })
+    await axios.delete(`/api/project-stages/${node.id}`)
+    ElMessage.success('删除成功')
+    await loadData()
+    const proj = projectList.value.find(p => p.id === currentProject.value.id)
+    if (proj) currentProject.value = proj
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+// 切换节点状态（点击状态菜单）
+const switchNodeStatus = async (status, node, row) => {
+  try {
+    // 如果标记为完成，询问是否发送短信
+    if (status === 'completed') {
+      const confirm = await ElMessageBox.confirm(
+        `是否发送服务通知短信？`,
+        '节点完成',
+        { confirmButtonText: '发送短信', cancelButtonText: '取消', type: 'info' }
+      ).catch(() => 'cancel');
+      
+      if (confirm === 'confirm') {
+        // 先更新状态
+        await axios.put(`/api/project-stages/${node.id}`, {
+          node_name: node.node_name,
+          status: 'completed',
+          actual_date: new Date().toISOString().split('T')[0]
+        });
+        node.status = 'completed';
+        node.actual_date = new Date().toISOString().split('T')[0];
+        ElMessage.success(`已更新为"${getNodeStatusText('completed')}"`);
+        
+        // 调用发送短信
+        try {
+          const res = await axios.post('/api/sms-send', {
+            node_id: node.id,
+            project_id: node.project_id
+          });
+          if (res.data.status === 'success') {
+            ElMessage.success('短信已发送');
+          } else {
+            ElMessage.warning('短信发送失败：' + res.data.message);
+          }
+        } catch (smsErr) {
+          ElMessage.warning('短信发送失败：' + (smsErr.response?.data?.error || smsErr.message));
+        }
+        return;
+      }
+      // 点取消则只更新状态
+    }
+    
+    await axios.put(`/api/project-stages/${node.id}`, {
+      node_name: node.node_name,
+      status,
+      actual_date: status === 'completed' ? new Date().toISOString().split('T')[0] : null
+    })
+    // 本地立即更新 UI，不等待整个列表刷新
+    node.status = status
+    if (status === 'completed') {
+      node.actual_date = new Date().toISOString().split('T')[0]
+    } else {
+      node.actual_date = null
+    }
     ElMessage.success(`已更新为"${getNodeStatusText(status)}"`)
-    loadData()
+  } catch (error) {
+    ElMessage.error('更新失败')
+  }
+}
+
+// 节点短信模板变更
+const handleNodeSmsTemplateChange = async (node) => {
+  try {
+    await axios.put(`/api/project-stages/${node.id}`, {
+      node_name: node.node_name,
+      sms_template_id: node.sms_template_id || null
+    })
+    ElMessage.success('短信模板已更新')
   } catch (error) {
     ElMessage.error('更新失败')
   }
@@ -273,12 +515,13 @@ const switchNodeStatus = async (status, node) => {
 // 节点状态变更（从抽屉内）
 const handleNodeStatusChange = async (node) => {
   try {
-    await axios.put(`/api/project-nodes/${node.id}`, {
+    await axios.put(`/api/project-stages/${node.id}`, {
+      node_name: node.node_name,
       status: node.status,
-      actual_end_date: node.status === 'completed' ? new Date().toISOString().split('T')[0] : null
+      actual_date: node.status === 'completed' ? new Date().toISOString().split('T')[0] : null
     })
+    node.actual_date = node.status === 'completed' ? new Date().toISOString().split('T')[0] : null
     ElMessage.success(`已更新为"${getNodeStatusText(node.status)}"`)
-    loadData()
   } catch (error) {
     ElMessage.error('更新失败')
   }
@@ -295,10 +538,11 @@ const resetAllNodes = async () => {
     })
     const nodes = currentProject.value.nodes || []
     for (const node of nodes) {
-      if (node.node_name) {
-        await axios.put(`/api/project-nodes/${node.id}`, {
+      if (node.node_name || node.stage_name) {
+        await axios.put(`/api/project-stages/${node.id}`, {
+          node_name: node.node_name,
           status: 'pending',
-          actual_end_date: null
+          actual_date: null
         })
       }
     }
@@ -311,9 +555,13 @@ const resetAllNodes = async () => {
 }
 
 // 打开节点抽屉
-const openNodeDrawer = (project) => {
+const openNodeDrawer = async (project) => {
   currentProject.value = project
   showNodeDrawer.value = true
+  await loadSmsTemplates()
+  // 确保 currentProject 指向最新的数据
+  const updated = projectList.value.find(p => p.id === project.id)
+  if (updated) currentProject.value = updated
 }
 
 // 加载数据
@@ -321,19 +569,20 @@ const loadData = async () => {
   loading.value = true
   try {
     const res = await axios.get('/api/projects')
-    // 每个项目加载其节点
-    const projectsWithNodes = await Promise.all(
-      (res.data || []).map(async (project) => {
-        try {
-          const nodeRes = await axios.get(`/api/project-nodes?project_id=${project.id}`)
-          project.nodes = nodeRes.data || []
-        } catch {
-          project.nodes = []
-        }
-        return project
-      })
-    )
+    // 映射 node_name -> stage_name，保持字段一致
+    const projectsWithNodes = (res.data || []).map(project => {
+      project.nodes = (project.nodes || []).map(node => ({
+        ...node,
+        node_name: node.node_name || node.stage_name
+      }))
+      return project
+    })
     projectList.value = projectsWithNodes
+    // 刷新 currentProject 引用，指向最新的 projectList 中的对象
+    if (currentProject.value) {
+      const updated = projectList.value.find(p => p.id === currentProject.value.id)
+      if (updated) currentProject.value = updated
+    }
   } catch (error) {
     console.error('加载失败:', error)
   } finally {
@@ -394,11 +643,10 @@ const createDefaultNodes = async (projectId) => {
   ]
   for (let i = 0; i < defaultNodes.length; i++) {
     try {
-      await axios.post('/api/project-nodes', {
+      await axios.post('/api/project-stages', {
         project_id: projectId,
         node_name: defaultNodes[i],
-        status: 'pending',
-        sort_order: i + 1
+        status: 'pending'
       })
     } catch (error) {
       console.error('创建节点失败:', error)
@@ -460,137 +708,157 @@ onMounted(() => {
 .node-mgmt-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 50px;
+  min-height: 60px;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
-/* ========== 里程碑时间线 ========== */
-.milestone-timeline {
+/* ========== 步骤条横轴 ========== */
+.step-bar {
   display: flex;
   align-items: flex-start;
+  min-width: max-content;
   gap: 0;
-  overflow-x: auto;
   padding: 4px 0;
-  scrollbar-width: thin;
-  flex-shrink: 0;
 }
 
-.milestone-node {
+.step-item {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* 连接线 */
+.step-line {
+  width: 28px;
+  height: 2px;
+  background: #e4e7ed;
+  flex-shrink: 0;
+  transition: background 0.3s;
+  margin-top: -10px;
+}
+
+.step-line.line-done {
+  background: #67c23a;
+}
+
+.step-line.line-skipped {
+  background: #909399;
+}
+
+.step-line.line-pending {
+  background: #e4e7ed;
+}
+
+/* 步骤节点 */
+.step-node {
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  flex-shrink: 0;
+  user-select: none;
+  min-width: 52px;
 }
 
-.milestone-dot {
-  width: 22px;
-  height: 22px;
+.step-node:hover .step-circle {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* 圆形步骤图标 */
+.step-circle {
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 3px solid #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
   transition: all 0.25s;
+  position: relative;
+  flex-shrink: 0;
 }
 
-.milestone-node:hover .milestone-dot {
-  transform: scale(1.2);
-  box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+/* 待开始：空心灰圈 */
+.step-pending .step-circle {
+  background: #fff;
+  border: 2px solid #c0c4cc;
 }
 
-.milestone-dot.status-pending {
-  background: #e4e7ed;
-  border-color: #c0c4cc;
-}
-
-.milestone-dot.status-in_progress {
+/* 进行中：橙色填充+旋转环 */
+.step-in_progress .step-circle {
   background: #e6a23c;
-  border-color: #f5c77e;
+  border: 2px solid #e6a23c;
+  box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.2);
 }
 
-.milestone-dot.status-completed {
+/* 已完成：绿色填充 */
+.step-completed .step-circle {
   background: #67c23a;
-  border-color: #b3e19d;
+  border: 2px solid #67c23a;
 }
 
-.milestone-dot.status-skipped {
-  background: #f56c6c;
-  border-color: #f8b4b4;
+/* 已跳过：灰色填充 */
+.step-skipped .step-circle {
+  background: #909399;
+  border: 2px solid #909399;
 }
 
-.dot-center {
+/* 待开始内部小圆点 */
+.dot-inner {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #909399;
+  background: #c0c4cc;
 }
 
-.milestone-name {
-  font-size: 10px;
-  color: #606266;
+/* 进行中旋转环 */
+.spin-ring {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-top-color: #fff;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 步骤名称 */
+.step-name {
+  font-size: 11px;
+  color: #909399;
   text-align: center;
-  max-width: 52px;
+  max-width: 60px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 4px;
-  line-height: 1.2;
+  margin-top: 5px;
+  line-height: 1.3;
+  transition: color 0.25s;
 }
 
-.milestone-name.name-done {
+.step-name.name-active {
+  color: #e6a23c;
+  font-weight: 600;
+}
+
+.step-name.name-done {
   color: #67c23a;
   font-weight: 600;
 }
 
-.milestone-name.name-skipped {
-  color: #f56c6c;
+.step-name.name-skipped {
+  color: #909399;
   text-decoration: line-through;
 }
 
-.milestone-name.name-active {
-  color: #409eff;
-  font-weight: 600;
-}
-
-/* ========== 连接线+箭头 ========== */
-.milestone-track {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-top: 11px;
-}
-
-.track-line {
-  width: 16px;
-  height: 2px;
-  background: #e4e7ed;
-  border-radius: 1px;
-}
-
-.track-arrow {
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid #e4e7ed;
-}
-
-.milestone-track.track-done .track-line,
-.milestone-track.track-done .track-arrow {
-  background: #67c23a;
-  border-left-color: #67c23a;
-}
-
-.node-settings-btn {
-  flex-shrink: 0;
-  margin-left: 4px;
-}
-
-/* ========== 节点状态菜单 ========== */
-.node-status-menu {
+/* ========== 状态选择菜单 ========== */
+.status-menu {
   user-select: none;
+  min-width: 140px;
 }
 
 .status-menu-title {
@@ -638,12 +906,12 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.dot-pending { background: #e4e7ed; }
+.dot-pending { background: #e4e7ed; border: 1px solid #c0c4cc; }
 .dot-in-progress { background: #e6a23c; }
 .dot-completed { background: #67c23a; }
-.dot-skipped { background: #f56c6c; }
+.dot-skipped { background: #909399; }
 
-/* ========== 节点抽屉 ========== */
+/* ========== 节点抽屉（保留） ========== */
 .node-drawer-content {
   padding: 0 16px;
 }
@@ -717,17 +985,9 @@ onMounted(() => {
   justify-content: center;
 }
 
-.node-item-completed .node-index {
-  background: #67c23a;
-}
-
-.node-item-in_progress .node-index {
-  background: #e6a23c;
-}
-
-.node-item-skipped .node-index {
-  background: #909399;
-}
+.node-item-completed .node-index { background: #67c23a; }
+.node-item-in_progress .node-index { background: #e6a23c; }
+.node-item-skipped .node-index { background: #909399; }
 
 .node-info {
   display: flex;
@@ -739,6 +999,34 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 500;
   color: #303133;
+}
+
+.node-name-edit {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.node-name-edit:hover {
+  background: #f5f7fa;
+  color: #409eff;
+}
+
+.node-name-edit .edit-icon {
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.node-name-edit:hover .edit-icon {
+  opacity: 1;
 }
 
 .node-meta {

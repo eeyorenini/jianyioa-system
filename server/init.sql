@@ -195,21 +195,26 @@ CREATE TABLE IF NOT EXISTS projects (
   designer VARCHAR(100),
   description TEXT,
   stages LONGTEXT,
-  created_at DATETIME DEFAULT '2024-01-01 00:00:00'
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+  customer_id INT,
+  current_node_id INT,
+  customer_name VARCHAR(255),
+  customer_phone VARCHAR(50),
+  customer_address VARCHAR(255)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS project_stages (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  project_id INT,
-  stage_name VARCHAR(255),
+  project_id INT NOT NULL,
+  stage_name VARCHAR(255) NOT NULL,
   plan_start_date VARCHAR(50),
   plan_end_date VARCHAR(50),
   actual_start_date VARCHAR(50),
   actual_end_date VARCHAR(50),
-  status VARCHAR(50) DEFAULT '待开始',
+  status VARCHAR(50) DEFAULT 'pending',
   progress INT DEFAULT 0,
   note TEXT,
-  created_at DATETIME DEFAULT '2024-01-01 00:00:00'
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS project_logs (
@@ -569,6 +574,36 @@ CREATE TABLE IF NOT EXISTS attendance (
   type VARCHAR(50) DEFAULT '上班',
   remark TEXT,
   created_at DATETIME DEFAULT '2024-01-01 00:00:00'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 短信模板表
+CREATE TABLE IF NOT EXISTS sms_templates (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  content TEXT,
+  type VARCHAR(50) DEFAULT 'default',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 进度节点模板表
+CREATE TABLE IF NOT EXISTS progress_node_templates (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 进度节点模板节点表
+CREATE TABLE IF NOT EXISTS progress_node_template_nodes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  template_id INT NOT NULL,
+  node_name VARCHAR(255) NOT NULL,
+  node_key VARCHAR(100),
+  sort_order INT DEFAULT 0,
+  default_sms_template_id INT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (template_id) REFERENCES progress_node_templates(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS warranties (

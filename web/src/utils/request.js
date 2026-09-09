@@ -91,15 +91,19 @@ request.interceptors.response.use(
         ElMessage.error('请求的资源不存在')
         break
         
+      case 409:
+        // 业务冲突，由调用方自行处理，不弹全局消息
+        break
+
       case 500:
         ElMessage.error('服务器错误，请稍后重试')
         break
-        
+
       case 0:
         // 网络错误
         ElMessage.error('网络连接失败，请检查网络')
         break
-        
+
       default:
         if (message) {
           ElMessage.error(message)

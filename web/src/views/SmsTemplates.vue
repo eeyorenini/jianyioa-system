@@ -50,6 +50,17 @@
         </el-form-item>
         <el-form-item label="短信内容" required>
           <el-input v-model="form.content" type="textarea" :rows="4" placeholder="您好{客户姓名}，您的项目{项目名称}的{节点名称}已完成，期待您的确认。" />
+          <!-- 变量快捷插入区 -->
+          <div class="var-insert-bar">
+            <span class="var-label">快捷插入变量：</span>
+            <el-tag
+              v-for="v in varList"
+              :key="v.key"
+              class="var-tag"
+              effect="plain"
+              @click="insertVar(v.key)"
+            >{{ v.label }}</el-tag>
+          </div>
         </el-form-item>
         <el-form-item label="启用状态">
           <el-switch v-model="form.is_active" />
@@ -71,6 +82,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const templateList = ref([])
 const showDialog = ref(false)
 const isEdit = ref(false)
+
+// 短信模板变量列表
+const varList = [
+  { key: '{客户姓名}', label: '客户姓名' },
+  { key: '{项目名称}', label: '项目名称' },
+  { key: '{节点名称}', label: '节点名称' },
+  { key: '{日期}', label: '日期' }
+]
+
+// 插入变量到内容
+const insertVar = (key) => {
+  form.content += key
+}
 
 const form = reactive({
   id: null,
@@ -147,5 +171,20 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.var-insert-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.var-label {
+  font-size: 13px;
+  color: #909399;
+}
+.var-tag {
+  cursor: pointer;
+  font-size: 13px;
 }
 </style>

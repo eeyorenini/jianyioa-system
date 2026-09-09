@@ -77,7 +77,6 @@
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="primary" link @click="handleView(row)">查看</el-button>
-            <el-button size="small" type="danger" link @click="handleDelete(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -118,7 +117,7 @@
             </el-col>
             <el-col :span="8">
               <el-form-item label="手机" prop="phone">
-                <el-input v-model="form.phone" placeholder="请输入手机号" maxlength="11" />
+                <el-input v-model="form.phone" placeholder="请输入手机号" maxlength="11" @blur="handlePhoneBlur" />
               </el-form-item>
             </el-col>
             <el-col :span="8">
@@ -374,6 +373,22 @@ const handleView = (row) => {
   showViewDialog.value = true
 }
 
+// 电话输入框失焦时实时检查
+const handlePhoneBlur = async () => {
+  if (!form.phone || !/^1[3-9]\d{9}$/.test(form.phone)) return
+  try {
+    const res = await customerApi.checkPhone(form.phone)
+    if (!res.exists) return
+    if (res.code === 'SAME_CREATOR') {
+      ElMessage.warning(res.message)
+    } else if (res.code === 'UNCLAIMED') {
+      ElMessage.info(res.message)
+    } else if (res.code === 'DIFFERENT_CREATOR') {
+      ElMessage.error(res.message)
+    }
+  } catch (e) { /* ignore */ }
+}
+
 const handleDelete = async (id) => {
   try {
     await ElMessageBox.confirm('确定删除该客户吗？删除后无法恢复。', '警告', {
@@ -400,8 +415,27 @@ const handleSubmit = async () => {
       await customerApi.update(form.id, form)
       ElMessage.success('更新成功')
     } else {
-      await customerApi.create(form)
-      ElMessage.success('添加成功')
+      try {
+        await customerApi.create(form)
+        ElMessage.success('添加成功')
+      } catch (err) {
+        // 409 冲突：前端 blur 已经检查过，这里只处理无主客户被认领的情况
+        if (err.response?.status === 409 && err.response?.data?.code === 'SAME_CREATOR') {
+          const confirm = await ElMessageBox.confirm(
+            '此号码已有客户记录，是否更新？',
+            '手机号已存在',
+            { confirmButtonText: '是，覆盖', cancelButtonText: '否，取消', type: 'warning' }
+          ).catch(() => 'cancel')
+          if (confirm === 'confirm') {
+            await customerApi.overwrite(err.response.data.existing_id, form)
+            ElMessage.success('客户信息已更新')
+          } else {
+            return
+          }
+        } else {
+          throw err
+        }
+      }
     }
     
     showDialog.value = false
