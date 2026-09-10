@@ -2846,7 +2846,7 @@ app.delete('/api/progress-nodes/:id', async (req, res) => {
 // GET 所有短信模板
 app.get('/api/sms-templates', async (req, res) => {
   try {
-    const templates = await db.prepare('SELECT * FROM sms_templates WHERE is_active=1 ORDER BY id').all();
+    const templates = await db.prepare('SELECT id, name, content, variables, is_active, sign_name, aliyun_template_code, created_at FROM sms_templates WHERE is_active=1 ORDER BY id').all();
     res.json(templates);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2869,10 +2869,10 @@ app.post('/api/sms-templates', async (req, res) => {
 // PUT 更新短信模板
 app.put('/api/sms-templates/:id', async (req, res) => {
   try {
-    const { name, content, variables, is_active } = req.body;
+    const { name, content, variables, is_active, sign_name, aliyun_template_code } = req.body;
     await db.prepare(
-      'UPDATE sms_templates SET name=?, content=?, variables=?, is_active=?, updated_at=NOW() WHERE id=?'
-    ).run([name, content, variables || null, is_active !== undefined ? is_active : 1, req.params.id]);
+      'UPDATE sms_templates SET name=?, content=?, variables=?, is_active=?, sign_name=?, aliyun_template_code=?, updated_at=NOW() WHERE id=?'
+    ).run([name, content, variables || null, is_active !== undefined ? is_active : 1, sign_name || null, aliyun_template_code || null, req.params.id]);
     res.json({ message: '短信模板更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2888,6 +2888,135 @@ app.delete('/api/sms-templates/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// POST 同步模板到阿里云
+app.post('/api/sms-templates/sync-aliyun', async (req, res) => {
+  try {
+    const { template_id, sign_name } = req.body;
+    if (!template_id || !sign_name) {
+      return res.status(400).json({ error: '缺少template_id或sign_name' });
+    }
+
+    // 获取模板内容
+    const [tmpl] = await db.prepare('SELECT * FROM sms_templates WHERE id=?').all(template_id);
+    if (!tmpl) return res.status(404).json({ error: '模板不存在' });
+
+    // 获取阿里云配置
+    const [smsSettings] = await db.prepare("SELECT setting_value FROM system_settings WHERE category='sms'").all();
+    const smsConfig = smsSettings ? JSON.parse(smsSettings.setting_value) : null;
+    if (!smsConfig || smsConfig.provider !== 'aliyun') {
+      return res.status(400).json({ error: '阿里云短信未配置' });
+    }
+
+    // 不做变量替换，直接用系统模板原始内容
+    // 阿里云 CreateSmsTemplate 要求 TemplateContent 用 {变量名} 格式
+    const aliyunContent = tmpl.content;
+
+    // 调用阿里云 AddSmsTemplate API
+    const result = await addAliyunSmsTemplate({
+      accessKeyId: smsConfig.access_key_id,
+      accessKeySecret: smsConfig.access_key_secret,
+      signName: sign_name,
+      templateName: tmpl.name,
+      templateContent: aliyunContent,
+      remark: '由系统同步'
+    });
+
+    if (result.Code === 'OK' || result.TemplateCode) {
+      const aliyunTemplateCode = result.TemplateCode;
+      console.log('【同步阿里云成功】TemplateCode:', aliyunTemplateCode, 'TemplateRule:', templateRuleStr);
+      // 保存到模板记录
+      await db.prepare(
+        'UPDATE sms_templates SET sign_name=?, aliyun_template_code=?, updated_at=NOW() WHERE id=?'
+      ).run(sign_name, aliyunTemplateCode, template_id);
+      res.json({ success: true, template_code: aliyunTemplateCode, message: '同步成功' });
+    } else {
+      console.log('【同步阿里云失败】result:', JSON.stringify(result));
+      res.status(400).json({ error: result.Message || '同步失败' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 阿里云添加模板 API ====================
+function addAliyunSmsTemplate({ accessKeyId, accessKeySecret, signName, templateName, templateContent, remark }) {
+  return new Promise((resolve, reject) => {
+    const domain = 'dysmsapi.aliyuncs.com';
+    const version = '2017-05-25';
+    const action = 'CreateSmsTemplate';
+
+    // 从模板内容中提取 ${xxx} 或 {xxx} 格式的占位符，生成 TemplateRule（对象格式，非数组）
+    // TemplateRule 格式：{"name":"personName","project":"companyName",...}
+    const varMatches = templateContent.match(/\$\{([^}]+)\}/g) || [];
+    const varMatches2 = templateContent.match(/\{([^}]+)\}/g) || [];
+    const allMatches = [...varMatches, ...varMatches2];
+    // 变量名映射：中文别名 -> 英文正式名 -> 阿里云变量类型
+    const varTypeMap = {
+      '客户姓名': { en: 'name', type: 'characterWithNumber2' },
+      '项目名称': { en: 'project', type: 'characterWithNumber2' },
+      '节点名称': { en: 'node', type: 'characterWithNumber2' },
+      '日期': { en: 'date', type: 'characterWithNumber2' }
+    };
+    const templateRule = {};
+    allMatches.forEach(v => {
+      const prefix = v.startsWith('${') ? 2 : 1;
+      const cnName = v.slice(prefix, -1); // 去掉 ${ 和 } 或 { 和 }
+      const info = varTypeMap[cnName] || { en: cnName, type: 'characterWithNumber2' };
+      templateRule[info.en] = info.type;
+    });
+    const templateRuleStr = Object.keys(templateRule).length > 0 ? JSON.stringify(templateRule) : undefined;
+    // 同步将 {客户姓名} 或 ${客户姓名} 格式的占位符替换为 ${name} 等英文格式
+    // 注意：只替换已知的4个变量，其他未知变量保持原样（如客户姓名不存在则不替换）
+    let templateContentEn = templateContent;
+    const varReplacements = {
+      '客户姓名': 'name',
+      '项目名称': 'project',
+      '节点名称': 'node',
+      '日期': 'date'
+    };
+    Object.entries(varReplacements).forEach(([cn, en]) => {
+      templateContentEn = templateContentEn.replace(new RegExp('\\$\\{' + cn + '\\}', 'g'), '${' + en + '}');
+      templateContentEn = templateContentEn.replace(new RegExp('\\{' + cn + '\\}', 'g'), '${' + en + '}');
+    });
+    console.log('【addAliyunSmsTemplate】templateContent:', templateContentEn, '| TemplateRule:', templateRuleStr);
+
+    const params = {
+      Format: 'JSON',
+      Version: version,
+      AccessKeyId: accessKeyId,
+      SignatureMethod: 'HMAC-SHA1',
+      Timestamp: new Date().toISOString(),
+      SignatureVersion: '1.0',
+      SignatureNonce: Math.random().toString(),
+      Action: action,
+      RelatedSignName: signName,
+      TemplateType: '1',
+      TemplateName: templateName,
+      TemplateContent: templateContentEn,
+      Remark: remark
+    };
+
+    if (templateRuleStr) {
+      params.TemplateRule = templateRuleStr;
+    }
+
+    const sortedKeys = Object.keys(params).sort();
+    const canonicalized = sortedKeys.map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
+    const stringToSign = 'GET&%2F&' + encodeURIComponent(canonicalized);
+    const signature = crypto.createHmac('sha1', accessKeySecret + '&').update(stringToSign).digest('base64');
+    const queryString = canonicalized + '&Signature=' + encodeURIComponent(signature);
+
+    const req = https.request({ hostname: domain, method: 'GET', path: '/?' + queryString }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error(data)); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('请求超时')); });
+    req.end();
+  });
+}
 
 // ==================== 阿里云短信发送函数 ====================
 function sendAliyunSms({ accessKeyId, accessKeySecret, signName, templateCode, phone, templateParam }) {
@@ -2981,6 +3110,17 @@ app.post('/api/sms-send', async (req, res) => {
     const smsConfig = smsSettings ? JSON.parse(smsSettings.setting_value) : null;
     const smsApiConfigured = smsConfig && smsConfig.provider === 'aliyun' && smsConfig.access_key_id && smsConfig.access_key_secret;
 
+    // 优先用模板自己绑定的阿里云模板CODE和签名，否则用全局配置
+    let templateCodeForSend = smsConfig.template_code;
+    let signNameForSend = smsConfig.sign_name;
+    if (templateId) {
+      const [tmpl] = await db.prepare('SELECT aliyun_template_code, sign_name FROM sms_templates WHERE id=?').all(templateId);
+      if (tmpl && tmpl.aliyun_template_code) {
+        templateCodeForSend = tmpl.aliyun_template_code;
+        signNameForSend = tmpl.sign_name || smsConfig.sign_name;
+      }
+    }
+
     let sendStatus = 'failed';
     let failReason = '';
 
@@ -2990,8 +3130,8 @@ app.post('/api/sms-send', async (req, res) => {
         const result = await sendAliyunSms({
           accessKeyId: smsConfig.access_key_id,
           accessKeySecret: smsConfig.access_key_secret,
-          signName: smsConfig.sign_name,
-          templateCode: smsConfig.template_code,
+          signName: signNameForSend,
+          templateCode: templateCodeForSend,
           phone: phoneWithCode,
           templateParam: JSON.stringify({
             name: node.customer_name || '',

@@ -9,6 +9,7 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "@alicloud/openapi-client": "^0.4.15",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "deasync": "^0.1.30",

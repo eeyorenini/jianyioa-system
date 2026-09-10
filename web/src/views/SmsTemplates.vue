@@ -19,10 +19,22 @@
 
       <el-table :data="templateList" style="width: 100%" border>
         <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column prop="name" label="模板名称" width="180" />
+        <el-table-column prop="name" label="模板名称" width="150" />
         <el-table-column prop="content" label="短信内容">
           <template #default="scope">
             <span style="font-size: 13px; color: #666">{{ scope.row.content }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="sign_name" label="签名" width="130">
+          <template #default="scope">
+            <span v-if="scope.row.sign_name" style="color: #67c23a">{{ scope.row.sign_name }}</span>
+            <span v-else style="color: #909399">未设置</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="aliyun_template_code" label="阿里云CODE" width="160">
+          <template #default="scope">
+            <span v-if="scope.row.aliyun_template_code" style="font-family: monospace; font-size: 12px">{{ scope.row.aliyun_template_code }}</span>
+            <el-tag v-else type="warning" size="small">未同步</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="is_active" label="状态" width="80">
@@ -33,9 +45,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="160" />
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="220">
           <template #default="scope">
             <el-button size="small" type="primary" link @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button size="small" type="success" link @click="openSyncDialog(scope.row)" :loading="syncingId === scope.row.id">
+              同步阿里云
+            </el-button>
             <el-button size="small" type="danger" link @click="handleDelete(scope.row.id)">删除</el-button>
           </template>
         </el-table-column>
@@ -71,6 +86,34 @@
         <el-button type="primary" @click="handleSave">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 同步阿里云弹窗 -->
+    <el-dialog v-model="showSyncDialog" title="同步到阿里云" width="480px">
+      <el-form label-width="100px">
+        <el-form-item label="模板">
+          <span style="color: #333">{{ syncForm.template_name }}</span>
+        </el-form-item>
+        <el-form-item label="选择签名" required>
+          <el-select v-model="syncForm.sign_name" placeholder="请选择阿里云签名" style="width: 100%">
+            <el-option label="福进万家地产" value="福进万家地产" />
+            <el-option label="简逸装饰" value="简逸装饰" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="变量说明">
+          <div style="font-size: 12px; color: #909399; line-height: 1.6">
+            同步时自动映射：<br/>
+            {客户姓名} → ${name}<br/>
+            {项目名称} → ${project}<br/>
+            {节点名称} → ${node}<br/>
+            {日期} → ${date}
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSyncDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSync" :loading="syncLoading">确认同步</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -82,6 +125,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const templateList = ref([])
 const showDialog = ref(false)
 const isEdit = ref(false)
+const showSyncDialog = ref(false)
+const syncingId = ref(null)
+const syncLoading = ref(false)
 
 // 短信模板变量列表
 const varList = [
@@ -101,6 +147,12 @@ const form = reactive({
   name: '',
   content: '',
   is_active: true
+})
+
+const syncForm = reactive({
+  template_id: null,
+  template_name: '',
+  sign_name: ''
 })
 
 const loadData = async () => {
@@ -128,6 +180,39 @@ const handleEdit = (row) => {
   form.content = row.content
   form.is_active = row.is_active == 1
   showDialog.value = true
+}
+
+const openSyncDialog = (row) => {
+  syncForm.template_id = row.id
+  syncForm.template_name = row.name
+  syncForm.sign_name = row.sign_name || ''
+  showSyncDialog.value = true
+  syncLoading.value = false
+}
+
+const handleSync = async () => {
+  if (!syncForm.sign_name) {
+    ElMessage.warning('请先选择签名')
+    return
+  }
+  syncLoading.value = true
+  try {
+    const res = await axios.post('/api/sms-templates/sync-aliyun', {
+      template_id: syncForm.template_id,
+      sign_name: syncForm.sign_name
+    })
+    if (res.data.success) {
+      ElMessage.success('同步成功，阿里云模板CODE：' + res.data.template_code)
+      showSyncDialog.value = false
+      loadData()
+    } else {
+      ElMessage.error(res.data.error || '同步失败')
+    }
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || '同步失败')
+  } finally {
+    syncLoading.value = false
+  }
 }
 
 const handleSave = async () => {
