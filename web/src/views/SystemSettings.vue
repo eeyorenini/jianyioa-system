@@ -25,10 +25,10 @@
               <el-input v-model="smsForm.access_key_secret" placeholder="请输入 AccessKey Secret" show-password />
             </el-form-item>
             <el-form-item label="签名名称">
-              <el-input v-model="smsForm.sign_name" placeholder="例如：简逸科技" />
-            </el-form-item>
-            <el-form-item label="模板CODE">
-              <el-input v-model="smsForm.template_code" placeholder="例如：SMS_xxx" />
+              <el-select v-model="smsForm.sign_name" placeholder="请选择签名" style="width:100%">
+                <el-option label="简逸装饰" value="简逸装饰" />
+                <el-option label="北京福进万家房地产经纪" value="北京福进万家房地产经纪" />
+              </el-select>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSmsSettings" :loading="saving">保存设置</el-button>
@@ -85,11 +85,10 @@ const activeTab = ref('sms')
 const saving = ref(false)
 
 const smsForm = reactive({
-  provider: '',
+  provider: 'aliyun',
   access_key_id: '',
   access_key_secret: '',
-  sign_name: '',
-  template_code: ''
+  sign_name: ''
 })
 
 const wechatForm = reactive({
