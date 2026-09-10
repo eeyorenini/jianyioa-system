@@ -58,8 +58,8 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="电话">
-              <el-input v-model="form.phone" />
+            <el-form-item label="电话" required>
+              <el-input v-model="form.phone" placeholder="请输入手机号" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -195,6 +195,10 @@ const handleEdit = (row) => {
 }
 
 const handleSave = async () => {
+  if (!form.phone) {
+    ElMessage.warning('请输入手机号')
+    return
+  }
   try {
     if (isEdit.value) {
       await axios.put(`/api/employees/${form.id}`, form)

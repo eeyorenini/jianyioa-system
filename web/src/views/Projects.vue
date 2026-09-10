@@ -108,8 +108,59 @@
         <el-form-item label="楼盘地址">
           <el-input v-model="form.address" placeholder="请输入楼盘地址" />
         </el-form-item>
-        <el-form-item label="项目经理">
-          <el-input v-model="form.manager" placeholder="请输入项目经理姓名" />
+        <el-form-item label="工长">
+          <el-input v-model="form.manager" placeholder="请输入工长姓名" />
+        </el-form-item>
+        <el-form-item label="设计师">
+          <el-select v-model="form.designer_id" placeholder="请选择设计师" clearable style="width: calc(100% - 140px)">
+            <el-option-group
+              v-for="group in groupedEmployees"
+              :key="group.department_id"
+              :label="group.department_name"
+            >
+              <el-option
+                v-for="emp in group.employees"
+                :key="emp.id"
+                :label="emp.name"
+                :value="emp.id"
+              />
+            </el-option-group>
+          </el-select>
+          <span v-if="designerPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ designerPhone }}</span>
+        </el-form-item>
+        <el-form-item label="工程监理">
+          <el-select v-model="form.supervisor_id" placeholder="请选择工程监理" clearable style="width: calc(100% - 140px)">
+            <el-option-group
+              v-for="group in groupedEmployees"
+              :key="group.department_id"
+              :label="group.department_name"
+            >
+              <el-option
+                v-for="emp in group.employees"
+                :key="emp.id"
+                :label="emp.name"
+                :value="emp.id"
+              />
+            </el-option-group>
+          </el-select>
+          <span v-if="supervisorPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ supervisorPhone }}</span>
+        </el-form-item>
+        <el-form-item label="工长">
+          <el-select v-model="form.manager_id" placeholder="请选择工长" clearable style="width: calc(100% - 140px)">
+            <el-option-group
+              v-for="group in groupedEmployees"
+              :key="group.department_id"
+              :label="group.department_name"
+            >
+              <el-option
+                v-for="emp in group.employees"
+                :key="emp.id"
+                :label="emp.name"
+                :value="emp.id"
+              />
+            </el-option-group>
+          </el-select>
+          <span v-if="managerPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ managerPhone }}</span>
         </el-form-item>
         <el-form-item label="预算金额">
           <el-input-number v-model="form.budget" :min="0" :precision="2" />
@@ -244,7 +295,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus } from '@element-plus/icons-vue'
@@ -261,6 +312,19 @@ const nodeNameInput = ref(null)
 const showAddNodeDialog = ref(false)
 const addNodeForm = reactive({ node_name: '', after_node_id: null, sms_template_id: null })
 const smsTemplateList = ref([])
+const groupedEmployees = ref([])
+
+// 根据 employee id 查找电话
+const getEmployeePhone = (empId) => {
+  for (const group of groupedEmployees.value) {
+    const emp = group.employees.find(e => e.id === empId)
+    if (emp) return emp.phone || ''
+  }
+  return ''
+}
+const designerPhone = computed(() => getEmployeePhone(form.designer_id))
+const supervisorPhone = computed(() => getEmployeePhone(form.supervisor_id))
+const managerPhone = computed(() => getEmployeePhone(form.manager_id))
 
 const form = reactive({
   id: null,
@@ -269,6 +333,9 @@ const form = reactive({
   customer_phone: '',
   address: '',
   manager: '',
+  designer_id: null,
+  supervisor_id: null,
+  manager_id: null,
   budget: 0,
   status: '开工准备',
   start_date: '',
@@ -388,6 +455,16 @@ const loadSmsTemplates = async () => {
     smsTemplateList.value = res.data
   } catch (error) {
     console.error('加载短信模板失败:', error)
+  }
+}
+
+// 加载按部门分组的员工列表
+const loadGroupedEmployees = async () => {
+  try {
+    const res = await axios.get('/api/employees/grouped-by-department')
+    groupedEmployees.value = res.data
+  } catch (error) {
+    console.error('加载员工列表失败:', error)
   }
 }
 
@@ -590,16 +667,18 @@ const loadData = async () => {
   }
 }
 
-// 新增项目
-const openAddDialog = () => {
+// 打开新增项目弹窗
+const openAddDialog = async () => {
   isEdit.value = false
   resetForm()
+  await loadGroupedEmployees()
   showAddDialog.value = true
 }
 
 // 编辑项目
-const handleEdit = (row) => {
+const handleEdit = async (row) => {
   isEdit.value = true
+  await loadGroupedEmployees()
   Object.assign(form, row)
   showAddDialog.value = true
 }
@@ -678,6 +757,9 @@ const resetForm = () => {
   form.customer_phone = ''
   form.address = ''
   form.manager = ''
+  form.designer_id = null
+  form.supervisor_id = null
+  form.manager_id = null
   form.budget = 0
   form.status = '开工准备'
   form.start_date = ''

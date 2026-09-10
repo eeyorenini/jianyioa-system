@@ -985,10 +985,17 @@ app.get('/api/projects', async (req, res) => {
 
 app.get('/api/projects/:id', async (req, res) => {
   try {
-    const stmt = db.prepare(`SELECT p.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
-                            FROM projects p
-                            LEFT JOIN customers c ON p.customer_id = c.id
-                            WHERE p.id = ?`);
+    const stmt = db.prepare(`SELECT p.*,
+      c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+      des.name as designer_name, des.phone as designer_phone,
+      sup.name as supervisor_name, sup.phone as supervisor_phone,
+      mgr.name as manager_name, mgr.phone as manager_phone
+      FROM projects p
+      LEFT JOIN customers c ON p.customer_id = c.id
+      LEFT JOIN employees des ON p.designer_id = des.id
+      LEFT JOIN employees sup ON p.supervisor_id = sup.id
+      LEFT JOIN employees mgr ON p.manager_id = mgr.id
+      WHERE p.id = ?`);
     const project = await stmt.get(req.params.id);
     if (!project) return res.status(404).json({ error: '项目不存在' });
     res.json(project);
@@ -1000,9 +1007,9 @@ app.get('/api/projects/:id', async (req, res) => {
 app.post('/api/projects', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, customer_id, status, start_date, end_date, budget, manager, description } = req.body;
-    const stmt = db.prepare('INSERT INTO projects (name, customer_id, status, start_date, end_date, budget, manager, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, manager || null, description || null);
+    const { name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id } = req.body;
+    const stmt = db.prepare('INSERT INTO projects (name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, manager || null, description || null, designer_id || null, supervisor_id || null, manager_id || null);
     await addLog(userId, '', '新增', '项目管理', result.lastInsertRowid, name, `项目名称: ${name}`, req.ip);
     res.json({ id: result.lastInsertRowid, message: '添加成功' });
   } catch (err) {
@@ -1013,9 +1020,9 @@ app.post('/api/projects', async (req, res) => {
 app.put('/api/projects/:id', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, customer_id, status, start_date, end_date, budget, manager, description } = req.body;
-    const stmt = db.prepare('UPDATE projects SET name=?, customer_id=?, status=?, start_date=?, end_date=?, budget=?, manager=?, description=? WHERE id=?');
-    await stmt.run(name, customer_id || null, status, start_date || null, end_date || null, budget || null, manager || null, description || null, req.params.id);
+    const { name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id } = req.body;
+    const stmt = db.prepare('UPDATE projects SET name=?, customer_id=?, status=?, start_date=?, end_date=?, budget=?, manager=?, description=?, designer_id=?, supervisor_id=?, manager_id=? WHERE id=?');
+    await stmt.run(name, customer_id || null, status, start_date || null, end_date || null, budget || null, manager || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, req.params.id);
     await addLog(userId, '', '编辑', '项目管理', req.params.id, name, `更新项目: ${name}`, req.ip);
     res.json({ message: '更新成功' });
   } catch (err) {
@@ -1654,9 +1661,30 @@ app.get('/api/employees', async (req, res) => {
   res.json(await stmt.all());
 });
 
+// GET /api/employees/grouped-by-department — 按部门分组的员工列表，供项目编辑页下拉用
+app.get('/api/employees/grouped-by-department', async (req, res) => {
+  try {
+    const deptRows = await db.prepare('SELECT id, name FROM departments ORDER BY name').all();
+    const empRows = await db.prepare('SELECT id, name, phone, department_id FROM employees ORDER BY department_id, name').all();
+    const grouped = deptRows.map(dept => ({
+      department_id: dept.id,
+      department_name: dept.name,
+      employees: empRows.filter(e => e.department_id === dept.id)
+    }));
+    const unassigned = empRows.filter(e => e.department_id === null || e.department_id === undefined);
+    if (unassigned.length > 0) {
+      grouped.push({ department_id: null, department_name: '未分配部门', employees: unassigned });
+    }
+    res.json(grouped);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/employees', async (req, res) => {
   const userId = parseInt(req.headers['x-user-id'] || 0);
   const { username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  if (!phone) return res.status(400).json({ error: '手机号必填' });
   const stmt = db.prepare(`
     INSERT INTO employees (username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
