@@ -12,7 +12,6 @@
       </template>
       <el-table :data="employeeList" style="width: 100%">
         <el-table-column prop="name" label="姓名" width="120" />
-        <el-table-column prop="username" label="用户名" width="100" />
         <el-table-column prop="phone" label="电话" width="130" />
         <el-table-column prop="email" label="邮箱" width="180" />
         <el-table-column prop="department_name" label="部门" width="100" />
@@ -28,9 +27,10 @@
           </template>
         </el-table-column>
         <el-table-column prop="entry_date" label="入职日期" width="120" />
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="200">
           <template #default="scope">
             <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button size="small" type="warning" @click="handleResetPassword(scope.row)" v-if="currentUserRole === 'admin'">重置密码</el-button>
             <el-button type="danger" size="small" @click="handleDelete(scope.row.id)">删除</el-button>
           </template>
         </el-table-column>
@@ -41,25 +41,20 @@
       <el-form :model="form" label-width="100px">
         <el-row :gutter="20">
           <el-col :span="12">
-            <el-form-item label="用户名">
-              <el-input v-model="form.username" :disabled="isEdit" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12" v-if="!isEdit">
-            <el-form-item label="密码">
-              <el-input v-model="form.password" type="password" show-password />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="姓名">
-              <el-input v-model="form.name" />
+            <el-form-item label="姓名" required>
+              <el-input v-model="form.name" placeholder="请输入姓名" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="电话" required>
               <el-input v-model="form.phone" placeholder="请输入手机号" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20" v-if="!isEdit">
+          <el-col :span="24">
+            <el-form-item label="初始密码">
+              <span style="color: #909399;">电话后6位（添加后自动设置）</span>
             </el-form-item>
           </el-col>
         </el-row>
@@ -150,10 +145,9 @@ const departments = ref([])
 const roles = ref([])
 const showAddDialog = ref(false)
 const isEdit = ref(false)
+const currentUserRole = ref('')
 const form = reactive({
   id: null,
-  username: '',
-  password: '',
   name: '',
   phone: '',
   email: '',
@@ -175,6 +169,8 @@ const getRoleType = (role) => {
 
 const loadData = async () => {
   try {
+    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
+    currentUserRole.value = userInfo.role_code || ''
     const [empRes, deptRes, roleRes] = await Promise.all([
       axios.get('/api/employees'),
       axios.get('/api/departments'),
@@ -188,9 +184,40 @@ const loadData = async () => {
   }
 }
 
+const handleResetPassword = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要重置 ${row.name} 的密码吗？重置后密码将生成为6位随机数字。`,
+      '重置密码',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
+    const res = await axios.post(`/api/employees/${row.id}/reset-password`, {
+      role_code: userInfo.role_code
+    })
+    ElMessage.success(`密码已重置，新密码：${res.data.password}`)
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error('重置失败')
+  }
+}
+
 const handleEdit = (row) => {
   isEdit.value = true
-  Object.assign(form, row)
+  Object.assign(form, {
+    id: row.id,
+    name: row.name,
+    phone: row.phone,
+    email: row.email || '',
+    department_id: row.department_id,
+    position: row.position || '',
+    role_id: row.role_id,
+    status: row.status || '在职',
+    entry_date: row.entry_date || '',
+    salary: row.salary || 0,
+    id_card: row.id_card || '',
+    emergency_contact: row.emergency_contact || '',
+    emergency_phone: row.emergency_phone || ''
+  })
   showAddDialog.value = true
 }
 
@@ -199,18 +226,22 @@ const handleSave = async () => {
     ElMessage.warning('请输入手机号')
     return
   }
+  if (!form.name) {
+    ElMessage.warning('请输入姓名')
+    return
+  }
   try {
     if (isEdit.value) {
       await axios.put(`/api/employees/${form.id}`, form)
       ElMessage.success('更新成功')
     } else {
-      await axios.post('/api/employees', form)
-      ElMessage.success('添加成功')
+      const res = await axios.post('/api/employees', form)
+      ElMessage.success(`添加成功，初始密码：${res.data.password}`)
     }
     closeDialog()
     loadData()
   } catch (error) {
-    ElMessage.error('操作失败')
+    ElMessage.error(error.response?.data?.error || '操作失败')
   }
 }
 
@@ -234,8 +265,6 @@ const closeDialog = () => {
   showAddDialog.value = false
   isEdit.value = false
   form.id = null
-  form.username = ''
-  form.password = ''
   form.name = ''
   form.phone = ''
   form.email = ''

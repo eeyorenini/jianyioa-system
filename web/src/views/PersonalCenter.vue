@@ -18,12 +18,32 @@
         </el-row>
       </div>
     </el-card>
+
+    <!-- 修改密码 -->
+    <el-card style="margin-top: 16px;">
+      <template #header>
+        <div class="header">修改密码</div>
+      </template>
+      <el-form :model="pwdForm" label-width="100px" style="max-width: 400px;">
+        <el-form-item label="旧密码">
+          <el-input v-model="pwdForm.old_password" type="password" show-password placeholder="请输入旧密码" />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="pwdForm.new_password" type="password" show-password placeholder="请输入新密码（至少6位）" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleChangePassword">确认修改</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
 <script setup>
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
+import { reactive } from 'vue'
 
 const router = useRouter()
 
@@ -65,6 +85,34 @@ const handleJump = (item) => {
     return
   }
   router.push(item.path)
+}
+
+const pwdForm = reactive({
+  old_password: '',
+  new_password: ''
+})
+
+const handleChangePassword = async () => {
+  if (!pwdForm.old_password) {
+    ElMessage.warning('请输入旧密码')
+    return
+  }
+  if (!pwdForm.new_password || pwdForm.new_password.length < 6) {
+    ElMessage.warning('新密码至少6位')
+    return
+  }
+  try {
+    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
+    await axios.put(`/api/employees/${userInfo.id}/password`, {
+      old_password: pwdForm.old_password,
+      new_password: pwdForm.new_password
+    })
+    ElMessage.success('密码修改成功')
+    pwdForm.old_password = ''
+    pwdForm.new_password = ''
+  } catch (error) {
+    ElMessage.error(error.response?.data?.error || '修改失败')
+  }
 }
 </script>
 

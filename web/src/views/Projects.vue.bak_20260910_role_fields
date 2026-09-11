@@ -99,59 +99,20 @@
         <el-form-item label="项目名称" required>
           <el-input v-model="form.name" placeholder="请输入项目名称" />
         </el-form-item>
-        <el-form-item label="客户" required>
-          <el-select
-            v-model="form.customer_id"
-            placeholder="请选择客户"
-            filterable
-            clearable
-            style="width: 100%"
-            @change="onCustomerChange"
-          >
-            <el-option
-              v-for="c in customerList"
-              :key="c.id"
-              :label="c.name + ' - ' + c.phone"
-              :value="c.id"
-            />
-          </el-select>
+        <el-form-item label="客户姓名">
+          <el-input v-model="form.customer_name" placeholder="请输入客户姓名" />
         </el-form-item>
-        <el-form-item v-if="form.customer_id" label="客户手机">
-          <el-input :model-value="selectedCustomerPhone" disabled placeholder="自动带出" />
+        <el-form-item label="客户手机">
+          <el-input v-model="form.customer_phone" placeholder="请输入客户手机号" />
         </el-form-item>
-        <el-form-item v-if="form.customer_id" label="楼盘地址">
-          <el-input :model-value="selectedCustomerAddress" disabled placeholder="自动带出" />
+        <el-form-item label="楼盘地址">
+          <el-input v-model="form.address" placeholder="请输入楼盘地址" />
         </el-form-item>
-        <el-form-item label="设计师">
-          <div class="employee-picker" @click="openEmployeeDrawer('designer')">
-            <el-input :model-value="getEmployeeName(form.designer_id)" placeholder="请选择设计师" readonly clearable @clear="form.designer_id = null" />
-          </div>
-          <span v-if="designerPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ designerPhone }}</span>
-        </el-form-item>
-        <el-form-item label="工程监理">
-          <div class="employee-picker" @click="openEmployeeDrawer('supervisor')">
-            <el-input :model-value="getEmployeeName(form.supervisor_id)" placeholder="请选择工程监理" readonly clearable @clear="form.supervisor_id = null" />
-          </div>
-          <span v-if="supervisorPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ supervisorPhone }}</span>
-        </el-form-item>
-        <el-form-item label="工长">
-          <div class="employee-picker" @click="openEmployeeDrawer('manager')">
-            <el-input :model-value="getEmployeeName(form.manager_id)" placeholder="请选择工长" readonly clearable @clear="form.manager_id = null" />
-          </div>
-          <span v-if="managerPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ managerPhone }}</span>
+        <el-form-item label="项目经理">
+          <el-input v-model="form.manager" placeholder="请输入项目经理姓名" />
         </el-form-item>
         <el-form-item label="预算金额">
           <el-input-number v-model="form.budget" :min="0" :precision="2" />
-        </el-form-item>
-        <el-form-item label="节点模板">
-          <el-select v-model="form.template_id" placeholder="不选择则不生成默认节点" clearable style="width: 100%">
-            <el-option
-              v-for="t in templateList"
-              :key="t.id"
-              :label="t.name"
-              :value="t.id"
-            />
-          </el-select>
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status" style="width: 100%">
@@ -187,28 +148,15 @@
           点击节点名称可编辑，点击状态可切换
         </div>
 
-        <!-- 应用模板按钮 -->
-        <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-          <el-select v-model="drawerTemplateId" placeholder="选择节点模板" clearable size="small" style="width: 200px">
-            <el-option
-              v-for="t in templateList"
-              :key="t.id"
-              :label="t.name"
-              :value="t.id"
-            />
-          </el-select>
-          <el-button type="primary" size="small" :disabled="!drawerTemplateId" @click="applyTemplate">
-            应用模板
+        <!-- 操作按钮 -->
+        <div style="margin-bottom: 12px;">
+          <el-button type="primary" size="small" @click="openAddNodeDialog">
+            <el-icon><Plus /></el-icon>新增节点
           </el-button>
         </div>
 
         <!-- 节点列表 -->
         <div class="node-list">
-          <div style="margin-bottom: 12px;">
-            <el-button type="primary" size="small" plain @click="openAddNodeDialog">
-              <el-icon><Plus /></el-icon>新增节点
-            </el-button>
-          </div>
           <div
             v-for="(node, index) in currentProject?.nodes"
             :key="node.id"
@@ -292,36 +240,11 @@
         <el-button type="primary" @click="handleAddNode">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- 员工选择抽屉 -->
-    <el-drawer v-model="showEmployeeDrawer" :title="`选择${employeeDrawerTypeLabel}`" size="500px">
-      <div class="employee-drawer-content">
-        <div v-for="group in groupedEmployees" :key="group.department_id" class="emp-dept-group">
-          <div class="emp-dept-label">{{ group.department_name }}</div>
-          <div class="emp-list">
-            <div
-              v-for="emp in group.employees"
-              :key="emp.id"
-              class="emp-item"
-              :class="{ 'emp-item-selected': isEmployeeSelected(emp.id) }"
-              @click="selectEmployee(emp)"
-            >
-              <span class="emp-name">{{ emp.name }}</span>
-              <span v-if="emp.phone" class="emp-phone">{{ emp.phone }}</span>
-              <el-icon v-if="isEmployeeSelected(emp.id)" class="emp-check"><Check /></el-icon>
-            </div>
-          </div>
-        </div>
-        <div v-if="groupedEmployees.length === 0" style="text-align:center;color:#909399;padding:40px">
-          暂无员工数据
-        </div>
-      </div>
-    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus } from '@element-plus/icons-vue'
@@ -338,121 +261,20 @@ const nodeNameInput = ref(null)
 const showAddNodeDialog = ref(false)
 const addNodeForm = reactive({ node_name: '', after_node_id: null, sms_template_id: null })
 const smsTemplateList = ref([])
-const groupedEmployees = ref([])
-const customerList = ref([])
-const templateList = ref([])
-const drawerTemplateId = ref(null)
-const showEmployeeDrawer = ref(false)
-const employeeDrawerType = ref('designer')
-
-// 根据 employee id 查找电话
-const getEmployeePhone = (empId) => {
-  for (const group of groupedEmployees.value) {
-    const emp = group.employees.find(e => e.id === empId)
-    if (emp) return emp.phone || ''
-  }
-  return ''
-}
-const designerPhone = computed(() => getEmployeePhone(form.designer_id))
-const supervisorPhone = computed(() => getEmployeePhone(form.supervisor_id))
-const managerPhone = computed(() => getEmployeePhone(form.manager_id))
-
-const employeeDrawerTypeLabel = computed(() => {
-  const map = { designer: '设计师', supervisor: '工程监理', manager: '工长' }
-  return map[employeeDrawerType.value] || ''
-})
-
-const getEmployeeName = (empId) => {
-  if (!empId) return ''
-  for (const group of groupedEmployees.value) {
-    const emp = group.employees.find(e => e.id === empId)
-    if (emp) return emp.name
-  }
-  return ''
-}
-
-const isEmployeeSelected = (empId) => {
-  return form[employeeDrawerType.value + '_id'] === empId
-}
-
-const selectEmployee = (emp) => {
-  form[employeeDrawerType.value + '_id'] = emp.id
-  showEmployeeDrawer.value = false
-}
-
-const openEmployeeDrawer = async (type) => {
-  employeeDrawerType.value = type
-  showEmployeeDrawer.value = true
-}
 
 const form = reactive({
   id: null,
   name: '',
-  customer_id: null,
-  designer_id: null,
-  supervisor_id: null,
-  manager_id: null,
+  customer_name: '',
+  customer_phone: '',
+  address: '',
+  manager: '',
   budget: 0,
   status: '开工准备',
   start_date: '',
   end_date: '',
-  description: '',
-  template_id: null
+  description: ''
 })
-
-// 选中客户后自动带出信息
-const selectedCustomerPhone = computed(() => {
-  const c = customerList.value.find(c => c.id === form.customer_id)
-  return c ? c.phone : ''
-})
-const selectedCustomerAddress = computed(() => {
-  const c = customerList.value.find(c => c.id === form.customer_id)
-  return c ? c.address : ''
-})
-const onCustomerChange = (val) => {
-  if (!val) {
-    form.customer_id = null
-  }
-}
-
-// 加载客户列表
-const loadCustomers = async () => {
-  try {
-    const res = await axios.get('/api/customers')
-    customerList.value = Array.isArray(res.data) ? res.data : []
-  } catch (error) {
-    console.error('加载客户列表失败:', error)
-  }
-}
-
-// 加载节点模板列表
-const loadTemplates = async () => {
-  try {
-    const res = await axios.get('/api/progress-node-templates')
-    templateList.value = Array.isArray(res.data) ? res.data : []
-  } catch (error) {
-    console.error('加载节点模板失败:', error)
-  }
-}
-
-// 应用模板到当前项目
-const applyTemplate = async () => {
-  if (!drawerTemplateId.value || !currentProject.value) return
-  try {
-    await axios.post(`/api/progress-nodes/init/${currentProject.value.id}`, {
-      template_id: drawerTemplateId.value
-    })
-    ElMessage.success('模板应用成功，节点已生成')
-    // 刷新项目数据
-    await loadData()
-    // 刷新抽屉内的 currentProject
-    const updated = projectList.value.find(p => p.id === currentProject.value.id)
-    if (updated) currentProject.value = updated
-    drawerTemplateId.value = null
-  } catch (error) {
-    ElMessage.error('应用模板失败')
-  }
-}
 
 // 状态映射
 const getStatusType = (status) => {
@@ -566,16 +388,6 @@ const loadSmsTemplates = async () => {
     smsTemplateList.value = res.data
   } catch (error) {
     console.error('加载短信模板失败:', error)
-  }
-}
-
-// 加载按部门分组的员工列表
-const loadGroupedEmployees = async () => {
-  try {
-    const res = await axios.get('/api/employees/grouped-by-department')
-    groupedEmployees.value = res.data
-  } catch (error) {
-    console.error('加载员工列表失败:', error)
   }
 }
 
@@ -746,8 +558,7 @@ const resetAllNodes = async () => {
 const openNodeDrawer = async (project) => {
   currentProject.value = project
   showNodeDrawer.value = true
-  drawerTemplateId.value = null
-  await Promise.all([loadSmsTemplates(), loadTemplates()])
+  await loadSmsTemplates()
   // 确保 currentProject 指向最新的数据
   const updated = projectList.value.find(p => p.id === project.id)
   if (updated) currentProject.value = updated
@@ -779,19 +590,16 @@ const loadData = async () => {
   }
 }
 
-// 打开新增项目弹窗
-const openAddDialog = async () => {
+// 新增项目
+const openAddDialog = () => {
   isEdit.value = false
   resetForm()
-  await Promise.all([loadGroupedEmployees(), loadCustomers(), loadTemplates()])
   showAddDialog.value = true
 }
 
 // 编辑项目
-const handleEdit = async (row) => {
+const handleEdit = (row) => {
   isEdit.value = true
-  resetForm()
-  await Promise.all([loadGroupedEmployees(), loadCustomers()])
   Object.assign(form, row)
   showAddDialog.value = true
 }
@@ -808,22 +616,41 @@ const handleSave = async () => {
       ElMessage.success('更新成功')
     } else {
       const res = await axios.post('/api/projects', form)
-      // 如果选了模板，自动生成节点
-      if (form.template_id) {
-        try {
-          await axios.post(`/api/progress-nodes/init/${res.data.id}`, {
-            template_id: form.template_id
-          })
-        } catch (e) {
-          console.error('自动生成节点失败:', e)
-        }
-      }
+      // 为新项目创建默认节点
+      await createDefaultNodes(res.data.id)
       ElMessage.success('添加成功')
     }
     closeDialog()
     loadData()
   } catch (error) {
     ElMessage.error('操作失败')
+  }
+}
+
+// 为新项目创建默认节点
+const createDefaultNodes = async (projectId) => {
+  const defaultNodes = [
+    '客户签约完成',
+    '开工交底完成',
+    '水电施工完成',
+    '水电验收合格',
+    '泥瓦工程完工',
+    '木工工程完工',
+    '油漆工程完工',
+    '全屋安装收尾',
+    '整体竣工验收',
+    '项目正式完工'
+  ]
+  for (let i = 0; i < defaultNodes.length; i++) {
+    try {
+      await axios.post('/api/project-stages', {
+        project_id: projectId,
+        node_name: defaultNodes[i],
+        status: 'pending'
+      })
+    } catch (error) {
+      console.error('创建节点失败:', error)
+    }
   }
 }
 
@@ -847,16 +674,15 @@ const handleDelete = async (id) => {
 const resetForm = () => {
   form.id = null
   form.name = ''
-  form.customer_id = null
-  form.designer_id = null
-  form.supervisor_id = null
-  form.manager_id = null
+  form.customer_name = ''
+  form.customer_phone = ''
+  form.address = ''
+  form.manager = ''
   form.budget = 0
   form.status = '开工准备'
   form.start_date = ''
   form.end_date = ''
   form.description = ''
-  form.template_id = null
 }
 
 // 关闭弹窗
@@ -1220,72 +1046,5 @@ onMounted(() => {
   border-top: 1px solid #ebeef5;
   display: flex;
   justify-content: center;
-}
-
-/* 员工选择器 */
-.employee-picker {
-  cursor: pointer;
-  display: inline-block;
-}
-
-.employee-drawer-content {
-  padding: 0 8px;
-}
-
-.emp-dept-group {
-  margin-bottom: 20px;
-}
-
-.emp-dept-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #409eff;
-  padding: 6px 12px;
-  background: #f0f7ff;
-  border-radius: 4px;
-  margin-bottom: 8px;
-}
-
-.emp-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.emp-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
-  border: 1px solid transparent;
-}
-
-.emp-item:hover {
-  background: #f5f7fa;
-  border-color: #dcdfe6;
-}
-
-.emp-item-selected {
-  background: #ecf5ff;
-  border-color: #409eff;
-}
-
-.emp-name {
-  font-size: 14px;
-  color: #303133;
-  flex: 1;
-}
-
-.emp-phone {
-  font-size: 12px;
-  color: #909399;
-}
-
-.emp-check {
-  color: #409eff;
-  font-size: 16px;
 }
 </style>

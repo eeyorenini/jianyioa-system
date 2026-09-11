@@ -190,38 +190,17 @@ app.get('/api/health', (req, res) => {
 });
 
 // ==================== 客户管理 ====================
+// GET 客户列表 — 下拉选择用，不受权限限制
 app.get('/api/customers', async (req, res) => {
   try {
-    const userId = parseInt(req.headers['x-user-id'] || 0);
-    
-    // 未登录或无效用户返回空
-    if (userId <= 0) {
-      return res.json([]);
-    }
-
-    let hasAllCustomer = false;
-
-    // 检查用户是否有 customer_all 权限
-    const user = await db.prepare('SELECT e.*, r.code as role_code, r.permissions as role_permissions FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?').get(userId);
-    if (user) {
-      const perms = JSON.parse(user.role_permissions || '[]');
-      hasAllCustomer = perms.includes('customer_all') || user.role_code === 'admin';
-    }
-
     const { search, status } = req.query;
     let sql = 'SELECT * FROM customers WHERE 1=1';
     const params = [];
 
-    // 没有 customer_all 权限的用户只能看自己创建的客户
-    if (!hasAllCustomer) {
-      sql += ' AND creator_id = ?';
-      params.push(userId);
-    }
-
     if (search) {
-      sql += ' AND (name LIKE ? OR phone LIKE ? OR address LIKE ?)';
+      sql += ' AND (name LIKE ? OR phone LIKE ?)';
       const s = `%${search}%`;
-      params.push(s, s, s);
+      params.push(s, s);
     }
     if (status) {
       sql += ' AND status = ?';
@@ -1007,9 +986,9 @@ app.get('/api/projects/:id', async (req, res) => {
 app.post('/api/projects', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id } = req.body;
-    const stmt = db.prepare('INSERT INTO projects (name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, manager || null, description || null, designer_id || null, supervisor_id || null, manager_id || null);
+    const { name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id } = req.body;
+    const stmt = db.prepare('INSERT INTO projects (name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, template_id || null);
     await addLog(userId, '', '新增', '项目管理', result.lastInsertRowid, name, `项目名称: ${name}`, req.ip);
     res.json({ id: result.lastInsertRowid, message: '添加成功' });
   } catch (err) {
@@ -1020,9 +999,9 @@ app.post('/api/projects', async (req, res) => {
 app.put('/api/projects/:id', async (req, res) => {
   try {
     const userId = parseInt(req.headers['x-user-id'] || 0);
-    const { name, customer_id, status, start_date, end_date, budget, manager, description, designer_id, supervisor_id, manager_id } = req.body;
-    const stmt = db.prepare('UPDATE projects SET name=?, customer_id=?, status=?, start_date=?, end_date=?, budget=?, manager=?, description=?, designer_id=?, supervisor_id=?, manager_id=? WHERE id=?');
-    await stmt.run(name, customer_id || null, status, start_date || null, end_date || null, budget || null, manager || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, req.params.id);
+    const { name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id } = req.body;
+    const stmt = db.prepare('UPDATE projects SET name=?, customer_id=?, status=?, start_date=?, end_date=?, budget=?, description=?, designer_id=?, supervisor_id=?, manager_id=?, template_id=? WHERE id=?');
+    await stmt.run(name, customer_id || null, status, start_date || null, end_date || null, budget || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, template_id || null, req.params.id);
     await addLog(userId, '', '编辑', '项目管理', req.params.id, name, `更新项目: ${name}`, req.ip);
     res.json({ message: '更新成功' });
   } catch (err) {
@@ -1681,29 +1660,80 @@ app.get('/api/employees/grouped-by-department', async (req, res) => {
   }
 });
 
+// 生成6位随机数字密码
+function generateRandomPassword() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// 密码取电话后6位
+function passwordFromPhone(phone) {
+  return phone ? phone.slice(-6) : '123456';
+}
+
 app.post('/api/employees', async (req, res) => {
   const userId = parseInt(req.headers['x-user-id'] || 0);
-  const { username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
   if (!phone) return res.status(400).json({ error: '手机号必填' });
+  if (!name) return res.status(400).json({ error: '姓名必填' });
+
+  // 用户名=电话，初始密码=电话后6位
+  const username = phone;
+  const password = passwordFromPhone(phone);
+
   const stmt = db.prepare(`
-    INSERT INTO employees (username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone) 
+    INSERT INTO employees (username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = await stmt.run(username, password, name, phone, email, department_id, position, role_id, status || '在职', entry_date, salary, id_card, emergency_contact, emergency_phone);
-  await addLog(userId, '', '新增', '员工管理', result.lastInsertRowid, name, `员工姓名: ${name}, 用户名: ${username}`, req.ip);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  await addLog(userId, '', '新增', '员工管理', result.lastInsertRowid, name, `员工姓名: ${name}，用户名: ${username}，初始密码: ${password}`, req.ip);
+  res.json({ id: result.lastInsertRowid, message: '添加成功', password });
 });
 
 app.put('/api/employees/:id', async (req, res) => {
   const userId = parseInt(req.headers['x-user-id'] || 0);
-  const { username, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  if (!name) return res.status(400).json({ error: '姓名必填' });
+
+  // 不允许通过此接口修改用户名（用户名就是电话）
   const stmt = db.prepare(`
-    UPDATE employees SET username=?, name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, salary=?, id_card=?, emergency_contact=?, emergency_phone=? 
+    UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, salary=?, id_card=?, emergency_contact=?, emergency_phone=?
     WHERE id=?
   `);
-  await stmt.run(username, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
+  await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
   await addLog(userId, '', '编辑', '员工管理', req.params.id, name || '', `更新员工: ${name || req.params.id}`, req.ip);
   res.json({ message: '更新成功' });
+});
+
+// 管理员重置密码（随机6位数字）
+app.post('/api/employees/:id/reset-password', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || 0);
+  const { role_code } = req.body;
+  // 仅管理员可操作
+  if (role_code !== 'admin') {
+    return res.status(403).json({ error: '仅管理员可重置密码' });
+  }
+  const newPassword = generateRandomPassword();
+  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(newPassword, req.params.id);
+  await addLog(userId, '', '重置密码', '员工管理', req.params.id, '', `重置密码，新密码: ${newPassword}`, req.ip);
+  res.json({ message: '密码已重置', password: newPassword });
+});
+
+// 个人修改密码
+app.put('/api/employees/:id/password', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || 0);
+  const { old_password, new_password } = req.body;
+
+  // 校验旧密码
+  const emp = await db.prepare('SELECT password FROM employees WHERE id=?').get(userId);
+  if (!emp || emp.password !== old_password) {
+    return res.status(400).json({ error: '旧密码错误' });
+  }
+  if (!new_password || new_password.length < 6) {
+    return res.status(400).json({ error: '新密码至少6位' });
+  }
+  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(new_password, userId);
+  await addLog(userId, '', '修改密码', '员工管理', userId, '', '修改登录密码', req.ip);
+  res.json({ message: '密码修改成功' });
 });
 
 app.delete('/api/employees/:id', async (req, res) => {
@@ -2942,21 +2972,18 @@ app.post('/api/sms-templates/sync-aliyun', async (req, res) => {
     // 阿里云 CreateSmsTemplate 要求变量格式为 ${code}，$ 在左边
     // 系统模板的 {客户姓名} -> ${name} 映射，供 SendSms 的 templateParam 英文 key 对应
     const varMap = { '客户姓名': 'name', '项目名称': 'project', '节点名称': 'node', '日期': 'date' };
-    // 阿里云变量类型映射
-    // name：个人姓名/项目名/节点名（中文）
-    // time：日期时间变量（但 SendSms 发送时直接传格式化字符串，time类型也接受任意格式）
-    const varTypeMap = { name: 'name', project: 'name', node: 'name', date: 'time' };
+    const varTypeMap = { name: 'name', project: 'user_nick', node: 'user_nick', date: 'time' };
     let aliyunContent = tmpl.content;
     for (const [cn, en] of Object.entries(varMap)) {
       aliyunContent = aliyunContent.split('{' + cn + '}').join('${' + en + '}');
     }
-    // 提取模板中的变量，生成 TemplateRule（对象格式，不是数组）
+    // 提取模板中的变量，生成 TemplateRule（对象格式，key=变量名，value=阿里云类型枚举中文名）
     const foundVars = [...aliyunContent.matchAll(/\$\{([^}]+)\}/g)].map(m => m[1]);
-    const templateRule = {};
-    for (const v of foundVars) {
-      if (varTypeMap[v]) templateRule[v] = varTypeMap[v];
-    }
-    const templateRuleStr = JSON.stringify(templateRule);
+    const templateRuleObj = {};
+    foundVars.forEach(v => {
+      templateRuleObj[v] = varTypeMap[v] || '个人姓名';
+    });
+    const templateRuleStr = JSON.stringify(templateRuleObj);
     console.log('【DEBUG sync-aliyun】原始:', tmpl.content, '| 转换后:', aliyunContent, '| TemplateRule:', templateRuleStr);
 
     // 调用阿里云 CreateSmsTemplate API

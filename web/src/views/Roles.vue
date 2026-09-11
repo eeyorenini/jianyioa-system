@@ -34,7 +34,7 @@
           <el-input v-model="form.name" placeholder="如：项目经理" />
         </el-form-item>
         <el-form-item label="角色编码">
-          <el-input v-model="form.code" placeholder="如：manager" :disabled="isEdit" />
+          <el-input v-model="form.code" placeholder="输入角色名称后自动生成，也可手动填写" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
@@ -56,7 +56,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -154,6 +154,31 @@ const closeDialog = () => {
   form.description = ''
   selectedPermissions.value = []
 }
+
+// 根据角色名称自动生成角色编码
+const generateCode = (name) => {
+  if (!name) return ''
+  // 移除空格、转小写、替换特殊字符
+  return name.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+    .split('')
+    .map(c => {
+      // 汉字转拼音首字母（简单映射常见字）
+      const map = { '超': 'c', '管': 'g', '理': 'l', '员': 'y', '工': 'g', '设': 's', '计': 'j', '财': 'c', '务': 'w', '普': 'p', '通': 't' }
+      return map[c] || c
+    })
+    .join('')
+    .replace(/[a-z]+/g, m => m) // 保留英文字母
+    .slice(0, 20)
+}
+
+// 监听名称变化，自动生成编码
+watch(() => form.name, (newVal) => {
+  if (!isEdit.value && newVal) {
+    form.code = generateCode(newVal)
+  }
+})
 
 onMounted(() => { loadData() })
 </script>
