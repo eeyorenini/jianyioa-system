@@ -95,7 +95,7 @@
         </el-form-item>
         <el-form-item label="选择签名" required>
           <el-select v-model="syncForm.sign_name" placeholder="请选择阿里云签名" style="width: 100%">
-            <el-option label="福进万家地产" value="福进万家地产" />
+            <el-option label="北京福进万家房地产经纪" value="北京福进万家房地产经纪" />
             <el-option label="简逸装饰" value="简逸装饰" />
           </el-select>
         </el-form-item>
