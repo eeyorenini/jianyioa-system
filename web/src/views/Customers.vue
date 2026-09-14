@@ -77,6 +77,7 @@
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="handleEdit(row)">编辑</el-button>
             <el-button size="small" type="primary" link @click="handleView(row)">查看</el-button>
+            <el-button size="small" type="danger" link v-if="userStore.isAdmin" @click="handleDelete(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -225,6 +226,7 @@
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { customerApi } from '../utils/api'
+import { useUserStore } from '../stores/user'
 
 // ============ 状态 ============
 const loading = ref(false)
@@ -238,6 +240,7 @@ const showTagInput = ref(false)
 const newTag = ref('')
 const currentCustomer = ref(null)
 const employeeList = ref([])
+const userStore = useUserStore()
 const token = localStorage.getItem('token') || ''
 
 // ============ 搜索和筛选 ============
