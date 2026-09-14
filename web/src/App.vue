@@ -91,7 +91,7 @@
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.1</div>
+      <div class="sidebar-version">v 2.1.2</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -160,7 +160,7 @@
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.1</div>
+      <div class="sidebar-version">v 2.1.2</div>
     </div>
     
     <!-- 主内容区 -->
