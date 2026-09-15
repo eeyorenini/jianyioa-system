@@ -45,7 +45,7 @@
     <!-- 节点管理抽屉 -->
     <el-drawer v-model="showNodeDrawer" :title="`模板节点：${currentTemplate?.name}`" size="700px">
       <div style="margin-bottom: 12px">
-        <el-button type="primary" size="small" @click="openNodeDialog">
+        <el-button type="primary" size="small" @click="() => openNodeDialog()">
           <el-icon><Plus /></el-icon>新增节点
         </el-button>
         <el-button size="small" @click="loadTemplateNodes">刷新</el-button>
@@ -70,7 +70,7 @@
     <el-dialog v-model="showNodeDialog" :title="isEditNode ? '编辑节点' : '新增节点'" width="500px">
       <el-form :model="nodeForm" label-width="120px">
         <el-form-item label="节点名称" required>
-          <el-input v-model="nodeForm.node_name" placeholder="如：水电工程完成" />
+          <el-input v-model="nodeForm.node_name" placeholder="如：水电工程完成" @input="handleNodeNameInput" />
         </el-form-item>
         <el-form-item label="节点标识" required>
           <el-input v-model="nodeForm.node_key" placeholder="英文唯一标识，如 water_complete" />
@@ -93,8 +93,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 import axios from 'axios'
+import { pinyin } from 'pinyin-pro'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const templateList = ref([])
@@ -202,12 +203,15 @@ const loadTemplateNodes = async () => {
   try {
     const res = await axios.get(`/api/progress-node-template-nodes/${currentTemplate.value.id}`)
     nodeList.value = res.data
+    await nextTick()
   } catch (error) {
     console.error('加载节点失败:', error)
   }
 }
 
 const openNodeDialog = (row = null) => {
+  // 强制重置编辑状态，避免上次编辑后 isEditNode 没有重置
+  isEditNode.value = false
   if (row) {
     isEditNode.value = true
     nodeForm.id = row.id
@@ -228,6 +232,16 @@ const openNodeDialog = (row = null) => {
   showNodeDialog.value = true
 }
 
+// 中文名称自动转英文标识
+const handleNodeNameInput = (value) => {
+  if (!value || isEditNode.value) return  // 编辑模式下不自动覆盖
+  // 转换为拼音，用空格分隔每个字
+  const pinyinArr = pinyin(value, { toneType: 'none', separator: ' ' })
+  // 转成下划线格式：水电工程完成 → shui_dian_gong_cheng_wan_cheng
+  const key = pinyinArr.replace(/\s+/g, '_').toLowerCase()
+  nodeForm.node_key = key
+}
+
 const handleSaveNode = async () => {
   if (!nodeForm.node_name || !nodeForm.node_key) {
     ElMessage.warning('请填写节点名称和标识')
@@ -242,6 +256,9 @@ const handleSaveNode = async () => {
       ElMessage.success('节点添加成功')
     }
     showNodeDialog.value = false
+    console.log('保存时 isEditNode=', isEditNode.value, 'nodeForm=', JSON.stringify(nodeForm))
+    await nextTick()
+    await nextTick() // 等待DOM完全更新
     loadTemplateNodes()
   } catch (error) {
     ElMessage.error('操作失败: ' + (error.response?.data?.error || error.message))
