@@ -226,45 +226,35 @@
             @drop="handleNodeDrop(index)"
             @dragend="handleNodeDragEnd"
           >
-            <div class="node-item-left">
-              <!-- 拖拽手柄 -->
-              <div class="drag-handle">
-                <el-icon><Rank /></el-icon>
-              </div>
+            <!-- 第一行：序号 + 拖拽手柄 + 节点名称 + 删除按钮 -->
+            <div class="node-item-row1">
+              <div class="drag-handle"><el-icon><Rank /></el-icon></div>
               <div class="node-index">{{ index + 1 }}</div>
-              <div class="node-info">
-                <!-- 点击编辑节点名称 -->
-                <div class="node-name-edit" v-if="editingNodeId !== node.id" @click="startEditNode(node)">
-                  {{ node.node_name || node.stage_name || '未命名' }}
-                  <el-icon class="edit-icon"><Edit /></el-icon>
-                </div>
-                <el-input v-else size="small" v-model="editingNodeName" @keyup.enter="saveNodeName(node)" @blur="saveNodeName(node)" @keyup.escape="cancelEditNode" ref="nodeNameInput" style="width: 160px;" />
-                <div class="node-meta">
-                  <el-tag size="small" :type="getNodeStatusTagType(node.status)">{{ getNodeStatusText(node.status) }}</el-tag>
-                  <span class="node-date" v-if="node.actual_date">完成于 {{ node.actual_date }}</span>
-                  <span class="node-date-range" v-else-if="node.plan_date && node.plan_end_date">{{ formatNodeDateRange(node) }}</span>
-                  <span class="node-date" v-else-if="node.plan_date">预计 {{ node.plan_date }}</span>
-                </div>
+              <!-- 点击编辑节点名称 -->
+              <div class="node-name-edit" v-if="editingNodeId !== node.id" @click="startEditNode(node)">
+                {{ node.node_name || node.stage_name || '未命名' }}
+                <el-icon class="edit-icon"><Edit /></el-icon>
               </div>
+              <el-input v-else size="small" v-model="editingNodeName" @keyup.enter="saveNodeName(node)" @blur="saveNodeName(node)" @keyup.escape="cancelEditNode" ref="nodeNameInput" style="width: 160px;" />
+              <div style="flex:1"></div>
+              <el-button size="small" type="danger" link @click="handleDeleteNode(node)">
+                <el-icon><Close /></el-icon>
+              </el-button>
             </div>
-            <div class="node-item-right">
-              <el-select v-model="node.sms_template_id" size="small" placeholder="无模板" clearable style="width: 120px; margin-right: 8px" @change="handleNodeSmsTemplateChange(node)">
-                <el-option
-                  v-for="t in smsTemplateList"
-                  :key="t.id"
-                  :label="t.name"
-                  :value="t.id"
-                />
-              </el-select>
-              <el-select v-model="node.status" size="small" style="width: 100px" @change="handleNodeStatusChange(node)">
+            <!-- 第二行：状态 + 施工日期 + 短信模板 -->
+            <div class="node-item-row2">
+              <el-select v-model="node.status" size="small" style="width: 90px" @change="handleNodeStatusChange(node)">
                 <el-option label="待开始" value="pending" />
                 <el-option label="进行中" value="in_progress" />
                 <el-option label="已完成" value="completed" />
                 <el-option label="已跳过" value="skipped" />
               </el-select>
-              <el-button size="small" type="danger" link style="margin-left: 8px" @click="handleDeleteNode(node)">
-                <el-icon><Close /></el-icon>
-              </el-button>
+              <span class="node-date-range" v-if="node.plan_date && node.plan_end_date">{{ formatNodeDateRange(node) }}</span>
+              <span class="node-date" v-else-if="node.plan_date">{{ node.plan_date }}</span>
+              <span style="flex:1"></span>
+              <el-select v-model="node.sms_template_id" size="small" placeholder="无模板" clearable style="width: 130px" @change="handleNodeSmsTemplateChange(node)">
+                <el-option v-for="t in smsTemplateList" :key="t.id" :label="t.name" :value="t.id" />
+              </el-select>
             </div>
           </div>
         </div>
@@ -295,57 +285,87 @@
       <div class="gantt-dialog-body">
         <div class="gantt-section">
           <div class="gantt-header">
-            <span class="gantt-title">{{ currentProject?.name }}</span>
-            <span class="gantt-range" v-if="currentProject?.start_date && currentProject?.end_date">
-              工期 {{ getProjectDuration(currentProject) }} 天 | {{ formatDate(currentProject.start_date) }} ~ {{ formatDate(currentProject.end_date) }}
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="gantt-title">{{ ganttSelectedProject?.name }}</span>
+              <el-select v-model="ganttSelectedProjectId" placeholder="切换项目" size="small" style="width:180px" @change="onGanttProjectChange">
+                <el-option v-for="p in projectList" :key="p.id" :label="p.name" :value="p.id" />
+              </el-select>
+            </div>
+            <span class="gantt-range" v-if="ganttSelectedProject?.start_date && ganttSelectedProject?.end_date">
+              工期 {{ getProjectDuration(ganttSelectedProject) }} 天 | {{ formatDate(ganttSelectedProject.start_date) }} ~ {{ formatDate(ganttSelectedProject.end_date) }}
             </span>
           </div>
-          <div class="gantt-body" @click="cancelGanttSelecting">
-            <div class="gantt-single-grid">
-              <!-- 日期刻度 -->
-              <div class="gantt-timeline">
-                <div
-                  v-for="(day, idx) in ganttDays"
-                  :key="idx"
-                  class="gantt-day"
-                  :class="{
-                    'gantt-day-today': day.isToday,
-                    'gantt-day-weekend': day.isWeekend,
-                    'gantt-day-selecting': isDaySelected(idx)
-                  }"
-                  :data-day-index="idx"
-                  @mousedown.left.prevent="onGanttDayMouseDown(idx, $event)"
-                >
-                  <span v-if="day.showLabel" class="day-label">{{ day.label }}</span>
-                </div>
-              </div>
-              <!-- 节点条列表 -->
-              <div class="gantt-bars">
-                <div
-                  v-for="(node, idx) in (currentProject?.nodes || [])"
-                  :key="node.id"
-                  class="gantt-row"
-                >
-                  <!-- 连接线 -->
-                  <div class="gantt-connector" v-if="idx > 0">
-                    <div class="connector-line" :class="{ done: isNodeCompleted(idx - 1, currentProject?.nodes || []) }"></div>
+            <div class="gantt-body" @click="cancelGanttSelecting">
+              <div class="gantt-table">
+                <!-- 表头：月份行 + 日期行 -->
+                <div class="gantt-header-row">
+                  <div class="gantt-header-name">节点名称</div>
+                  <div class="gantt-header-dates">
+                    <div class="gantt-months-row">
+                      <div
+                        v-for="month in ganttMonths"
+                        :key="month.key"
+                        class="gantt-month-cell"
+                        :style="{ width: `${month.span * 32}px`, minWidth: `${month.span * 32}px` }"
+                      >{{ month.label }}</div>
+                    </div>
+                    <div class="gantt-days-row" :style="{ width: ganttDays.length * 32 + 'px' }">
+                      <div
+                        v-for="(day, idx) in ganttDays"
+                        :key="idx"
+                        class="gantt-day-cell"
+                        :class="{
+                          'gantt-day-today': day.isToday,
+                          'gantt-day-weekend': day.isWeekend,
+                          'gantt-day-selecting': isDaySelected(idx)
+                        }"
+                      >
+                        <span v-if="day.showLabel" class="day-label">{{ day.label }}</span>
+                      </div>
+                    </div>
                   </div>
-                  <!-- 节点条（点击后进入拖拽选择模式） -->
+                </div>
+                <!-- 节点行 -->
+                <div
+                  v-for="node in (ganttSelectedProject?.nodes || [])"
+                  :key="node.id"
+                  class="gantt-data-row"
+                >
+                  <!-- 左侧节点名称（美化UI：状态圆点+名称） -->
+                  <div class="gantt-node-name">
+                    <span class="gantt-node-dot" :class="`gantt-node-dot-${node.status || 'pending'}`"></span>
+                    <span class="gantt-node-name-text">{{ node.node_name || node.stage_name }}</span>
+                  </div>
+                  <!-- 右侧日期格（可拖拽选择工期） -->
                   <div
-                    class="gantt-bar"
-                    :class="[
-                      `gantt-bar-${node.status || 'pending'}`,
-                      { 'gantt-bar-selecting': ganttSelectNode?.id === node.id }
-                    ]"
-                    :style="getGanttBarStyle(node)"
-                    @click="onBarClick($event, node)"
+                    class="gantt-date-area"
+                    :style="{ width: ganttDays.length * 32 + 'px' }"
+                    @mousedown.prevent="onBarMouseDownForSelect($event, node)"
                   >
-                    <div class="bar-label">{{ node.node_name || node.stage_name }}</div>
+                    <div
+                      v-for="(day, idx) in ganttDays"
+                      :key="idx"
+                      class="gantt-day-cell"
+                      :class="{
+                        'gantt-day-today': day.isToday,
+                        'gantt-day-weekend': day.isWeekend,
+                        'gantt-day-selecting': isDaySelected(idx)
+                      }"
+                      :data-day-idx="idx"
+                    ></div>
+                    <!-- 节点条（显示工期段） -->
+                    <div
+                      v-if="node.plan_date"
+                      class="gantt-bar"
+                      :class="[`gantt-bar-${node.status || 'pending'}`, { 'gantt-bar-selecting': ganttSelectNode?.id === node.id }]"
+                      :style="getGanttBarStyle(node)"
+                    >
+                      <span class="bar-label">{{ node.node_name || node.stage_name }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
         </div>
       </div>
       <!-- 节点日期编辑弹窗 -->
@@ -518,21 +538,24 @@ const ganttSelecting = ref(false)       // 是否正在选择
 const ganttSelectNode = ref(null)        // 当前选中的节点
 const ganttSelectStart = ref(null)       // 拖拽起始格索引
 const ganttSelectEnd = ref(null)         // 当前悬停格索引
+const ganttSelectedProjectId = ref(null) // 甘特图当前选中项目ID
+const ganttSelectedProject = computed(() => projectList.value.find(p => p.id === ganttSelectedProjectId.value) || null)
 
-// 点击节点条 → 进入选择模式
-const onBarClick = (event, node) => {
-  event.stopPropagation()
+// 点击节点条 → 进入选择模式，同时记录节点
+const onBarMouseDownForSelect = (event, node) => {
   ganttSelecting.value = true
   ganttSelectNode.value = node
   ganttSelectStart.value = null
   ganttSelectEnd.value = null
-}
-
-// 鼠标按下日期格 → 开始拖拽
-const onGanttDayMouseDown = (dayIdx, event) => {
-  if (!ganttSelecting.value || !ganttSelectNode.value) return
-  ganttSelectStart.value = dayIdx
-  ganttSelectEnd.value = dayIdx
+  // 鼠标按下哪个格，就从这里开始
+  const target = event.target.closest('.gantt-day-cell')
+  if (target) {
+    const idx = parseInt(target.dataset.dayIdx)
+    if (!isNaN(idx)) {
+      ganttSelectStart.value = idx
+      ganttSelectEnd.value = idx
+    }
+  }
   document.addEventListener('mousemove', onGanttDayMouseMove)
   document.addEventListener('mouseup', onGanttDayMouseUp)
 }
@@ -540,10 +563,9 @@ const onGanttDayMouseDown = (dayIdx, event) => {
 // 鼠标经过日期格 → 更新范围高亮
 const onGanttDayMouseMove = (event) => {
   if (!ganttSelecting.value || ganttSelectStart.value === null) return
-  // 通过 event.target 找对应的 gantt-day-index 属性
-  const target = event.target.closest('.gantt-day')
+  const target = event.target.closest('.gantt-day-cell')
   if (!target) return
-  const idx = parseInt(target.dataset.dayIndex)
+  const idx = parseInt(target.dataset.dayIdx)
   if (!isNaN(idx)) {
     ganttSelectEnd.value = idx
   }
@@ -611,12 +633,23 @@ onMounted(() => {
 
 // 打开甘特图弹窗
 const openGanttDialog = () => {
-  // 检查项目是否有工期
-  if (!currentProject.value?.start_date || !currentProject.value?.end_date) {
+  // 初始化甘特图选中项目为当前项目（支持总览页切换）
+  ganttSelectedProjectId.value = currentProject.value?.id || null
+  // 检查选中项目是否有工期
+  const proj = ganttSelectedProject.value
+  if (!proj?.start_date || !proj?.end_date) {
     showProjectDateDialog.value = true
     return
   }
   showGanttDialog.value = true
+}
+
+// 甘特图切换项目
+const onGanttProjectChange = () => {
+  const proj = ganttSelectedProject.value
+  if (!proj?.start_date || !proj?.end_date) {
+    showProjectDateDialog.value = true
+  }
 }
 
 // 保存项目工期
@@ -760,9 +793,10 @@ const saveNodeDate = async () => {
 }
 
 const ganttDays = computed(() => {
-  const nodes = currentProject.value?.nodes || []
-  let start = currentProject.value?.start_date ? new Date(currentProject.value.start_date) : null
-  let end = currentProject.value?.end_date ? new Date(currentProject.value.end_date) : null
+  const proj = ganttSelectedProject.value || currentProject.value
+  const nodes = proj?.nodes || []
+  let start = proj?.start_date ? new Date(proj.start_date) : null
+  let end = proj?.end_date ? new Date(proj.end_date) : null
 
   // 如果项目没有日期，从节点plan_date/plan_end_date中找范围
   if (!start || !end) {
@@ -794,10 +828,30 @@ const ganttDays = computed(() => {
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
     const isToday = d.getTime() === today.getTime()
     const showLabel = true // 每天都显示日期标签
-    const label = `${d.getMonth() + 1}月${d.getDate()}日`
+    const label = `${d.getDate()}`  // 纯数字，如 1, 2, 3... 31
     days.push({ date: new Date(d), isWeekend, isToday, showLabel, label })
   }
   return days
+})
+
+// 甘特图月份行：按月份分组，告知每组占几列
+const ganttMonths = computed(() => {
+  const days = ganttDays.value
+  if (!days || days.length === 0) return []
+  const months = []
+  let currentMonth = null
+  days.forEach((day, idx) => {
+    const m = day.date.getMonth()
+    const y = day.date.getFullYear()
+    const key = `${y}-${m}`
+    if (!currentMonth || currentMonth.key !== key) {
+      currentMonth = { key, label: `${y}年${m + 1}月`, startIdx: idx, span: 1 }
+      months.push(currentMonth)
+    } else {
+      currentMonth.span++
+    }
+  })
+  return months
 })
 
 // 根据 employee id 查找电话
@@ -941,15 +995,14 @@ const getNodeStatusText = (status) => {
   return map[status] || status
 }
 
-// 格式化节点预计日期范围：预计 5月1日 至 5月15日，共15日
+// 格式化节点预计日期范围：5月1日 至 5月15日
 const formatNodeDateRange = (node) => {
   if (!node.plan_date || !node.plan_end_date) return ''
   const start = new Date(node.plan_date)
   const end = new Date(node.plan_end_date)
   const startStr = `${start.getMonth() + 1}月${start.getDate()}日`
   const endStr = `${end.getMonth() + 1}月${end.getDate()}日`
-  const days = Math.max(1, Math.round((end - start) / 86400000) + 1)
-  return `预计 ${startStr} 至 ${endStr}，共${days}日`
+  return `${startStr} 至 ${endStr}`
 }
 
 // 获取项目总工期（天数）
@@ -973,17 +1026,28 @@ const isNodeCompleted = (index, nodes) => {
   return nodes[index].status === 'completed'
 }
 
-// 计算甘特图节点条的位置和宽度（基于ganttDays的日期范围）
+// 计算甘特图节点条的位置和宽度（百分比 left/width，适配绝对定位）
 const getGanttBarStyle = (node) => {
   const days = ganttDays.value
   if (!days || days.length === 0) return { display: 'none' }
-
   const totalDays = days.length
+  // gantt-date-area 宽度 = 108天 × 32px = 3456px（与表头完全一致）
+  const areaWidth = totalDays * 32
   const start = days[0].date
   const end = days[days.length - 1].date
 
-  const nodeStart = node.plan_date ? new Date(node.plan_date) : start
-  const nodeEnd = node.plan_end_date ? new Date(node.plan_end_date) : (node.plan_date ? new Date(node.plan_date) : start)
+  // 无日期的节点：撑满整行
+  if (!node.plan_date) {
+    return {
+      position: 'absolute',
+      left: '0%',
+      width: '100%',
+      height: '26px'
+    }
+  }
+
+  const nodeStart = new Date(node.plan_date)
+  const nodeEnd = node.plan_end_date ? new Date(node.plan_end_date) : new Date(node.plan_date)
 
   const clampedStart = new Date(Math.max(nodeStart.getTime(), start.getTime()))
   const clampedEnd = new Date(Math.min(nodeEnd.getTime(), end.getTime()))
@@ -991,13 +1055,11 @@ const getGanttBarStyle = (node) => {
   const offsetDays = Math.round((clampedStart - start) / 86400000)
   const spanDays = Math.max(1, Math.round((clampedEnd - clampedStart) / 86400000) + 1)
 
-  const leftPct = (offsetDays / totalDays) * 100
-  const widthPct = (spanDays / totalDays) * 100
-
   return {
-    left: `${leftPct}%`,
-    width: `${Math.max(widthPct, 3)}%`,
-    minWidth: '30px'
+    position: 'absolute',
+    left: `${offsetDays * 32}px`,
+    width: `${spanDays * 32}px`,
+    height: '26px'
   }
 }
 
@@ -1755,9 +1817,9 @@ onMounted(() => {
 
 .node-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
   border-radius: 8px;
   border: 1px solid #ebeef5;
   background: #fff;
@@ -1785,12 +1847,24 @@ onMounted(() => {
   box-shadow: 0 2px 12px rgba(64, 158, 255, 0.2);
 }
 
+.node-item-row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-item-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 40px; /* 对齐序号位置 */
+}
+
 .drag-handle {
   color: #c0c4cc;
   cursor: grab;
   display: flex;
   align-items: center;
-  margin-right: 4px;
   transition: color 0.15s;
 }
 
@@ -1821,16 +1895,17 @@ onMounted(() => {
 }
 
 .node-index {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: #f56c6c;
   color: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .node-item-completed .node-index { background: #67c23a; }
@@ -1877,7 +1952,7 @@ onMounted(() => {
   opacity: 1;
 }
 
-.node-meta {
+.node-date-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1891,7 +1966,6 @@ onMounted(() => {
 .node-date-range {
   font-size: 12px;
   color: #e6a23c;
-  white-space: nowrap;
 }
 
 .drawer-footer {
@@ -1969,145 +2043,236 @@ onMounted(() => {
   font-size: 16px;
 }
 
-/* ========== 甘特图 ========== */
-.gantt-section {
-  margin-top: 20px;
-  padding: 14px;
-  background: #fafafa;
-  border-radius: 8px;
-  border: 1px solid #ebeef5;
-}
-
-.gantt-dialog-body {
-  max-height: calc(90vh - 120px);
-  overflow-y: auto;
-}
-
-.gantt-single-grid {
-  min-width: 100%;
-}
-
-.gantt-empty {
-  text-align: center;
-  color: #909399;
-  padding: 60px 0;
-  font-size: 14px;
-}
-
-.gantt-multi {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.gantt-multi-header {
-  display: flex;
-  background: #f5f7fa;
-  border-bottom: 2px solid #dcdfe6;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.gantt-proj-name-header {
-  width: 200px;
-  min-width: 200px;
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
-  border-right: 1px solid #dcdfe6;
-  background: #f5f7fa;
-}
-
-.gantt-timeline-area {
-  flex: 1;
-  overflow-x: auto;
-  position: relative;
-}
-
-.gantt-multi-body {
-  overflow-y: auto;
-  max-height: calc(90vh - 220px);
-}
-
-.gantt-project-row {
-  display: flex;
-  border-bottom: 1px solid #ebeef5;
-  min-height: 50px;
-}
-
-.gantt-project-row:last-child {
-  border-bottom: none;
-}
-
-.gantt-proj-name-cell {
-  width: 200px;
-  min-width: 200px;
-  padding: 10px 12px;
-  border-right: 1px solid #ebeef5;
-  background: #fff;
+/* ========== 甘特图（Excel风格） ========== */
+.gantt-table {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 4px;
+  min-width: max-content;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 
-.gantt-project-row:hover .gantt-proj-name-cell {
-  background: #f5f7fa;
+/* 表头行 */
+.gantt-header-row {
+  display: flex;
+  flex-direction: row;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: linear-gradient(180deg, #f6f8fa 0%, #eaecef 100%);
 }
 
-.proj-name {
-  font-size: 13px;
+.gantt-header-name {
+  width: 168px;
+  min-width: 168px;
+  padding: 10px 14px 8px;
+  font-size: 12px;
   font-weight: 600;
-  color: #303133;
+  color: #24292f;
+  background: linear-gradient(180deg, #f6f8fa 0%, #eaecef 100%);
+  border-right: 2px solid #d0d7de;
+  border-bottom: 2px solid #d0d7de;
+  display: flex;
+  align-items: flex-end;
+  letter-spacing: 0.3px;
+}
+
+.gantt-header-dates {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  border-bottom: 2px solid #d0d7de;
+}
+
+.gantt-months-row {
+  display: flex;
+  flex-direction: row;
+  background: #fff;
+}
+
+.gantt-month-cell {
+  font-size: 11px;
+  font-weight: 600;
+  color: #24292f;
+  padding: 5px 8px;
+  border-right: 1.5px solid #d0d7de;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  box-sizing: border-box;
+  background: #f6f8fa;
+  letter-spacing: 0.3px;
 }
 
-.proj-dates {
-  font-size: 11px;
-  color: #909399;
-  white-space: nowrap;
+.gantt-days-row {
+  display: flex;
+  flex-direction: row;
+  background: #fff;
 }
 
-.gantt-node-bars {
-  position: relative;
-  height: 50px;
-  width: 100%;
-}
-
-.gantt-multi-bar-wrap {
-  position: absolute;
+.gantt-day-cell {
+  width: 32px;
+  min-width: 32px;
   height: 100%;
-}
-
-.gantt-multi-bar {
-  height: 100%;
-  border-radius: 4px;
+  border-right: 1px solid #d8dee4;
+  box-shadow: inset 0 -1px 0 #d8dee4;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  margin: 0 2px;
-  transition: filter 0.15s;
+  user-select: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.gantt-day-cell.gantt-day-today {
+  background: #fff8c5;
+}
+
+.gantt-day-cell.gantt-day-today::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: #e5a30a;
+  bottom: 0;
+  left: 0;
+}
+
+.gantt-day-cell.gantt-day-weekend {
+  background: #f3f4f6;
+}
+
+.gantt-day-cell.gantt-day-selecting {
+  background: #dbeafe;
+}
+
+.day-label {
+  font-size: 10px;
+  color: #57606a;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* 数据行 */
+.gantt-data-row {
+  display: flex;
+  flex-direction: row;
+  height: 38px;
   overflow: hidden;
 }
 
-.gantt-multi-bar:hover {
-  filter: brightness(1.1);
+.gantt-data-row:nth-child(even) .gantt-node-name {
+  background: #fafbfc;
 }
 
-.gantt-multi-bar .bar-label {
+.gantt-data-row:hover .gantt-node-name {
+  background: #f0f7ff;
+}
+
+.gantt-data-row:hover .gantt-date-area {
+  background: #fafbfc;
+}
+
+.gantt-node-name {
+  width: 168px;
+  min-width: 168px;
+  height: 38px;
+  padding: 0 14px;
+  background: #fff;
+  border-right: 2px solid #d0d7de;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 0.15s;
+  box-sizing: border-box;
+}
+
+.gantt-node-name-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #24292f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  letter-spacing: 0.2px;
+}
+
+.gantt-node-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1.5px rgba(0,0,0,0.08);
+}
+
+.gantt-node-dot-pending { background: #8c959f; }
+.gantt-node-dot-in_progress { background: #218bff; box-shadow: 0 0 0 1.5px rgba(33,139,255,0.25); }
+.gantt-node-dot-completed { background: #1a7f37; box-shadow: 0 0 0 1.5px rgba(26,127,55,0.25); }
+.gantt-node-dot-skipped { background: #d29922; }
+
+/* 日期区域 */
+.gantt-date-area {
+  display: flex;
+  flex-direction: row;
+  position: relative;
+  flex: 1;
+  height: 38px;
+  align-items: stretch;
+  min-width: 0;
+  background: #fff;
+  transition: background 0.15s;
+  box-sizing: border-box;
+}
+
+/* 节点条 */
+.gantt-bar {
+  position: absolute;
+  height: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  z-index: 1;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  transition: filter 0.15s, box-shadow 0.15s;
+}
+
+.gantt-bar:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+}
+
+.gantt-bar-pending { background: #8c959f; }
+.gantt-bar-in_progress { background: linear-gradient(135deg, #218bff 0%, #1a6fdb 100%); }
+.gantt-bar-completed { background: linear-gradient(135deg, #1a7f37 0%, #15692e 100%); }
+.gantt-bar-skipped { background: linear-gradient(135deg, #d29922 0%, #b88015 100%); }
+
+.gantt-bar-selecting {
+  outline: 2.5px solid #218bff;
+  z-index: 2;
+  box-shadow: 0 0 0 3px rgba(33,139,255,0.2);
+}
+
+.bar-label {
   font-size: 11px;
   color: #fff;
+  padding: 0 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 6px;
-  text-align: center;
+  pointer-events: none;
+  font-weight: 500;
+  letter-spacing: 0.2px;
 }
+
+/* ========== 甘特图弹窗头部 ========== */
 
 .gantt-header {
   display: flex;
@@ -2129,161 +2294,7 @@ onMounted(() => {
 
 .gantt-body {
   overflow-x: auto;
-}
-.gantt-timeline-area {
-  flex: 1;
-  overflow-x: auto;
-  position: relative;
-  min-width: 0;
-}
-
-.gantt-timeline {
   display: flex;
-  height: 24px;
-  border-bottom: 1px solid #ebeef5;
-  margin-bottom: 4px;
-  position: relative;
-  /* 每天最小20px，确保日期轴有足够宽度 */
-  min-width: max-content;
-}
-
-.gantt-day {
-  flex: 1;
-  min-width: 32px;
-  height: 24px;
-  position: relative;
-  border-right: 1px solid #f0f0f0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.gantt-day-today {
-  background: #fffbe6;
-}
-
-.gantt-day-weekend {
-  background: #f5f5f5;
-}
-
-.gantt-day-selecting {
-  background: #e6f0ff !important;
-  outline: 2px solid #409eff;
-  z-index: 1;
-}
-
-.day-label {
-  position: static;
-  font-size: 10px;
-  color: #909399;
-  white-space: nowrap;
-  text-align: center;
-}
-
-.gantt-bars {
-  position: relative;
-}
-
-.gantt-row {
-  height: 36px;
-  display: flex;
-  align-items: center;
-  position: relative;
-  margin-bottom: 4px;
-}
-
-.gantt-connector {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  display: flex;
-  align-items: center;
-  z-index: 0;
-}
-
-.connector-line {
-  width: 100%;
-  height: 2px;
-  background: #dcdfe6;
-  transition: background 0.3s;
-}
-
-.connector-line.done {
-  background: #67c23a;
-}
-
-.gantt-bar {
-  position: absolute;
-  height: 26px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  cursor: grab;
-  user-select: none;
-  z-index: 1;
-  transition: opacity 0.15s;
-  overflow: visible;
-}
-
-.gantt-bar:active {
-  cursor: grabbing;
-}
-
-.gantt-bar-dragging {
-  opacity: 0.8;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-
-.gantt-bar-selecting {
-  outline: 3px solid #409eff;
-  box-shadow: 0 0 8px rgba(64, 158, 255, 0.5);
-  z-index: 2;
-}
-
-.gantt-bar-pending {
-  background: linear-gradient(90deg, #909399, #a6a9ad);
-}
-
-.gantt-bar-in_progress {
-  background: linear-gradient(90deg, #e6a23c, #ebb563);
-}
-
-.gantt-bar-completed {
-  background: linear-gradient(90deg, #67c23a, #85ce61);
-}
-
-.gantt-bar-skipped {
-  background: linear-gradient(90deg, #c0c4cc, #d3d4d6);
-}
-
-.bar-left-handle,
-.bar-right-handle {
-  width: 8px;
-  height: 100%;
-  cursor: ew-resize;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.bar-left-handle:hover,
-.bar-right-handle:hover {
-  background: rgba(255,255,255,0.3);
-  border-radius: 4px;
-}
-
-.bar-label {
-  font-size: 11px;
-  color: #fff;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  padding: 0 6px;
-  text-align: center;
-  line-height: 1.2;
-  width: 100%;
+  flex-direction: column;
 }
 </style>
