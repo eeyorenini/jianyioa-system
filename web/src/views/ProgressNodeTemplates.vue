@@ -256,10 +256,10 @@ const handleSaveNode = async () => {
       ElMessage.success('节点添加成功')
     }
     showNodeDialog.value = false
-    console.log('保存时 isEditNode=', isEditNode.value, 'nodeForm=', JSON.stringify(nodeForm))
+    // 强制刷新抽屉内表格内容
+    nodeList.value = []
     await nextTick()
-    await nextTick() // 等待DOM完全更新
-    loadTemplateNodes()
+    await loadTemplateNodes()
   } catch (error) {
     ElMessage.error('操作失败: ' + (error.response?.data?.error || error.message))
   }

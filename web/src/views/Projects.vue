@@ -4,10 +4,16 @@
       <template #header>
         <div class="card-header">
           <span>项目列表</span>
-          <el-button type="primary" @click="openAddDialog">
-            <el-icon><Plus /></el-icon>
-            新增项目
-          </el-button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-button type="primary" @click="openGanttDialog">
+              <el-icon><Histogram /></el-icon>
+              甘特图总览
+            </el-button>
+            <el-button type="primary" @click="openAddDialog">
+              <el-icon><Plus /></el-icon>
+              新增项目
+            </el-button>
+          </div>
         </div>
       </template>
       <el-table :data="projectList" style="width: 100%" v-loading="loading">
@@ -235,7 +241,9 @@
                 <el-input v-else size="small" v-model="editingNodeName" @keyup.enter="saveNodeName(node)" @blur="saveNodeName(node)" @keyup.escape="cancelEditNode" ref="nodeNameInput" style="width: 160px;" />
                 <div class="node-meta">
                   <el-tag size="small" :type="getNodeStatusTagType(node.status)">{{ getNodeStatusText(node.status) }}</el-tag>
-                  <span class="node-date" v-if="node.actual_end_date">完成于 {{ node.actual_end_date }}</span>
+                  <span class="node-date" v-if="node.actual_date">完成于 {{ node.actual_date }}</span>
+                  <span class="node-date-range" v-else-if="node.plan_date && node.plan_end_date">{{ formatNodeDateRange(node) }}</span>
+                  <span class="node-date" v-else-if="node.plan_date">预计 {{ node.plan_date }}</span>
                 </div>
               </div>
             </div>
@@ -261,12 +269,118 @@
           </div>
         </div>
 
+        <!-- 甘特图按钮（当前项目专属） -->
+        <div class="drawer-footer">
+          <el-button type="primary" plain @click="openGanttDialog">
+            <el-icon><Histogram /></el-icon>
+            查看甘特图
+          </el-button>
+        </div>
+
         <!-- 重置节点按钮 -->
         <div class="drawer-footer">
           <el-button type="warning" plain @click="resetAllNodes">重置所有节点</el-button>
         </div>
       </div>
     </el-drawer>
+
+    <!-- 甘特图弹窗：只展示当前项目 -->
+    <el-dialog
+      v-model="showGanttDialog"
+      :title="`甘特图：${currentProject?.name || ''}`"
+      width="90%"
+      top="2vh"
+      :close-on-click-modal="true"
+    >
+      <div class="gantt-dialog-body">
+        <div class="gantt-section">
+          <div class="gantt-header">
+            <span class="gantt-title">{{ currentProject?.name }}</span>
+            <span class="gantt-range" v-if="currentProject?.start_date && currentProject?.end_date">
+              工期 {{ getProjectDuration(currentProject) }} 天 | {{ formatDate(currentProject.start_date) }} ~ {{ formatDate(currentProject.end_date) }}
+            </span>
+          </div>
+          <div class="gantt-body" @click="cancelGanttSelecting">
+            <div class="gantt-single-grid">
+              <!-- 日期刻度 -->
+              <div class="gantt-timeline">
+                <div
+                  v-for="(day, idx) in ganttDays"
+                  :key="idx"
+                  class="gantt-day"
+                  :class="{
+                    'gantt-day-today': day.isToday,
+                    'gantt-day-weekend': day.isWeekend,
+                    'gantt-day-selecting': isDaySelected(idx)
+                  }"
+                  :data-day-index="idx"
+                  @mousedown.left.prevent="onGanttDayMouseDown(idx, $event)"
+                >
+                  <span v-if="day.showLabel" class="day-label">{{ day.label }}</span>
+                </div>
+              </div>
+              <!-- 节点条列表 -->
+              <div class="gantt-bars">
+                <div
+                  v-for="(node, idx) in (currentProject?.nodes || [])"
+                  :key="node.id"
+                  class="gantt-row"
+                >
+                  <!-- 连接线 -->
+                  <div class="gantt-connector" v-if="idx > 0">
+                    <div class="connector-line" :class="{ done: isNodeCompleted(idx - 1, currentProject?.nodes || []) }"></div>
+                  </div>
+                  <!-- 节点条（点击后进入拖拽选择模式） -->
+                  <div
+                    class="gantt-bar"
+                    :class="[
+                      `gantt-bar-${node.status || 'pending'}`,
+                      { 'gantt-bar-selecting': ganttSelectNode?.id === node.id }
+                    ]"
+                    :style="getGanttBarStyle(node)"
+                    @click="onBarClick($event, node)"
+                  >
+                    <div class="bar-label">{{ node.node_name || node.stage_name }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 节点日期编辑弹窗 -->
+      <el-dialog
+        v-model="showNodeDateEditDialog"
+        :title="`调整节点日期：${editingNodeForDate?.node_name || editingNodeForDate?.stage_name || ''}`"
+        width="420px"
+        append-to-body
+      >
+        <el-form :model="nodeDateForm" label-width="80px">
+          <el-form-item label="开始日期">
+            <el-date-picker
+              v-model="nodeDateForm.plan_date"
+              type="date"
+              placeholder="选择开始日期"
+              value-format="YYYY-MM-DD"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item label="结束日期">
+            <el-date-picker
+              v-model="nodeDateForm.plan_end_date"
+              type="date"
+              placeholder="选择结束日期"
+              value-format="YYYY-MM-DD"
+              style="width: 100%"
+            />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showNodeDateEditDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveNodeDate">保存</el-button>
+        </template>
+      </el-dialog>
+    </el-dialog>
 
     <!-- 新增节点弹窗 -->
     <el-dialog v-model="showAddNodeDialog" title="新增节点" width="450px">
@@ -302,6 +416,42 @@
       </template>
     </el-dialog>
 
+    <!-- 项目工期填写弹窗（无工期时打开甘特图前触发） -->
+    <el-dialog
+      v-model="showProjectDateDialog"
+      title="设置项目工期"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="projectDateForm" label-width="80px">
+        <el-form-item label="开始日期" required>
+          <el-date-picker
+            v-model="projectDateForm.start_date"
+            type="date"
+            placeholder="选择项目开始日期"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="结束日期" required>
+          <el-date-picker
+            v-model="projectDateForm.end_date"
+            type="date"
+            placeholder="选择项目结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <div style="color:#909399;font-size:12px;padding-left:80px">
+          设置项目工期后，可通过甘特图管理每个节点的预计完成时间
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="showProjectDateDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveProjectDate">保存并打开甘特图</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 员工选择抽屉 -->
     <el-drawer v-model="showEmployeeDrawer" :title="`选择${employeeDrawerTypeLabel}`" size="500px">
       <div class="employee-drawer-content">
@@ -333,12 +483,13 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank } from '@element-plus/icons-vue'
+import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank, Histogram } from '@element-plus/icons-vue'
 
 const projectList = ref([])
 const loading = ref(false)
 const showAddDialog = ref(false)
 const showNodeDrawer = ref(false)
+const showGanttDialog = ref(false)
 const isEdit = ref(false)
 const currentProject = ref(null)
 const editingNodeId = ref(null)
@@ -355,6 +506,299 @@ const showEmployeeDrawer = ref(false)
 const employeeDrawerType = ref('designer')
 const draggingIndex = ref(-1)
 const dragOverIndex = ref(-1)
+const ganttDragging = ref(null) // { id, type: 'move'|'start'|'end', startX, node }
+const showNodeDateEditDialog = ref(false)
+const editingNodeForDate = ref(null)
+const nodeDateForm = reactive({ plan_date: '', plan_end_date: '' })
+const showProjectDateDialog = ref(false)
+const projectDateForm = reactive({ start_date: '', end_date: '' })
+
+// 甘特图拖拽选择模式
+const ganttSelecting = ref(false)       // 是否正在选择
+const ganttSelectNode = ref(null)        // 当前选中的节点
+const ganttSelectStart = ref(null)       // 拖拽起始格索引
+const ganttSelectEnd = ref(null)         // 当前悬停格索引
+
+// 点击节点条 → 进入选择模式
+const onBarClick = (event, node) => {
+  event.stopPropagation()
+  ganttSelecting.value = true
+  ganttSelectNode.value = node
+  ganttSelectStart.value = null
+  ganttSelectEnd.value = null
+}
+
+// 鼠标按下日期格 → 开始拖拽
+const onGanttDayMouseDown = (dayIdx, event) => {
+  if (!ganttSelecting.value || !ganttSelectNode.value) return
+  ganttSelectStart.value = dayIdx
+  ganttSelectEnd.value = dayIdx
+  document.addEventListener('mousemove', onGanttDayMouseMove)
+  document.addEventListener('mouseup', onGanttDayMouseUp)
+}
+
+// 鼠标经过日期格 → 更新范围高亮
+const onGanttDayMouseMove = (event) => {
+  if (!ganttSelecting.value || ganttSelectStart.value === null) return
+  // 通过 event.target 找对应的 gantt-day-index 属性
+  const target = event.target.closest('.gantt-day')
+  if (!target) return
+  const idx = parseInt(target.dataset.dayIndex)
+  if (!isNaN(idx)) {
+    ganttSelectEnd.value = idx
+  }
+}
+
+// 鼠标释放 → 保存日期
+const onGanttDayMouseUp = async () => {
+  document.removeEventListener('mousemove', onGanttDayMouseMove)
+  document.removeEventListener('mouseup', onGanttDayMouseUp)
+  if (!ganttSelecting.value || ganttSelectStart.value === null || !ganttSelectNode.value) {
+    ganttSelecting.value = false
+    return
+  }
+  const days = ganttDays.value
+  const startIdx = Math.min(ganttSelectStart.value, ganttSelectEnd.value)
+  const endIdx = Math.max(ganttSelectStart.value, ganttSelectEnd.value)
+  const plan_date = days[startIdx].date.toISOString().slice(0, 10)
+  const plan_end_date = days[endIdx].date.toISOString().slice(0, 10)
+  const node = ganttSelectNode.value
+  try {
+    await axios.put(`/api/project-stages/${node.id}`, {
+      node_name: node.node_name || node.stage_name,
+      plan_date,
+      plan_end_date
+    })
+    node.plan_date = plan_date
+    node.plan_end_date = plan_end_date
+    ElMessage.success(`已设置：${plan_date} ~ ${plan_end_date}`)
+  } catch {
+    ElMessage.error('保存失败')
+  }
+  ganttSelecting.value = false
+  ganttSelectNode.value = null
+  ganttSelectStart.value = null
+  ganttSelectEnd.value = null
+}
+
+// 判断某个日期格是否在当前选中范围内
+const isDaySelected = (dayIdx) => {
+  if (!ganttSelecting.value || ganttSelectStart.value === null) return false
+  const start = Math.min(ganttSelectStart.value, ganttSelectEnd.value)
+  const end = Math.max(ganttSelectStart.value, ganttSelectEnd.value)
+  return dayIdx >= start && dayIdx <= end
+}
+
+// 退出选择模式（按 ESC 或点击空白处）
+const cancelGanttSelecting = () => {
+  ganttSelecting.value = false
+  ganttSelectNode.value = null
+  ganttSelectStart.value = null
+  ganttSelectEnd.value = null
+}
+
+// 监听 ESC 键取消选择模式
+const handleKeydown = (e) => {
+  if (e.key === 'Escape' && ganttSelecting.value) {
+    cancelGanttSelecting()
+  }
+}
+
+onMounted(() => {
+  loadData()
+  document.addEventListener('keydown', handleKeydown)
+})
+
+// 打开甘特图弹窗
+const openGanttDialog = () => {
+  // 检查项目是否有工期
+  if (!currentProject.value?.start_date || !currentProject.value?.end_date) {
+    showProjectDateDialog.value = true
+    return
+  }
+  showGanttDialog.value = true
+}
+
+// 保存项目工期
+const saveProjectDate = () => {
+  if (!projectDateForm.start_date || !projectDateForm.end_date) {
+    ElMessage.warning('请填写开始日期和结束日期')
+    return
+  }
+  if (new Date(projectDateForm.end_date) < new Date(projectDateForm.start_date)) {
+    ElMessage.warning('结束日期不能早于开始日期')
+    return
+  }
+  currentProject.value.start_date = projectDateForm.start_date
+  currentProject.value.end_date = projectDateForm.end_date
+  showProjectDateDialog.value = false
+  // 更新列表中的数据
+  const proj = projectList.value.find(p => p.id === currentProject.value.id)
+  if (proj) {
+    proj.start_date = projectDateForm.start_date
+    proj.end_date = projectDateForm.end_date
+  }
+  // 同步到后端
+  axios.put(`/api/projects/${currentProject.value.id}`, {
+    name: currentProject.value.name,
+    start_date: projectDateForm.start_date,
+    end_date: projectDateForm.end_date
+  }).then(() => {
+    ElMessage.success('工期已保存')
+    showGanttDialog.value = true
+  }).catch(() => {
+    ElMessage.error('保存工期失败')
+  })
+}
+
+// 多项目甘特图：显示所有项目（不管有没有日期）
+const ganttProjects = computed(() => {
+  return projectList.value
+})
+
+// 多项目甘特图：全局日期轴（从有日期的项目中找最早~最晚）
+const ganttAllDays = computed(() => {
+  const projectsWithDates = ganttProjects.value.filter(p => p.start_date && p.end_date)
+  if (projectsWithDates.length === 0) {
+    // 没有项目有日期，显示一个默认范围（当前月）
+    const today = new Date()
+    const minDate = new Date(today.getFullYear(), today.getMonth(), 1)
+    const maxDate = new Date(today.getFullYear(), today.getMonth() + 2, 0)
+    return genDaysList(minDate, maxDate)
+  }
+  const starts = projectsWithDates.map(p => new Date(p.start_date).getTime())
+  const ends = projectsWithDates.map(p => new Date(p.end_date).getTime())
+  const minDate = new Date(Math.min(...starts))
+  const maxDate = new Date(Math.max(...ends))
+  // 扩展到整月范围
+  minDate.setDate(1)
+  maxDate.setMonth(maxDate.getMonth() + 1)
+  maxDate.setDate(0)
+  return genDaysList(minDate, maxDate)
+})
+
+const genDaysList = (minDate, maxDate) => {
+  const days = []
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const cur = new Date(minDate)
+  while (cur <= maxDate) {
+    const dow = cur.getDay()
+    const isWeekend = dow === 0 || dow === 6
+    const isToday = cur.getTime() === today.getTime()
+    const showLabel = dow === 1 // 每周一显示标签
+    const label = `${cur.getMonth() + 1}月${cur.getDate()}日`
+    days.push({ date: new Date(cur), isToday, isWeekend, showLabel, label })
+    cur.setDate(cur.getDate() + 1)
+  }
+  return days
+}
+
+// 格式化日期：5月1日
+const formatDate = (dateStr) => {
+  if (!dateStr) return '-'
+  const d = new Date(dateStr)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+// 多项目甘特图：节点条位置
+const getMultiBarStyle = (node, project) => {
+  const allDays = ganttAllDays.value
+  if (allDays.length === 0) return { display: 'none' }
+
+  // 确定项目的时间范围（用全局轴范围，未设置日期的项目用全局轴）
+  const projStart = project.start_date ? new Date(project.start_date) : allDays[0].date
+  const projEnd = project.end_date ? new Date(project.end_date) : allDays[allDays.length - 1].date
+  const totalCount = allDays.length
+
+  const nodeStart = node.plan_date ? new Date(node.plan_date) : projStart
+  const nodeEnd = node.plan_end_date ? new Date(node.plan_end_date) : projEnd
+
+  const projStartMs = projStart.getTime()
+  const projEndMs = projEnd.getTime()
+  const projDurMs = projEndMs - projStartMs || 1
+
+  const offsetDays = Math.max(0, Math.round((nodeStart - projStart) / 86400000))
+  const durationDays = Math.max(1, Math.round((nodeEnd - nodeStart) / 86400000) + 1)
+
+  const leftPct = (offsetDays / totalCount) * 100
+  const widthPct = (durationDays / totalCount) * 100
+
+  return {
+    position: 'absolute',
+    left: `${leftPct}%`,
+    width: `${widthPct}%`,
+    height: '100%',
+    top: 0
+  }
+}
+
+// 打开节点日期编辑
+const openNodeDateEdit = (node) => {
+  editingNodeForDate.value = node
+  nodeDateForm.plan_date = node.plan_date || ''
+  nodeDateForm.plan_end_date = node.plan_end_date || ''
+  showNodeDateEditDialog.value = true
+}
+
+// 保存节点日期
+const saveNodeDate = async () => {
+  if (!editingNodeForDate.value) return
+  try {
+    await axios.put(`/api/project-stages/${editingNodeForDate.value.id}`, {
+      node_name: editingNodeForDate.value.node_name || editingNodeForDate.value.stage_name,
+      plan_date: nodeDateForm.plan_date || null,
+      plan_end_date: nodeDateForm.plan_end_date || null
+    })
+    editingNodeForDate.value.plan_date = nodeDateForm.plan_date
+    editingNodeForDate.value.plan_end_date = nodeDateForm.plan_end_date
+    showNodeDateEditDialog.value = false
+    ElMessage.success('节点日期已更新')
+  } catch (error) {
+    ElMessage.error('保存失败')
+  }
+}
+
+const ganttDays = computed(() => {
+  const nodes = currentProject.value?.nodes || []
+  let start = currentProject.value?.start_date ? new Date(currentProject.value.start_date) : null
+  let end = currentProject.value?.end_date ? new Date(currentProject.value.end_date) : null
+
+  // 如果项目没有日期，从节点plan_date/plan_end_date中找范围
+  if (!start || !end) {
+    const nodeDates = nodes.map(n => ({
+      start: n.plan_date ? new Date(n.plan_date) : null,
+      end: n.plan_end_date ? new Date(n.plan_end_date) : null
+    })).filter(n => n.start || n.end)
+    if (nodeDates.length > 0) {
+      const allDates = nodeDates.flatMap(n => [n.start, n.end].filter(Boolean))
+      const minNode = new Date(Math.min(...allDates.map(d => d.getTime())))
+      const maxNode = new Date(Math.max(...allDates.map(d => d.getTime())))
+      if (!start || minNode < start) start = minNode
+      if (!end || maxNode > end) end = maxNode
+    }
+  }
+
+  // 如果仍然没有日期，默认显示当前月
+  if (!start || !end) {
+    const now = new Date()
+    start = new Date(now.getFullYear(), now.getMonth(), 1)
+    end = new Date(now.getFullYear(), now.getMonth() + 2, 0)
+  }
+
+  const days = []
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dayOfWeek = d.getDay()
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+    const isToday = d.getTime() === today.getTime()
+    const showLabel = true // 每天都显示日期标签
+    const label = `${d.getMonth() + 1}月${d.getDate()}日`
+    days.push({ date: new Date(d), isWeekend, isToday, showLabel, label })
+  }
+  return days
+})
 
 // 根据 employee id 查找电话
 const getEmployeePhone = (empId) => {
@@ -454,11 +898,11 @@ const applyTemplate = async () => {
       template_id: drawerTemplateId.value
     })
     ElMessage.success('模板应用成功，节点已生成')
-    // 刷新项目数据
+    // 强制清空节点列表后刷新
+    if (currentProject.value) {
+      currentProject.value.nodes = []
+    }
     await loadData()
-    // 刷新抽屉内的 currentProject
-    const updated = projectList.value.find(p => p.id === currentProject.value.id)
-    if (updated) currentProject.value = updated
     drawerTemplateId.value = null
   } catch (error) {
     ElMessage.error('应用模板失败')
@@ -497,11 +941,149 @@ const getNodeStatusText = (status) => {
   return map[status] || status
 }
 
+// 格式化节点预计日期范围：预计 5月1日 至 5月15日，共15日
+const formatNodeDateRange = (node) => {
+  if (!node.plan_date || !node.plan_end_date) return ''
+  const start = new Date(node.plan_date)
+  const end = new Date(node.plan_end_date)
+  const startStr = `${start.getMonth() + 1}月${start.getDate()}日`
+  const endStr = `${end.getMonth() + 1}月${end.getDate()}日`
+  const days = Math.max(1, Math.round((end - start) / 86400000) + 1)
+  return `预计 ${startStr} 至 ${endStr}，共${days}日`
+}
+
+// 获取项目总工期（天数）
+const getProjectDuration = (project) => {
+  if (!project.start_date || !project.end_date) return null
+  const start = new Date(project.start_date)
+  const end = new Date(project.end_date)
+  return Math.max(1, Math.round((end - start) / 86400000) + 1)
+}
+
 // 判断连接线是否已完成（看前一个节点）
 const isLineDone = (nodes, index) => {
   if (index <= 0) return false
   const prev = nodes[index - 1]
   return prev.status === 'completed'
+}
+
+// 判断甘特图连接线是否已完成（前一个节点完成）
+const isNodeCompleted = (index, nodes) => {
+  if (index < 0 || index >= nodes.length) return false
+  return nodes[index].status === 'completed'
+}
+
+// 计算甘特图节点条的位置和宽度（基于ganttDays的日期范围）
+const getGanttBarStyle = (node) => {
+  const days = ganttDays.value
+  if (!days || days.length === 0) return { display: 'none' }
+
+  const totalDays = days.length
+  const start = days[0].date
+  const end = days[days.length - 1].date
+
+  const nodeStart = node.plan_date ? new Date(node.plan_date) : start
+  const nodeEnd = node.plan_end_date ? new Date(node.plan_end_date) : (node.plan_date ? new Date(node.plan_date) : start)
+
+  const clampedStart = new Date(Math.max(nodeStart.getTime(), start.getTime()))
+  const clampedEnd = new Date(Math.min(nodeEnd.getTime(), end.getTime()))
+
+  const offsetDays = Math.round((clampedStart - start) / 86400000)
+  const spanDays = Math.max(1, Math.round((clampedEnd - clampedStart) / 86400000) + 1)
+
+  const leftPct = (offsetDays / totalDays) * 100
+  const widthPct = (spanDays / totalDays) * 100
+
+  return {
+    left: `${leftPct}%`,
+    width: `${Math.max(widthPct, 3)}%`,
+    minWidth: '30px'
+  }
+}
+
+// 甘特图拖拽：鼠标按下
+const onBarMouseDown = (event, node, type) => {
+  event.preventDefault()
+  ganttDragging.value = { id: node.id, type, startX: event.clientX, node: { ...node } }
+  document.addEventListener('mousemove', onGanttMouseMove)
+  document.addEventListener('mouseup', onGanttMouseUp)
+}
+
+// 甘特图拖拽：鼠标移动
+const onGanttMouseMove = async (event) => {
+  if (!ganttDragging.value || !currentProject.value) return
+  const { type, startX, node: origNode } = ganttDragging.value
+  const totalDays = getProjectDuration(currentProject.value)
+  if (!totalDays) return
+
+  const start = new Date(currentProject.value.start_date)
+  const end = new Date(currentProject.value.end_date)
+  const ganttEl = document.querySelector('.gantt-body')
+  if (!ganttEl) return
+  const rect = ganttEl.querySelector('.gantt-timeline')?.getBoundingClientRect()
+  if (!rect) return
+
+  const deltaX = event.clientX - startX
+  const dayWidth = rect.width / totalDays
+  const deltaDays = Math.round(deltaX / dayWidth)
+  if (deltaDays === 0) return
+
+  // 更新本地节点数据（乐观更新）
+  const node = currentProject.value.nodes.find(n => n.id === origNode.id)
+  if (!node) return
+
+  let newStart = origNode.plan_date ? new Date(origNode.plan_date) : new Date(start)
+  let newEnd = origNode.plan_end_date ? new Date(origNode.plan_end_date) : new Date(newStart)
+  newStart.setHours(0, 0, 0, 0)
+  newEnd.setHours(0, 0, 0, 0)
+
+  if (type === 'move') {
+    newStart = new Date(newStart.getTime() + deltaDays * 86400000)
+    newEnd = new Date(newEnd.getTime() + deltaDays * 86400000)
+  } else if (type === 'start') {
+    newStart = new Date(Math.min(newStart.getTime() + deltaDays * 86400000, newEnd.getTime() - 86400000))
+  } else if (type === 'end') {
+    newEnd = new Date(Math.max(newEnd.getTime() + deltaDays * 86400000, newStart.getTime() + 86400000))
+  }
+
+  // 边界检查
+  if (newStart < start) { const diff = start - newStart; newStart = new Date(start); newEnd = new Date(newEnd.getTime() + diff) }
+  if (newEnd > end) { const diff = newEnd - end; newEnd = new Date(end); newStart = new Date(newStart.getTime() - diff) }
+
+  node.plan_date = newStart.toISOString().slice(0, 10)
+  node.plan_end_date = newEnd.toISOString().slice(0, 10)
+  ganttDragging.value.startX = event.clientX
+}
+
+// 甘特图拖拽：鼠标松开
+const onGanttMouseUp = async () => {
+  if (!ganttDragging.value || !currentProject.value) {
+    cleanupGanttDrag()
+    return
+  }
+  const { node: origNode } = ganttDragging.value
+  const node = currentProject.value.nodes.find(n => n.id === origNode.id)
+  if (node) {
+    // 同步保存到后端
+    try {
+      await axios.put(`/api/project-stages/${node.id}`, {
+        plan_date: node.plan_date,
+        plan_end_date: node.plan_end_date
+      })
+    } catch (e) {
+      console.error('保存节点日期失败:', e)
+      // 回滚
+      node.plan_date = origNode.plan_date
+      node.plan_end_date = origNode.plan_end_date
+    }
+  }
+  cleanupGanttDrag()
+}
+
+const cleanupGanttDrag = () => {
+  ganttDragging.value = null
+  document.removeEventListener('mousemove', onGanttMouseMove)
+  document.removeEventListener('mouseup', onGanttMouseUp)
 }
 
 // 判断是否是当前第一个待开始节点
@@ -616,10 +1198,11 @@ const handleAddNode = async () => {
     await axios.post('/api/project-stages', payload)
     showAddNodeDialog.value = false
     ElMessage.success('节点添加成功')
+    // 强制清空节点列表后再刷新，解决抽屉内数据不更新问题
+    if (currentProject.value) {
+      currentProject.value.nodes = []
+    }
     await loadData()
-    // 重新获取最新的项目数据刷新抽屉
-    const updated = projectList.value.find(p => p.id === currentProject.value.id)
-    if (updated) currentProject.value = updated
   } catch (error) {
     ElMessage.error('添加失败')
   }
@@ -631,9 +1214,8 @@ const handleDeleteNode = async (node) => {
     await ElMessageBox.confirm(`确定删除节点"${node.node_name || node.stage_name}"？`, '确认删除', { type: 'warning' })
     await axios.delete(`/api/project-stages/${node.id}`)
     ElMessage.success('删除成功')
+    if (currentProject.value) currentProject.value.nodes = []
     await loadData()
-    const proj = projectList.value.find(p => p.id === currentProject.value.id)
-    if (proj) currentProject.value = proj
   } catch (error) {
     if (error !== 'cancel') ElMessage.error('删除失败')
   }
@@ -1306,6 +1888,12 @@ onMounted(() => {
   color: #909399;
 }
 
+.node-date-range {
+  font-size: 12px;
+  color: #e6a23c;
+  white-space: nowrap;
+}
+
 .drawer-footer {
   margin-top: 24px;
   padding-top: 16px;
@@ -1379,5 +1967,323 @@ onMounted(() => {
 .emp-check {
   color: #409eff;
   font-size: 16px;
+}
+
+/* ========== 甘特图 ========== */
+.gantt-section {
+  margin-top: 20px;
+  padding: 14px;
+  background: #fafafa;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+}
+
+.gantt-dialog-body {
+  max-height: calc(90vh - 120px);
+  overflow-y: auto;
+}
+
+.gantt-single-grid {
+  min-width: 100%;
+}
+
+.gantt-empty {
+  text-align: center;
+  color: #909399;
+  padding: 60px 0;
+  font-size: 14px;
+}
+
+.gantt-multi {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.gantt-multi-header {
+  display: flex;
+  background: #f5f7fa;
+  border-bottom: 2px solid #dcdfe6;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.gantt-proj-name-header {
+  width: 200px;
+  min-width: 200px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  border-right: 1px solid #dcdfe6;
+  background: #f5f7fa;
+}
+
+.gantt-timeline-area {
+  flex: 1;
+  overflow-x: auto;
+  position: relative;
+}
+
+.gantt-multi-body {
+  overflow-y: auto;
+  max-height: calc(90vh - 220px);
+}
+
+.gantt-project-row {
+  display: flex;
+  border-bottom: 1px solid #ebeef5;
+  min-height: 50px;
+}
+
+.gantt-project-row:last-child {
+  border-bottom: none;
+}
+
+.gantt-proj-name-cell {
+  width: 200px;
+  min-width: 200px;
+  padding: 10px 12px;
+  border-right: 1px solid #ebeef5;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.gantt-project-row:hover .gantt-proj-name-cell {
+  background: #f5f7fa;
+}
+
+.proj-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proj-dates {
+  font-size: 11px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+.gantt-node-bars {
+  position: relative;
+  height: 50px;
+  width: 100%;
+}
+
+.gantt-multi-bar-wrap {
+  position: absolute;
+  height: 100%;
+}
+
+.gantt-multi-bar {
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 0 2px;
+  transition: filter 0.15s;
+  overflow: hidden;
+}
+
+.gantt-multi-bar:hover {
+  filter: brightness(1.1);
+}
+
+.gantt-multi-bar .bar-label {
+  font-size: 11px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 6px;
+  text-align: center;
+}
+
+.gantt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.gantt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.gantt-range {
+  font-size: 12px;
+  color: #909399;
+}
+
+.gantt-body {
+  overflow-x: auto;
+}
+.gantt-timeline-area {
+  flex: 1;
+  overflow-x: auto;
+  position: relative;
+  min-width: 0;
+}
+
+.gantt-timeline {
+  display: flex;
+  height: 24px;
+  border-bottom: 1px solid #ebeef5;
+  margin-bottom: 4px;
+  position: relative;
+  /* 每天最小20px，确保日期轴有足够宽度 */
+  min-width: max-content;
+}
+
+.gantt-day {
+  flex: 1;
+  min-width: 32px;
+  height: 24px;
+  position: relative;
+  border-right: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gantt-day-today {
+  background: #fffbe6;
+}
+
+.gantt-day-weekend {
+  background: #f5f5f5;
+}
+
+.gantt-day-selecting {
+  background: #e6f0ff !important;
+  outline: 2px solid #409eff;
+  z-index: 1;
+}
+
+.day-label {
+  position: static;
+  font-size: 10px;
+  color: #909399;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.gantt-bars {
+  position: relative;
+}
+
+.gantt-row {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.gantt-connector {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  display: flex;
+  align-items: center;
+  z-index: 0;
+}
+
+.connector-line {
+  width: 100%;
+  height: 2px;
+  background: #dcdfe6;
+  transition: background 0.3s;
+}
+
+.connector-line.done {
+  background: #67c23a;
+}
+
+.gantt-bar {
+  position: absolute;
+  height: 26px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  user-select: none;
+  z-index: 1;
+  transition: opacity 0.15s;
+  overflow: visible;
+}
+
+.gantt-bar:active {
+  cursor: grabbing;
+}
+
+.gantt-bar-dragging {
+  opacity: 0.8;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.gantt-bar-selecting {
+  outline: 3px solid #409eff;
+  box-shadow: 0 0 8px rgba(64, 158, 255, 0.5);
+  z-index: 2;
+}
+
+.gantt-bar-pending {
+  background: linear-gradient(90deg, #909399, #a6a9ad);
+}
+
+.gantt-bar-in_progress {
+  background: linear-gradient(90deg, #e6a23c, #ebb563);
+}
+
+.gantt-bar-completed {
+  background: linear-gradient(90deg, #67c23a, #85ce61);
+}
+
+.gantt-bar-skipped {
+  background: linear-gradient(90deg, #c0c4cc, #d3d4d6);
+}
+
+.bar-left-handle,
+.bar-right-handle {
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bar-left-handle:hover,
+.bar-right-handle:hover {
+  background: rgba(255,255,255,0.3);
+  border-radius: 4px;
+}
+
+.bar-label {
+  font-size: 11px;
+  color: #fff;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  padding: 0 6px;
+  text-align: center;
+  line-height: 1.2;
+  width: 100%;
 }
 </style>

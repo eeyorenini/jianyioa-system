@@ -33,6 +33,24 @@ async function initDatabase() {
     const [rows] = await pool.query('SHOW TABLES');
     if (rows.length > 0) {
       console.log('✅ 数据库表已存在，跳过 init.sql');
+
+      // 字段迁移：确保 plan_end_date 存在（兼容已有数据库）
+      try {
+        await pool.query(`
+          ALTER TABLE project_progress_nodes
+          ADD COLUMN IF NOT EXISTS plan_end_date DATE DEFAULT NULL AFTER plan_date
+        `);
+        console.log('✅ 字段迁移：project_progress_nodes.plan_end_date 已存在或添加成功');
+      } catch (e) {
+        // MySQL 不支持 IF NOT EXISTS，降级处理
+        try {
+          await pool.query(`
+            ALTER TABLE project_progress_nodes ADD COLUMN plan_end_date DATE DEFAULT NULL AFTER plan_date
+          `);
+        } catch (e2) {
+          // 字段已存在，忽略
+        }
+      }
       return;
     }
   } catch (e) {}
@@ -1033,20 +1051,20 @@ app.get('/api/project-stages', async (req, res) => {
 });
 
 app.post('/api/project-stages', async (req, res) => {
-  const { project_id, node_name, plan_date, status, progress, note, sms_template_id, after_node_id } = req.body;
+  const { project_id, node_name, plan_date, plan_end_date, status, progress, note, sms_template_id, after_node_id } = req.body;
   try {
     if (after_node_id !== undefined && after_node_id !== null) {
       const [after] = await db.prepare('SELECT sort_order FROM project_progress_nodes WHERE id = ?').all(after_node_id);
       if (after) {
         await db.prepare('UPDATE project_progress_nodes SET sort_order = sort_order + 1 WHERE project_id = ? AND sort_order > ?').run(project_id, after.sort_order);
-        const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
-        const result = await stmt.run(project_id, node_name, plan_date, after.sort_order + 1, status || 'pending', note, sms_template_id || null);
+        const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, plan_end_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        const result = await stmt.run(project_id, node_name, plan_date, plan_end_date || null, after.sort_order + 1, status || 'pending', note, sms_template_id || null);
         return res.json({ id: result.lastInsertRowid, message: '添加成功' });
       }
     }
     const [max] = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM project_progress_nodes WHERE project_id = ?').all(project_id);
-    const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    const result = await stmt.run(project_id, node_name, plan_date, max.m + 1, status || 'pending', note, sms_template_id || null);
+    const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, plan_end_date, sort_order, status, note, sms_template_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const result = await stmt.run(project_id, node_name, plan_date, plan_end_date || null, max.m + 1, status || 'pending', note, sms_template_id || null);
     res.json({ id: result.lastInsertRowid, message: '添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1057,18 +1075,19 @@ app.put('/api/project-stages/:id', async (req, res) => {
   try {
     const [row] = await db.prepare('SELECT * FROM project_progress_nodes WHERE id = ?').all(req.params.id);
     if (!row) return res.status(404).json({ error: '节点不存在' });
-    const { node_name, plan_date, actual_date, status, note, sms_template_id, sort_order } = req.body;
+    const { node_name, plan_date, plan_end_date, actual_date, status, note, sms_template_id, sort_order } = req.body;
     const updated = {
       node_name: node_name !== undefined ? node_name : row.node_name,
       plan_date: plan_date !== undefined ? plan_date : row.plan_date,
+      plan_end_date: plan_end_date !== undefined ? plan_end_date : row.plan_end_date,
       actual_date: actual_date !== undefined ? actual_date : row.actual_date,
       status: status !== undefined ? status : row.status,
       note: note !== undefined ? note : row.note,
       sms_template_id: sms_template_id !== undefined ? (sms_template_id || null) : row.sms_template_id,
       sort_order: sort_order !== undefined ? sort_order : row.sort_order
     };
-    const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, actual_date=?, status=?, note=?, sms_template_id=?, sort_order=? WHERE id=?');
-    await stmt.run(updated.node_name, updated.plan_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, updated.sort_order, req.params.id);
+    const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, plan_end_date=?, actual_date=?, status=?, note=?, sms_template_id=?, sort_order=? WHERE id=?');
+    await stmt.run(updated.node_name, updated.plan_date, updated.plan_end_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, updated.sort_order, req.params.id);
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2844,20 +2863,47 @@ app.get('/api/progress-nodes/:projectId', async (req, res) => {
   }
 });
 
-// POST 用模板初始化项目节点
+// POST 用模板初始化项目节点（同时自动分配计划日期）
 app.post('/api/progress-nodes/init/:projectId', async (req, res) => {
   try {
     const { template_id } = req.body;
+
+    // 获取项目信息（用于计算日期范围）
+    const [project] = await db.prepare('SELECT * FROM projects WHERE id = ?').all([req.params.projectId]);
+    if (!project) return res.status(404).json({ error: '项目不存在' });
+
     const templateNodes = await db.prepare(
       'SELECT * FROM progress_node_template_nodes WHERE template_id=? ORDER BY sort_order'
     ).all([template_id]);
     if (!templateNodes.length) {
       return res.status(400).json({ error: '模板无节点' });
     }
+
+    // 如果项目有起止日期，按工期平均分配节点时间段
+    let planStart = null;
+    let planEnd = null;
+    if (project.start_date && project.end_date) {
+      const start = new Date(project.start_date);
+      const end = new Date(project.end_date);
+      const totalDays = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+      const nodeCount = templateNodes.length;
+      const daysPerNode = Math.ceil(totalDays / nodeCount);
+      planStart = start;
+      for (let i = 0; i < templateNodes.length; i++) {
+        const nodeStart = new Date(start.getTime() + i * daysPerNode * 86400000);
+        const nodeEnd = new Date(start.getTime() + (i + 1) * daysPerNode * 86400000 - 86400000);
+        templateNodes[i]._plan_start = nodeStart.toISOString().slice(0, 10);
+        templateNodes[i]._plan_end = nodeEnd.toISOString().slice(0, 10);
+      }
+    }
+
     for (const n of templateNodes) {
       await db.prepare(
-        'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())'
-      ).run([req.params.projectId, n.node_name, n.node_key, n.sort_order, 'pending', n.default_sms_template_id || null]);
+        'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, plan_date, plan_end_date, sms_template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+      ).run([
+        req.params.projectId, n.node_name, n.node_key, n.sort_order, 'pending',
+        n._plan_start || null, n._plan_end || null, n.default_sms_template_id || null
+      ]);
     }
     res.json({ message: '项目节点初始化成功', count: templateNodes.length });
   } catch (err) {
