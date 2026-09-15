@@ -1057,17 +1057,18 @@ app.put('/api/project-stages/:id', async (req, res) => {
   try {
     const [row] = await db.prepare('SELECT * FROM project_progress_nodes WHERE id = ?').all(req.params.id);
     if (!row) return res.status(404).json({ error: '节点不存在' });
-    const { node_name, plan_date, actual_date, status, note, sms_template_id } = req.body;
+    const { node_name, plan_date, actual_date, status, note, sms_template_id, sort_order } = req.body;
     const updated = {
       node_name: node_name !== undefined ? node_name : row.node_name,
       plan_date: plan_date !== undefined ? plan_date : row.plan_date,
       actual_date: actual_date !== undefined ? actual_date : row.actual_date,
       status: status !== undefined ? status : row.status,
       note: note !== undefined ? note : row.note,
-      sms_template_id: sms_template_id !== undefined ? (sms_template_id || null) : row.sms_template_id
+      sms_template_id: sms_template_id !== undefined ? (sms_template_id || null) : row.sms_template_id,
+      sort_order: sort_order !== undefined ? sort_order : row.sort_order
     };
-    const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, actual_date=?, status=?, note=?, sms_template_id=? WHERE id=?');
-    await stmt.run(updated.node_name, updated.plan_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, req.params.id);
+    const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, actual_date=?, status=?, note=?, sms_template_id=?, sort_order=? WHERE id=?');
+    await stmt.run(updated.node_name, updated.plan_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, updated.sort_order, req.params.id);
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });

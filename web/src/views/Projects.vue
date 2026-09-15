@@ -213,9 +213,18 @@
             v-for="(node, index) in currentProject?.nodes"
             :key="node.id"
             class="node-item"
-            :class="`node-item-${node.status}`"
+            :class="[`node-item-${node.status}`, { 'node-item-dragging': draggingIndex === index, 'node-item-drag-over': dragOverIndex === index }]"
+            draggable="true"
+            @dragstart="handleNodeDragStart(index)"
+            @dragover.prevent="handleNodeDragOver(index)"
+            @drop="handleNodeDrop(index)"
+            @dragend="handleNodeDragEnd"
           >
             <div class="node-item-left">
+              <!-- 拖拽手柄 -->
+              <div class="drag-handle">
+                <el-icon><Rank /></el-icon>
+              </div>
               <div class="node-index">{{ index + 1 }}</div>
               <div class="node-info">
                 <!-- 点击编辑节点名称 -->
@@ -324,7 +333,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus } from '@element-plus/icons-vue'
+import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank } from '@element-plus/icons-vue'
 
 const projectList = ref([])
 const loading = ref(false)
@@ -344,6 +353,8 @@ const templateList = ref([])
 const drawerTemplateId = ref(null)
 const showEmployeeDrawer = ref(false)
 const employeeDrawerType = ref('designer')
+const draggingIndex = ref(-1)
+const dragOverIndex = ref(-1)
 
 // 根据 employee id 查找电话
 const getEmployeePhone = (empId) => {
@@ -713,6 +724,58 @@ const handleNodeStatusChange = async (node) => {
   } catch (error) {
     ElMessage.error('更新失败')
   }
+}
+
+// 拖拽开始
+const handleNodeDragStart = (index) => {
+  draggingIndex.value = index
+}
+
+// 拖拽经过（显示放置目标）
+const handleNodeDragOver = (index) => {
+  if (draggingIndex.value < 0 || draggingIndex.value === index) return
+  dragOverIndex.value = index
+}
+
+// 放置（真正排序）
+const handleNodeDrop = async (toIndex) => {
+  if (draggingIndex.value < 0 || draggingIndex.value === toIndex) {
+    handleNodeDragEnd()
+    return
+  }
+  const fromIndex = draggingIndex.value
+  const nodes = currentProject.value.nodes
+
+  // 移动数组元素
+  const [moved] = nodes.splice(fromIndex, 1)
+  nodes.splice(toIndex, 0, moved)
+
+  // 批量更新 sort_order 到后端
+  try {
+    await Promise.all(nodes.map((node, i) =>
+      axios.put(`/api/project-stages/${node.id}`, {
+        node_name: node.node_name,
+        sort_order: i
+      })
+    ))
+    // 刷新 projectList 中的节点（保持横向横轴同步）
+    const proj = projectList.value.find(p => p.id === currentProject.value.id)
+    if (proj) {
+      proj.nodes = [...nodes]
+    }
+    ElMessage.success('节点顺序已更新')
+  } catch (error) {
+    ElMessage.error('更新顺序失败')
+    // 失败后重新拉取数据
+    await loadData()
+  }
+  handleNodeDragEnd()
+}
+
+// 拖拽结束
+const handleNodeDragEnd = () => {
+  draggingIndex.value = -1
+  dragOverIndex.value = -1
 }
 
 // 重置所有节点
@@ -1117,11 +1180,40 @@ onMounted(() => {
   border: 1px solid #ebeef5;
   background: #fff;
   transition: all 0.2s;
+  cursor: grab;
+}
+
+.node-item:active {
+  cursor: grabbing;
 }
 
 .node-item:hover {
   border-color: #c0c4cc;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.node-item-dragging {
+  opacity: 0.4;
+  background: #f5f7fa;
+}
+
+.node-item-drag-over {
+  border-color: #409eff;
+  background: #ecf5ff;
+  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.2);
+}
+
+.drag-handle {
+  color: #c0c4cc;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  margin-right: 4px;
+  transition: color 0.15s;
+}
+
+.drag-handle:hover {
+  color: #909399;
 }
 
 .node-item-in_progress {
