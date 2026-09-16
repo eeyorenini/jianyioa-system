@@ -9,3 +9,7 @@ web/dist/
 *.backup
 *.broken_backup
 web_backup_20260902/
+
+# node_modules
+web/node_modules/
+server/node_modules/
