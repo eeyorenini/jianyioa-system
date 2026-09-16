@@ -633,8 +633,13 @@ onMounted(() => {
 
 // 打开甘特图弹窗
 const openGanttDialog = () => {
-  // 初始化甘特图选中项目为当前项目（支持总览页切换）
-  ganttSelectedProjectId.value = currentProject.value?.id || null
+  // 优先使用当前项目，其次找列表中第一个有日期的项目，最后取第一个项目
+  let targetId = currentProject.value?.id || null
+  if (!targetId) {
+    const withDates = projectList.value.filter(p => p.start_date && p.end_date)
+    targetId = withDates.length > 0 ? withDates[0].id : (projectList.value[0]?.id || null)
+  }
+  ganttSelectedProjectId.value = targetId
   // 检查选中项目是否有工期
   const proj = ganttSelectedProject.value
   if (!proj?.start_date || !proj?.end_date) {
