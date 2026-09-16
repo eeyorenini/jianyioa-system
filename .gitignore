@@ -8,3 +8,4 @@ web/dist/
 # 备份文件
 *.backup
 *.broken_backup
+web_backup_20260902/
