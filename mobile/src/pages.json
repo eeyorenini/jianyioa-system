@@ -1,0 +1,335 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/home/index",
+      "style": {
+        "navigationBarTitleText": "首页",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/home",
+      "style": {
+        "navigationBarTitleText": "客户首页",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/projects",
+      "style": {
+        "navigationBarTitleText": "我的项目",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/messages",
+      "style": {
+        "navigationBarTitleText": "消息通知",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/mine",
+      "style": {
+        "navigationBarTitleText": "我的",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/list",
+      "style": {
+        "navigationBarTitleText": "项目管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/add",
+      "style": {
+        "navigationBarTitleText": "新建项目",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/detail",
+      "style": {
+        "navigationBarTitleText": "项目详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/nodeManage",
+      "style": {
+        "navigationBarTitleText": "项目节点",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/gantt",
+      "style": {
+        "navigationBarTitleText": "甘特图",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/node",
+      "style": {
+        "navigationBarTitleText": "节点详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/logs",
+      "style": {
+        "navigationBarTitleText": "施工日志",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/projects/log-add",
+      "style": {
+        "navigationBarTitleText": "新建日志",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/inspection/list",
+      "style": {
+        "navigationBarTitleText": "质量巡检",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/inspection/add",
+      "style": {
+        "navigationBarTitleText": "新建巡检",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/inspection/detail",
+      "style": {
+        "navigationBarTitleText": "巡检详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/dispatch/list",
+      "style": {
+        "navigationBarTitleText": "派工管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/dispatch/add",
+      "style": {
+        "navigationBarTitleText": "新建派工",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/dispatch/detail",
+      "style": {
+        "navigationBarTitleText": "派工详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/material/list",
+      "style": {
+        "navigationBarTitleText": "材料管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/material/purchase",
+      "style": {
+        "navigationBarTitleText": "采购申请",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/material/inbound",
+      "style": {
+        "navigationBarTitleText": "到货验收",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contract/list",
+      "style": {
+        "navigationBarTitleText": "合同管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contract/detail",
+      "style": {
+        "navigationBarTitleText": "合同详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/finance/list",
+      "style": {
+        "navigationBarTitleText": "收支管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/finance/add",
+      "style": {
+        "navigationBarTitleText": "新建收支",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/gallery/index",
+      "style": {
+        "navigationBarTitleText": "项目图库",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/report/index",
+      "style": {
+        "navigationBarTitleText": "数据报表",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/message/list",
+      "style": {
+        "navigationBarTitleText": "消息通知",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/mine/index",
+      "style": {
+        "navigationBarTitleText": "我的",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/notices/notices",
+      "style": {
+        "navigationBarTitleText": "公告通知",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/addressbook/addressbook",
+      "style": {
+        "navigationBarTitleText": "通讯录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contracts/contracts",
+      "style": {
+        "navigationBarTitleText": "合同管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/acceptance/list",
+      "style": {
+        "navigationBarTitleText": "验收管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/acceptance/add",
+      "style": {
+        "navigationBarTitleText": "新建验收",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/change/list",
+      "style": {
+        "navigationBarTitleText": "变更单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/change/add",
+      "style": {
+        "navigationBarTitleText": "新建变更单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customers/customers",
+      "style": {
+        "navigationBarTitleText": "客户管理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customers/add",
+      "style": {
+        "navigationBarTitleText": "添加客户",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/settings/settings",
+      "style": {
+        "navigationBarTitleText": "设置",
+        "navigationStyle": "custom"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "简逸装饰",
+    "navigationBarBackgroundColor": "#1E3A5F",
+    "backgroundColor": "#F5F7FA"
+  },
+  "tabBar": {
+    "color": "#8E9BBA",
+    "selectedColor": "#1E3A5F",
+    "borderStyle": "white",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页",
+        "iconPath": "static/tab-home.png",
+        "selectedIconPath": "static/tab-home-active.png"
+      },
+      {
+        "pagePath": "pages/projects/list",
+        "text": "项目",
+        "iconPath": "static/tab-project.png",
+        "selectedIconPath": "static/tab-project-active.png"
+      },
+      {
+        "pagePath": "pages/inspection/list",
+        "text": "巡检",
+        "iconPath": "static/tab-inspect.png",
+        "selectedIconPath": "static/tab-inspect-active.png"
+      },
+      {
+        "pagePath": "pages/dispatch/list",
+        "text": "派工",
+        "iconPath": "static/tab-dispatch.png",
+        "selectedIconPath": "static/tab-dispatch-active.png"
+      },
+      {
+        "pagePath": "pages/mine/index",
+        "text": "我的",
+        "iconPath": "static/tab-mine.png",
+        "selectedIconPath": "static/tab-mine-active.png"
+      }
+    ]
+  }
+}

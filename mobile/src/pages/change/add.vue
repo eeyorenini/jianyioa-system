@@ -1,0 +1,304 @@
+<template>
+  <view class="page">
+    <!-- 顶部导航 -->
+    <view class="nav-bar">
+      <text class="nav-back" @click="goBack">‹</text>
+      <text class="nav-title">新建变更单</text>
+      <view class="nav-placeholder"></view>
+    </view>
+
+    <!-- 项目信息 -->
+    <view class="project-banner" v-if="projectName">
+      <text>📁 {{ projectName }}</text>
+    </view>
+
+    <!-- 表单 -->
+    <view class="form-card">
+      <!-- 变更标题 -->
+      <view class="form-item">
+        <view class="form-label">变更标题 <text class="required">*</text></view>
+        <input class="form-input" v-model="form.title" placeholder="如：增加背景墙造型" />
+      </view>
+
+      <!-- 变更类型 -->
+      <view class="form-item">
+        <view class="form-label">变更类型</view>
+        <picker :range="typeOptions" @change="onTypeChange">
+          <view class="picker-wrap">
+            <text :class="form.change_type ? 'picker-value' : 'picker-placeholder'">
+              {{ form.change_type || '请选择变更类型' }}
+            </text>
+            <text class="picker-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 变更日期 -->
+      <view class="form-item">
+        <view class="form-label">变更日期</view>
+        <picker mode="date" :value="form.change_date" @change="onDateChange">
+          <view class="picker-wrap">
+            <text :class="form.change_date ? 'picker-value' : 'picker-placeholder'">
+              {{ form.change_date || '请选择日期' }}
+            </text>
+            <text class="picker-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+
+      <!-- 变更金额 -->
+      <view class="form-item">
+        <view class="form-label">变更金额（元）</view>
+        <view class="amount-wrap">
+          <text class="amount-symbol">¥</text>
+          <input class="form-input amount-input" type="digit" v-model="form.amount" placeholder="0.00" />
+        </view>
+      </view>
+
+      <!-- 变更原因 -->
+      <view class="form-item">
+        <view class="form-label">变更原因</view>
+        <textarea class="form-textarea" v-model="form.reason" placeholder="请输入变更原因" />
+      </view>
+
+      <!-- 变更内容 -->
+      <view class="form-item">
+        <view class="form-label">变更内容</view>
+        <textarea class="form-textarea" v-model="form.content" placeholder="请输入变更的具体内容" />
+      </view>
+
+      <!-- 审批状态（默认待审核） -->
+      <view class="form-item">
+        <view class="form-label">审批状态</view>
+        <picker :range="statusOptions" @change="onStatusChange">
+          <view class="picker-wrap">
+            <text class="picker-value">{{ form.statusText || '待审核' }}</text>
+            <text class="picker-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+    </view>
+
+    <!-- 提交按钮 -->
+    <view class="bottom-bar">
+      <view class="btn-submit" :class="{ loading }" @click="handleSubmit">
+        <text v-if="!loading">提 交</text>
+        <text v-else>提交中...</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup >
+import { ref, reactive, onMounted } from "vue";
+
+const projectId = ref(0);
+const projectName = ref('');
+const loading = ref(false);
+
+const typeOptions = ['设计变更', '材料变更', '工艺变更', '进度变更', '其他'];
+const statusOptions = ['待审核', '已通过', '已驳回'];
+
+const form = reactive({
+  title: '',
+  change_type: '',
+  change_date: '',
+  amount: '',
+  reason: '',
+  content: '',
+  status: 'pending',
+  statusText: '待审核',
+});
+
+const onTypeChange = (e) => {
+  form.change_type = typeOptions[e.detail.value];
+};
+
+const onDateChange = (e) => {
+  form.change_date = e.detail.value;
+};
+
+const onStatusChange = (e) => {
+  const texts = ['待审核', '已通过', '已驳回'];
+  const vals = ['pending', 'approved', 'rejected'];
+  form.statusText = texts[e.detail.value];
+  form.status = vals[e.detail.value];
+};
+
+const handleSubmit = async () => {
+  if (!form.title.trim()) {
+    uni.showToast({ title: '请填写变更标题', icon: 'none' });
+    return;
+  }
+  if (!projectId.value) {
+    uni.showToast({ title: '未指定项目', icon: 'none' });
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      url: '/api/change-orders',
+      method: 'POST',
+      header: { 'Content-Type': 'application/json', Authorization: token },
+      data: {
+        project_id: projectId.value,
+        title: form.title,
+        change_type: form.change_type,
+        change_date: form.change_date,
+        amount: form.amount ? parseFloat(form.amount) : 0,
+        reason: form.reason,
+        content: form.content,
+        status: form.status,
+      },
+    });
+    const data = res.data;
+    if (data.id || data.message?.includes('成功')) {
+      uni.showToast({ title: '提交成功', icon: 'success' });
+      setTimeout(() => uni.navigateBack(), 1500);
+    } else {
+      uni.showToast({ title: data.error || '提交失败', icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '提交失败：' + (e.message || '网络错误'), icon: 'none' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(() => {
+  const pages = getCurrentPages();
+  const current = pages[pages.length - 1];
+  const options = (current).options || {};
+  projectId.value = parseInt(options.projectId || '0');
+  if (options.projectName) {
+    projectName.value = decodeURIComponent(options.projectName);
+  }
+});
+
+const goBack = () => uni.navigateBack();
+</script>
+
+<script >
+import { reactive } from 'vue';
+export default { options: { styleIsolation: 'shared' } };
+</script>
+
+<style scoped>
+.page {
+  min-height: 100vh;
+  background: #F5F7FA;
+  padding-bottom: 100px;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1E3A5F;
+  color: #fff;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-title { font-size: 17px; font-weight: 600; }
+.nav-placeholder { width: 40px; }
+
+.project-banner {
+  background: #fff;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: #1E3A5F;
+  font-weight: 500;
+  border-bottom: 1px solid #F3F4F6;
+}
+
+.form-card {
+  margin: 16px;
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.form-item {
+  padding: 14px 18px;
+  border-bottom: 1px solid #F5F7FA;
+}
+.form-item:last-child { border-bottom: none; }
+
+.form-label {
+  font-size: 13px;
+  color: #6B7280;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.required { color: #EF4444; }
+
+.form-input {
+  width: 100%;
+  font-size: 15px;
+  color: #1A1F36;
+  background: transparent;
+  height: 32px;
+  line-height: 32px;
+}
+
+.form-textarea {
+  width: 100%;
+  font-size: 15px;
+  color: #1A1F36;
+  background: #F9FAFB;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  min-height: 80px;
+  border: 1px solid #E5E7EB;
+}
+
+.amount-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.amount-symbol { font-size: 16px; color: #1A1F36; font-weight: 600; }
+.amount-input { flex: 1; }
+
+.picker-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+}
+.picker-value { font-size: 15px; color: #1A1F36; }
+.picker-placeholder { font-size: 15px; color: #D1D5DB; }
+.picker-arrow { font-size: 18px; color: #D1D5DB; }
+
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
+  z-index: 100;
+}
+
+.btn-submit {
+  background: #1E3A5F;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  padding: 14px 0;
+  border-radius: 10px;
+  letter-spacing: 2px;
+}
+.btn-submit.loading { opacity: 0.7; }
+</style>
