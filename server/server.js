@@ -2032,6 +2032,41 @@ app.delete('/api/acceptance/:id', async (req, res) => {
   res.json({ message: '删除成功' });
 });
 
+// ==================== 派工管理 ====================
+app.get('/api/dispatches', async (req, res) => {
+  const stmt = db.prepare('SELECT * FROM dispatches ORDER BY created_at DESC');
+  res.json(await stmt.all());
+});
+
+app.post('/api/dispatches', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || 0);
+  const { project_id, project_name, content, location, worker, fee, start_date, requirement, status } = req.body;
+  const stmt = db.prepare('INSERT INTO dispatches (project_id, project_name, content, location, worker, fee, start_date, requirement, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const result = await stmt.run(project_id, project_name || '', content, location || '', worker || '', fee || '', start_date || null, requirement || '', status || '待接单');
+  await addLog(userId, '', '新增', '派工管理', result.lastInsertRowid, content, `派工内容: ${content}`, req.ip);
+  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+});
+
+app.put('/api/dispatches/:id', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || 0);
+  const { status, content, location, worker, fee, start_date, requirement } = req.body;
+  const [d] = await db.prepare('SELECT content FROM dispatches WHERE id = ?').all(req.params.id);
+  const dName = d ? d.content : req.params.id;
+  const stmt = db.prepare('UPDATE dispatches SET status=?, content=?, location=?, worker=?, fee=?, start_date=?, requirement=? WHERE id=?');
+  await stmt.run(status, content, location, worker, fee, start_date, requirement, req.params.id);
+  await addLog(userId, '', '编辑', '派工管理', req.params.id, dName, `更新派工: ${dName}`, req.ip);
+  res.json({ message: '更新成功' });
+});
+
+app.delete('/api/dispatches/:id', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || 0);
+  const [d] = await db.prepare('SELECT content FROM dispatches WHERE id = ?').all(req.params.id);
+  const dName = d ? d.content : req.params.id;
+  await db.prepare('DELETE FROM dispatches WHERE id = ?').run(req.params.id);
+  await addLog(userId, '', '删除', '派工管理', req.params.id, dName, `删除派工: ${dName}`, req.ip);
+  res.json({ message: '删除成功' });
+});
+
 app.get('/api/invoices', async (req, res) => {
   const stmt = db.prepare('SELECT * FROM invoices ORDER BY created_at DESC');
   res.json(await stmt.all());
