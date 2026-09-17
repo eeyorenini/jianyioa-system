@@ -1007,8 +1007,22 @@ app.post('/api/projects', async (req, res) => {
     const { name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id } = req.body;
     const stmt = db.prepare('INSERT INTO projects (name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, template_id || null);
-    await addLog(userId, '', '新增', '项目管理', result.lastInsertRowid, name, `项目名称: ${name}`, req.ip);
-    res.json({ id: result.lastInsertRowid, message: '添加成功' });
+    const projectId = result.lastInsertRowid;
+
+    // 如果选了节点模板，从模板复制节点到项目
+    if (template_id) {
+      const templateNodes = await db.prepare(
+        'SELECT node_name, node_key, sort_order, default_sms_template_id FROM progress_node_template_nodes WHERE template_id = ? ORDER BY sort_order'
+      ).all([template_id]);
+      for (const node of templateNodes) {
+        await db.prepare(
+          'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(projectId, node.node_name, node.node_key, node.sort_order, 'pending', node.default_sms_template_id || null);
+      }
+    }
+
+    await addLog(userId, '', '新增', '项目管理', projectId, name, `项目名称: ${name}`, req.ip);
+    res.json({ id: projectId, message: '添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1779,6 +1793,28 @@ app.post('/api/employees/login', async (req, res) => {
     res.json({ success: true, user });
   } else {
     res.json({ success: false, message: '用户名或密码错误' });
+  }
+});
+
+// 客户登录（手机号 + 姓名）
+app.post('/api/customers/login', async (req, res) => {
+  const { phone, name } = req.body;
+  if (!phone) {
+    return res.json({ success: false, message: '请输入手机号' });
+  }
+  try {
+    const stmt = db.prepare(`SELECT * FROM customers WHERE phone = ? LIMIT 1`);
+    const customer = await stmt.get(phone);
+    if (!customer) {
+      return res.json({ success: false, message: '该手机号未注册' });
+    }
+    // 姓名可以不验证，作为可选的安全校验
+    if (name && customer.name !== name) {
+      return res.json({ success: false, message: '姓名与手机号不匹配' });
+    }
+    res.json({ success: true, customer });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
