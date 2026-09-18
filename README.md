@@ -1,63 +1,123 @@
-# 建亿OA系统 v1.0.1 - 部署说明
+# 建亿OA管理系统
 
-## 包内容
-- `package.json` - 根目录启动配置
-- `install.bat` - Windows 一键安装脚本
-- `server/` - 后端代码（包含 server.js, db-mysql.js, db-mysql-async.js, .env, package.json）
-- `web/dist/` - **预编译好的前端**（不需要再 npm install 或 build）
-- `web/package.json` + `web/vite.config.js` - 前端源码（备用，要重 build 时用）
+**工程进度管理 + 合同管理 + 移动办公** 一体化系统
 
-## 部署步骤
+- 🌐 PC 管理后台：https://erp.fujinwanjia.com
+- 📱 移动端 H5：FRP 穿透到云服务器（开发环境 http://localhost:10086）
+- 🔧 后端 API：http://116.204.19.53:3002
 
-### 第一步：上传并解压
-1. 把整个 `jianyioa-v1.0.1` 文件夹上传到服务器 `D:\wwwroot\`
-2. 双击运行 `install.bat`（或手动执行下方命令）
+---
 
-### 第二步：MySQL 用户授权（关键！）
-服务器第一次连接会报 "Host not allowed"，因为 MySQL 的 jianyioa 用户只授权给特定主机。
+## 功能模块
 
-**宝塔面板 → 数据库 → jianyioa → 管理（phpMyAdmin）→ 用 root 登录 → SQL 标签执行：**
+### PC 管理后台（Vue 3 + Vite + Element Plus）
 
-```sql
-CREATE USER 'jianyioa'@'%' IDENTIFIED BY 'zpfbAsxyA76P2ZHw';
-GRANT ALL PRIVILEGES ON jianyioa.* TO 'jianyioa'@'%';
-FLUSH PRIVILEGES;
+| 模块 | 说明 |
+|------|------|
+| **合同管理** | 合同起草、编辑、附件上传、PDF导出（Tiptap编辑器） |
+| **项目管理** | 项目列表、甘特图、节点拖拽排序、施工日志 |
+| **节点模板** | 节点模板管理（水电/泥瓦/木工等标准工序） |
+| **巡检验收** | 质量巡检、问题记录、整改流程 |
+| **材料管理** | 主材订单、采购申请、入库验收 |
+| **派工管理** | 施工人员派工、工单管理 |
+| **财务管理** | 收支记录、发票管理 |
+| **客户管理** | 客户信息、跟进记录 |
+| **员工管理** | 部门、角色、权限 |
+| **短信模板** | 阿里云短信通知 |
+| **系统设置** | 全局配置（双重JSON格式） |
+
+### 移动端（uni-app + Vue 3 + Vite，H5/小程序/App 三端通用）
+
+| 模块 | 说明 |
+|------|------|
+| **首页仪表盘** | 统计数据、快捷操作入口、待办事项、逾期预警 |
+| **项目管理** | 项目列表、项目详情（含时间轴节点）、节点管理 |
+| **施工日志** | 按项目记录施工进度 |
+| **质量巡检** | 巡检问题拍照上传、整改流程 |
+| **派工管理** | 派工单新建/列表/删除 |
+| **验收管理** | 验收节点管理 |
+| **合同管理** | 合同预览（Tiptap，H5不可编辑） |
+| **客户管理** | 客户列表、新增客户表单 |
+| **通讯录** | 企业通讯录 |
+| **甘特图** | 项目进度可视化 |
+| **材料管理** | 采购申请 + 到货验收 |
+
+---
+
+## 技术栈
+
+### 后端
+- **Node.js** + Express
+- **MySQL** 5.5（阿里云 116.204.19.53:3306）
+- **puppeteer@22** PDF导出
+- **阿里云短信** dysmsapi.aliyuncs.com
+
+### PC 前端
+- Vue 3 + Vite
+- Element Plus
+- Tiptap 富文本编辑器
+- Pinia 状态管理
+- Axios
+
+### 移动端
+- uni-app（Vue 3）
+- Vite 构建
+- Pinia
+- uni-ui / uview-plus（不用）
+- TypeScript（仅类型声明，禁止泛型/类型注解语法）
+
+---
+
+## 目录结构
+
+```
+jianyioa-system/
+├── server/
+│   ├── server.js          # Express 主入口
+│   ├── init.sql           # 数据库初始化脚本（含所有表）
+│   └── .env               # 数据库配置（不上git）
+├── web/
+│   ├── dist/              # 编译产物（服务器实际运行的）
+│   ├── src/
+│   │   ├── App.vue
+│   │   └── views/         # 页面组件
+│   └── package.json
+└── README.md
 ```
 
-### 第三步：宝塔里创建 Node 项目
-1. 宝塔面板 → Node项目 → 添加项目
-2. **项目目录** = `D:\wwwroot\jianyioa-v1.0.1\server`
-3. **启动选项** = `start`（从下拉框里选，不要手敲）
-4. **Node 版本** = v18.20.8
-5. **包管理器** = npm
-6. 保存 → 启动
+---
 
-### 第四步：验证
-浏览器打开 `https://erp.fujinwanjia.com`
-- 能看到登录页 = 部署成功
-- 侧边栏底部看到 `v 1.0.1` = 前端版本正确
-- 登录后看到合同 = 后端+数据库 OK
+## 数据库
 
-## 常见错误
+- **Host**: 116.204.19.53:3306
+- **Database**: jianyioa
+- **User**: jianyioa
+- **关键表**：projects, project_stages, contracts, contract_templates, inspections, dispatches, material_orders 等
 
-| 错误 | 原因 | 解决 |
-|------|------|------|
-| `Cannot find module 'dotenv'` | 没装依赖 | 跑 `npm install --legacy-peer-deps` |
-| `Cannot find module 'db-mysql-async.js'` | 文件没传全 | 重新解压整个 zip |
-| `ERR_REQUIRE_ESM` puppeteer | puppeteer 装到 v25 | 跑 `npm install puppeteer@22 --legacy-peer-deps` |
-| `Host not allowed` | MySQL 没授权 | 跑上面的 SQL |
-| `port 3001 already in use` | 端口被占 | 改 .env 的 PORT 字段 |
+---
 
-## 端口说明
-- 后端默认 3001（与 Apache 代理一致）
-- Apache 已经配置 `/api/` 和 `/uploads/` 代理到 3001
-- 修改端口要同步改 Apache 配置 `D:\BtSoft\apache\conf\vhost\erp.fujinwanjia.com.conf`
+## 部署
 
-## 重启服务
-```cmd
-cd D:\wwwroot\jianyioa-v1.0.1\server
-taskkill /F /IM node.exe
-npm start
-```
+### 服务器路径
+- PC 前端 + 后端：`D:\wwwroot\jianyioa\`
+- Apache 代理 → Node 3001
+- 域名：erp.fujinwanjia.com
 
-或者在宝塔里点「重启项目」。
+### 升级流程
+1. 本地 `cd ~/Desktop/jianyioa-system/web && npm run build`
+2. 取 `web/dist/` + `server/server.js` 覆盖到服务器
+3. 重启 Node 服务（宝塔面板）
+
+---
+
+## 版本历史
+
+| 版本 | 日期 | 主要内容 |
+|------|------|---------|
+| v2.1.8 | 2026-09-17 | 派工API新增、移动端时间轴样式统一、首页重叠修复 |
+| v2.1.7 | 2026-09-16 | 甘特图总览按钮关联项目修复 |
+| v2.1.6 | 2026-09-14 | 甘特图条对齐+节点抽屉布局优化 |
+| v2.1.5 | 2026-09-14 | 项目节点拖拽排序功能 |
+| v2.1.4 | 2026-09-07 | 节点模板新增显示修复 |
+| v2.1.3 | 2026-09-07 | 节点模板功能 |
+| v1.0.1 | 2026-06-18 | 初始版本 |

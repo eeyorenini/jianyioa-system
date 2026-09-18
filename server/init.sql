@@ -669,6 +669,22 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 派工表
+CREATE TABLE IF NOT EXISTS dispatches (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  project_id INT,
+  project_name VARCHAR(255),
+  content VARCHAR(500) NOT NULL COMMENT '施工内容',
+  location VARCHAR(255) COMMENT '施工地点',
+  worker VARCHAR(100) COMMENT '工人/班组',
+  fee VARCHAR(50) COMMENT '工费',
+  start_date DATE COMMENT '开始时间',
+  requirement TEXT COMMENT '施工要求',
+  status VARCHAR(20) DEFAULT '待接单' COMMENT '待接单/施工中/已完工',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- 索引建议（按需添加）
