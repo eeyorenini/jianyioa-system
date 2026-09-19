@@ -1,4 +1,4 @@
-const dotenv = require('dotenv');
+const dotenv = require('./node_modules/dotenv');
 dotenv.config({ path: __dirname + '/.env' });
 
 const express = require('express');
@@ -25,6 +25,8 @@ app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 const db = new Database();
 // MySQL 不需要 busy_timeout / journal_mode（适配层已忽略）
+// ✅ 直接导出 pool 供外部 MySQL 查询用（如 notifications 表）
+const mysqlPool = pool;
 
 // 初始化数据库表结构（从 init.sql 读取）
 async function initDatabase() {
@@ -202,6 +204,123 @@ const checkAndInsertDefaultData = () => {
 
 // 启动时执行默认数据初始化
 setTimeout(() => { checkAndInsertDefaultData(); }, 1000);
+
+// ==================== 通知规则默认配置 ====================
+function getDefaultNotificationRules() {
+  return {
+    node_completed:    { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    project_progress:  { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    inspection_submit: { enabled: true, channels: ['inapp'], receivers: ['manager', 'supervisor'] },
+  };
+}
+
+// ==================== 通用通知函数 ====================
+// type: node_completed / project_progress / inspection_submit / ...
+// extraTargets: [{phone, name, role}] 额外要通知的人（如提交人本人）
+// targets: ['manager','designer','supervisor','customer'] 或 ['all']
+async function notifyProject(type, projectId, title, content, sourceId, sourceType, extraTargets) {
+  // 读取通知规则
+  let rules = getDefaultNotificationRules();
+  try {
+    const [rows] = await mysqlPool.query('SELECT setting_value FROM system_settings WHERE category = ?', ['notifications']);
+    if (rows[0]) {
+      const saved = JSON.parse(rows[0].setting_value);
+      // 合并：保存的值覆盖默认值
+      rules = { ...rules, ...saved };
+    }
+  } catch {}
+
+  const rule = rules[type];
+  if (!rule || !rule.enabled) return;
+
+  const [proj] = await db.prepare(`
+    SELECT p.*, c.name as customer_name, c.phone as customer_phone,
+    des.name as designer_name, des.phone as designer_phone,
+    sup.name as supervisor_name, sup.phone as supervisor_phone,
+    mgr.name as manager_name, mgr.phone as manager_phone
+    FROM projects p
+    LEFT JOIN customers c ON p.customer_id = c.id
+    LEFT JOIN employees des ON p.designer_id = des.id
+    LEFT JOIN employees sup ON p.supervisor_id = sup.id
+    LEFT JOIN employees mgr ON p.manager_id = mgr.id
+    WHERE p.id = ?`).all(projectId);
+
+  if (!proj) return;
+
+  // 按规则配置的接收人过滤
+  const receivers = rule.receivers || [];
+  const targets = [];
+  const addIf = (phone, name, role) => {
+    if (phone && receivers.includes(role) && !targets.find(t => t.phone === phone)) {
+      targets.push({ phone, name: name || '', role });
+    }
+  };
+
+  addIf(proj.manager_phone, proj.manager_name, 'manager');
+  addIf(proj.designer_phone, proj.designer_name, 'designer');
+  addIf(proj.supervisor_phone, proj.supervisor_name, 'supervisor');
+  addIf(proj.customer_phone, proj.customer_name, 'customer');
+
+  // 额外要通知的人不过滤角色
+  if (extraTargets) {
+    for (const t of extraTargets) {
+      if (t.phone && !targets.find(x => x.phone === t.phone)) {
+        targets.push(t);
+      }
+    }
+  }
+
+  const channels = (rule.channels || ['inapp']).join(',');
+  for (const t of targets) {
+    await mysqlPool.query(
+      'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
+    );
+
+    // 短信渠道：调用阿里云 SendSms
+    if (rule.channels.includes('sms')) {
+      sendSmsFromNotify(t.phone, t.name, title, content).catch(console.error);
+    }
+  }
+}
+
+// ==================== 通知短信发送函数（被 notifyProject 调用）====================
+async function sendSmsFromNotify(phone, name, title, content) {
+  if (!phone) return;
+
+  // 读取阿里云短信配置（SQLite system_settings，category='sms'）
+  const [smsSettings] = await db.prepare("SELECT setting_value FROM system_settings WHERE category='sms'").all();
+  let smsConfig = smsSettings ? JSON.parse(smsSettings.setting_value) : null;
+  if (smsConfig && smsConfig.setting_value) smsConfig = smsConfig.setting_value;
+  if (!smsConfig || smsConfig.provider !== 'aliyun') return;
+  if (!smsConfig.access_key_id || !smsConfig.access_key_secret) return;
+
+  // 读取默认短信模板（取第一个启用且有阿里云CODE的模板）
+  const [tmpl] = await db.prepare(
+    'SELECT aliyun_template_code, sign_name FROM sms_templates WHERE is_active=1 AND aliyun_template_code IS NOT NULL AND aliyun_template_code != "" LIMIT 1'
+  ).all();
+  if (!tmpl) return;
+
+  const signName = tmpl.sign_name || smsConfig.sign_name || '简逸装饰';
+  const templateCode = tmpl.aliyun_template_code;
+
+  // 提取项目名称（title格式：XXX：项目名）
+  const projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：)/, '');
+
+  await sendAliyunSms({
+    accessKeyId: smsConfig.access_key_id,
+    accessKeySecret: smsConfig.access_key_secret,
+    signName,
+    templateCode,
+    phone: phone.startsWith('+') ? phone : '+86' + phone,
+    templateParam: JSON.stringify({
+      name: name || '业主',
+      project: projectName,
+      content: content.length > 50 ? content.substring(0, 50) + '…' : content,
+      date: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+    })
+  });
+}
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: '装企云ERP系统运行中' });
@@ -1102,6 +1221,13 @@ app.put('/api/project-stages/:id', async (req, res) => {
     };
     const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, plan_end_date=?, actual_date=?, status=?, note=?, sms_template_id=?, sort_order=? WHERE id=?');
     await stmt.run(updated.node_name, updated.plan_date, updated.plan_end_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, updated.sort_order, req.params.id);
+
+    // ✅ 节点状态变为「已完成」时，通知项目成员和客户
+    if (row.status !== 'completed' && updated.status === 'completed') {
+      await notifyProject('node_completed', row.project_id, `项目节点完成：${updated.node_name || row.node_name}`,
+        `项目「${row.node_name}」已完成，请知悉。`, row.id, 'node');
+    }
+
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1127,7 +1253,18 @@ app.post('/api/project-logs', async (req, res) => {
   const { project_id, content, operator, images } = req.body;
   const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images) VALUES (?, ?, ?, ?)');
   const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []));
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+
+  // ✅ 新增项目进展时，通知项目成员和客户
+  const [proj] = await db.prepare('SELECT name FROM projects WHERE id = ?').all(project_id);
+  const logId = result.lastInsertRowid;
+  if (proj) {
+    await notifyProject('project_progress', project_id,
+      `项目新进展`,
+      `「${proj.name}」有新进展：${content ? content.substring(0, 50) : ''}...`,
+      logId, 'project_log');
+  }
+
+  res.json({ id: logId, message: '添加成功' });
 });
 
 app.get('/api/quotes', async (req, res) => {
@@ -1973,6 +2110,17 @@ app.post('/api/inspections', async (req, res) => {
   const stmt = db.prepare('INSERT INTO inspections (project_id, project_name, inspector_id, inspector_name, score, status, issues, images, result, rectify_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result2 = await stmt.run(project_id, project_name, inspector_id, inspector_name, score, status || '待整改', issues, JSON.stringify(images || []), result, rectify_status || '待整改');
   await addLog(userId, '', '新增', '验房管理', result2.lastInsertRowid, project_name, `项目: ${project_name}`, req.ip);
+
+  // 通知：巡检验收提交
+  notifyProject(
+    'inspection_submit',
+    project_id,
+    `工地巡检提交：${project_name}`,
+    `工地巡检已提交，巡检人：${inspector_name}，得分：${score || '未评分'}。请及时查看。`,
+    result2.lastInsertRowid,
+    'inspection'
+  ).catch(console.error);
+
   res.json({ id: result2.lastInsertRowid, message: '添加成功' });
 });
 
@@ -3418,6 +3566,113 @@ app.put('/api/system-settings/email', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ==================== 站内消息通知 API（MySQL: notifications 表）====================
+app.get('/api/notifications', async (req, res) => {
+  try {
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    const { page = 1, pageSize = 20, is_read, phone: phoneParam } = req.query;
+
+    // 优先用 URL 参数的 phone（客户/移动端），否则通过 userId 查员工手机号
+    let phone = phoneParam || null;
+    if (!phone && userId > 0) {
+      const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+      phone = emp ? emp.phone : null;
+    }
+
+    if (!phone) { res.json({ list: [], total: 0, page: 1, pageSize: parseInt(pageSize) }); return; }
+
+    let where = 'WHERE receiver_phone = ?';
+    const params = [phone];
+
+    if (is_read !== undefined) {
+      where += ' AND is_read = ?';
+      params.push(is_read === 'true' ? 1 : 0);
+    }
+
+    const [totalRows] = await mysqlPool.query(`SELECT COUNT(*) as cnt FROM notifications ${where}`, params);
+    const [list] = await mysqlPool.query(
+      `SELECT * FROM notifications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize)]
+    );
+
+    res.json({ list, total: totalRows[0].cnt, page: parseInt(page), pageSize: parseInt(pageSize) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/notifications/:id/read', async (req, res) => {
+  try {
+    await mysqlPool.query('UPDATE notifications SET is_read = 1 WHERE id = ?', [req.params.id]);
+    res.json({ message: '已标记已读' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/notifications/read-all', async (req, res) => {
+  try {
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    const { phone: phoneParam } = req.query;
+
+    let phone = phoneParam || null;
+    if (!phone && userId > 0) {
+      const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+      phone = emp ? emp.phone : null;
+    }
+    if (phone) {
+      await mysqlPool.query('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?', [phone]);
+    }
+    res.json({ message: '全部已读' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/notifications/unread-count', async (req, res) => {
+  try {
+    const userId = parseInt(req.headers['x-user-id'] || 0);
+    const { phone: phoneParam } = req.query;
+
+    let phone = phoneParam || null;
+    if (!phone && userId > 0) {
+      const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+      phone = emp ? emp.phone : null;
+    }
+    if (!phone) { res.json({ count: 0 }); return; }
+
+    const [rows] = await mysqlPool.query('SELECT COUNT(*) as cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [phone]);
+    res.json({ count: rows[0].cnt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 通知规则设置 API ====================
+app.get('/api/system-settings/notifications', async (req, res) => {
+  try {
+    const [row] = await mysqlPool.query('SELECT * FROM system_settings WHERE category = ?', ['notifications']);
+    if (row[0]) {
+      try { res.json(JSON.parse(row[0].setting_value)); } catch { res.json({}); }
+    } else { res.json(getDefaultNotificationRules()); }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/system-settings/notifications', async (req, res) => {
+  try {
+    const value = JSON.stringify(req.body);
+    const [existing] = await mysqlPool.query('SELECT id FROM system_settings WHERE category = ?', ['notifications']);
+    if (existing[0]) {
+      await mysqlPool.query('UPDATE system_settings SET setting_value = ?, updated_at = ? WHERE category = ?',
+        [value, new Date().toISOString(), 'notifications']);
+    } else {
+      await mysqlPool.query('INSERT INTO system_settings (category, setting_value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        ['notifications', value, new Date().toISOString(), new Date().toISOString()]);
+    }
+    res.json({ message: '保存成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ==================== 静态文件（必须在所有 API 路由之后） ====================

@@ -71,6 +71,40 @@
             </el-form-item>
           </el-form>
         </el-tab-pane>
+
+        <!-- 通知设置 -->
+        <el-tab-pane label="通知设置" name="notifications">
+          <div style="max-width: 700px">
+            <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+              开启/关闭各类业务通知，并设置通知发送给哪些角色（站内消息 / 短信）
+            </el-alert>
+            <el-form :model="notifForm" label-width="140px">
+              <div v-for="(rule, key) in notifForm.rules" :key="key" class="notif-rule-item">
+                <el-divider content-position="left">{{ notifForm.labels[key] }}</el-divider>
+                <el-form-item label="启用通知">
+                  <el-switch v-model="rule.enabled" />
+                </el-form-item>
+                <el-form-item label="通知渠道">
+                  <el-checkbox-group v-model="rule.channels">
+                    <el-checkbox label="inapp">站内消息</el-checkbox>
+                    <el-checkbox label="sms">短信</el-checkbox>
+                  </el-checkbox-group>
+                </el-form-item>
+                <el-form-item label="接收人">
+                  <el-checkbox-group v-model="rule.receivers">
+                    <el-checkbox label="manager">项目经理</el-checkbox>
+                    <el-checkbox label="designer">设计师</el-checkbox>
+                    <el-checkbox label="supervisor">监理</el-checkbox>
+                    <el-checkbox label="customer">客户</el-checkbox>
+                  </el-checkbox-group>
+                </el-form-item>
+              </div>
+              <el-form-item>
+                <el-button type="primary" @click="saveNotifSettings" :loading="saving">保存通知设置</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
@@ -103,6 +137,19 @@ const emailForm = reactive({
   smtp_password: ''
 })
 
+const notifForm = reactive({
+  labels: {
+    node_completed: '节点完成',
+    project_progress: '项目进展提交',
+    inspection_submit: '巡检验收提交',
+  },
+  rules: {
+    node_completed:    { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    project_progress:  { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    inspection_submit: { enabled: true, channels: ['inapp'], receivers: ['manager', 'supervisor'] },
+  }
+})
+
 const loadSettings = async () => {
   try {
     const { data } = await axios.get('/api/system-settings')
@@ -115,6 +162,17 @@ const loadSettings = async () => {
     if (data.email) {
       Object.assign(emailForm, data.email)
     }
+    // 加载通知规则
+    try {
+      const { data: notifData } = await axios.get('/api/system-settings/notifications')
+      if (notifData && typeof notifData === 'object') {
+        for (const key of Object.keys(notifData)) {
+          if (notifForm.rules[key]) {
+            Object.assign(notifForm.rules[key], notifData[key])
+          }
+        }
+      }
+    } catch {}
   } catch (error) {
     // 加载失败时保持默认空值
   }
@@ -156,6 +214,18 @@ const saveEmailSettings = async () => {
   }
 }
 
+const saveNotifSettings = async () => {
+  saving.value = true
+  try {
+    await axios.put('/api/system-settings/notifications', notifForm.rules)
+    ElMessage.success('通知设置保存成功')
+  } catch (error) {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 onMounted(() => {
   loadSettings()
 })
@@ -168,5 +238,9 @@ onMounted(() => {
 .card-header {
   font-size: 16px;
   font-weight: 600;
+}
+.notif-rule-item {
+  margin-bottom: 10px;
+  padding: 10px 0;
 }
 </style>
