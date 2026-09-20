@@ -83,10 +83,10 @@
         <view class="card-progress">
           <view class="progress-row">
             <text class="progress-label">整体进度</text>
-            <text class="progress-pct" :class="getProgressClass(p.progress)">{{ p.progress || 0 }}%</text>
+            <text class="progress-pct" :class="getProgressClass(p.computedProgress)">{{ p.computedProgress }}%</text>
           </view>
           <view class="progress-bar">
-            <view class="progress-fill" :style="{ width: (p.progress || 0) + '%' }" :class="getProgressClass(p.progress)"></view>
+            <view class="progress-fill" :style="{ width: p.computedProgress + '%' }" :class="getProgressClass(p.computedProgress)"></view>
           </view>
         </view>
 
@@ -147,8 +147,21 @@ const filteredList = computed(() => {
       (p.customer_address || '').toLowerCase().includes(kw)
     );
   }
-  return result;
+  // 计算每个项目的进度
+  return result.map(p => ({
+    ...p,
+    computedProgress: computeProgress(p)
+  }));
 });
+
+// 计算项目进度：已完成+已跳过 / 总节点数
+const computeProgress = (project) => {
+  if (!project.nodes || project.nodes.length === 0) return 0;
+  const done = project.nodes.filter(n =>
+    n.status === 'completed' || n.status === 'skipped'
+  ).length;
+  return Math.round((done / project.nodes.length) * 100);
+};
 
 const setStatus = (status) => {
   curStatus.value = status;
@@ -174,8 +187,8 @@ const getProgressClass = (progress) => {
 };
 
 const goDetail = (p) => {
-  // 进入项目节点管理列表
-  uni.navigateTo({ url: `/pages/projects/nodeManage?id=${p.id}` });
+  // 进入项目详情页（再点击"管理节点"进入节点管理）
+  uni.navigateTo({ url: `/pages/projects/detail?id=${p.id}` });
 };
 
 const fetchList = async () => {

@@ -59,7 +59,12 @@
 
       <view class="form-item">
         <view class="form-label">问题描述</view>
-        <textarea class="form-textarea" v-model="form.description" placeholder="详细描述问题..."></textarea>
+        <view class="textarea-wrapper">
+          <textarea class="form-textarea" v-model="form.description" placeholder="详细描述问题..."></textarea>
+          <view class="textarea-toolbar">
+            <VoiceInput v-model="form.description" @ai-organize="handleAiOrganize" />
+          </view>
+        </view>
       </view>
 
       <view class="form-item">
@@ -91,6 +96,7 @@
 
 <script setup >
 import { ref, reactive, onMounted } from "vue";
+import VoiceInput from "@/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
@@ -112,6 +118,12 @@ const form = reactive({
   description: '',
   deadline: '',
 });
+
+// AI整理语音输入的文字
+const handleAiOrganize = (text) => {
+  if (!text) return;
+  uni.showToast({ title: '已识别', icon: 'success', duration: 1000 });
+};
 
 const addPhoto = () => {
   uni.chooseImage({ count: 9, sourceType: ['camera', 'album'], success: (r) => {
@@ -227,6 +239,17 @@ const goBack = () => {
   min-height: 100px;
   resize: none;
   box-sizing: border-box;
+}
+
+.textarea-wrapper {
+  position: relative;
+}
+
+.textarea-toolbar {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
 }
 
 .tag-select {

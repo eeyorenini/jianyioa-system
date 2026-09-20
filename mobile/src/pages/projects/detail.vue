@@ -20,9 +20,9 @@
 
       <view class="project-progress">
         <view class="progress-bar-full">
-          <view class="progress-fill-full" :style="{ width: (project.progress || 0) + '%' }"></view>
+          <view class="progress-fill-full" :style="{ width: computedProgress + '%' }"></view>
         </view>
-        <text class="progress-text-full">{{ project.progress || 0 }}%</text>
+        <text class="progress-text-full">{{ computedProgress }}%</text>
       </view>
 
       <!-- 基本信息 -->
@@ -98,9 +98,7 @@
                 <view class="node-card-body">
                   <view class="node-dates" v-if="node.plan_date">
                     <text class="node-date-icon">📅</text>
-                    <text class="node-date-text">{{ node.plan_date }}
-                      <text v-if="node.plan_end_date"> ~ {{ node.plan_end_date }}</text>
-                    </text>
+                    <text class="node-date-text">{{ formatNodeDateRange(node.plan_date, node.plan_end_date) }}</text>
                   </view>
                   <view class="node-dates" v-else>
                     <text class="node-date-text muted">未排期</text>
@@ -286,10 +284,19 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
+import { formatNodeDateRange } from "../../utils/format";
 
 const projectId = ref(0);
 const project = ref({});
 const curTab = ref('nodes');
+
+// 根据节点实际完成情况计算进度百分比
+const computedProgress = computed(() => {
+  const nodes = project.value.nodes;
+  if (!nodes || nodes.length === 0) return 0;
+  const completed = nodes.filter(n => n.status === 'completed' || n.status === 'skipped').length;
+  return Math.round((completed / nodes.length) * 100);
+});
 
 const tabs = computed(() => [
   { key: 'nodes', label: '进度节点' },

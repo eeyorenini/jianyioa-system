@@ -44,6 +44,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 
 const messages = ref([])
 const loading = ref(false)
@@ -53,24 +54,18 @@ const pageSize = 20
 const noMore = ref(false)
 
 onMounted(() => { fetchMessages() })
+onShow(() => { refreshUnreadBadge() })
 
 function fetchMessages() {
   loading.value = true
   page.value = 1
   noMore.value = false
   uni.request({
-    url: '/api/messages',
-    data: { page: 1, page_size: pageSize },
+    url: '/api/notifications',
+    data: { page: 1, pageSize: pageSize },
     success: (res) => {
-      if (res.data.code === 0) messages.value = res.data.data?.list || []
+      if (res.data.list) messages.value = res.data.list || []
       else messages.value = []
-      // 标记已读
-      if (res.data.code === 0 && messages.value.length > 0) {
-        const ids = messages.value.filter(m => !m.is_read).map(m => m.id)
-        if (ids.length) {
-          uni.request({ url: '/api/messages/read', method: 'POST', data: { ids } })
-        }
-      }
     },
     complete: () => { loading.value = false }
   })
@@ -81,11 +76,11 @@ function loadMore() {
   loadingMore.value = true
   page.value++
   uni.request({
-    url: '/api/messages',
-    data: { page: page.value, page_size: pageSize },
+    url: '/api/notifications',
+    data: { page: page.value, pageSize: pageSize },
     success: (res) => {
-      if (res.data.code === 0) {
-        const list = res.data.data?.list || []
+      if (res.data.list) {
+        const list = res.data.list || []
         messages.value = [...messages.value, ...list]
         if (list.length < pageSize) noMore.value = true
       } else { noMore.value = true }
@@ -113,16 +108,30 @@ function formatTime(str) {
 function goDetail(msg) {
   if (!msg.is_read) {
     msg.is_read = true
-  }
-  // 根据消息类型跳转到对应页面
-  if (msg.link) {
-    uni.navigateTo({ url: msg.link })
+    uni.request({ url: `/api/notifications/${msg.id}/read`, method: 'PUT' })
+    // 刷新红点
+    setTimeout(() => refreshUnreadBadge(), 100)
   }
 }
 
 
 const goBack = () => {
-  uni.navigateBack();
+  uni.switchTab({ url: '/pages/mine/index' });
+};
+
+const refreshUnreadBadge = () => {
+  uni.request({
+    url: '/api/notifications/unread-count',
+    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
+    success: (res) => {
+      const count = res.data?.count || 0;
+      if (count > 0) {
+        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
+      } else {
+        uni.removeTabBarBadge({ index: 4 });
+      }
+    }
+  });
 };
 </script>
 

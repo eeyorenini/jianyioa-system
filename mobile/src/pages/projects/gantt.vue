@@ -4,7 +4,9 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">项目甘特图</text>
-      <view class="nav-placeholder"></view>
+      <text class="nav-set-btn" :class="{ 'is-active': settingMode }" @click="toggleSettingMode">
+        {{ settingMode ? '完成' : '设置' }}
+      </text>
     </view>
 
     <view class="page-title">甘特图</view>
@@ -17,6 +19,10 @@
       📅 {{ project.start_date }} ~ {{ project.end_date }}
       <text class="duration">（共 {{ totalDays }} 天）</text>
     </view>
+    <view class="setting-tip" v-if="settingMode">
+      <text v-if="!settingNode">👆 点击任意节点行，开始设置日期</text>
+      <text v-else>✅ 已选「{{ settingNode.node_name || settingNode.stage_name }}」— 再点结束日期</text>
+    </view>
 
     <!-- 无日期提示 -->
     <view class="no-date-tip" v-if="!project.start_date || !project.end_date">
@@ -26,10 +32,25 @@
     <!-- 甘特图主体 -->
     <scroll-view class="gantt-scroll" scroll-x v-if="project.start_date && project.end_date">
       <view class="gantt-table">
-        <!-- 表头：日期行 -->
+        <!-- 表头：月份行 + 日期行 -->
         <view class="gantt-header-row">
           <view class="gantt-label-cell">节点</view>
           <view class="gantt-date-header">
+            <!-- 月份行 -->
+            <view class="date-cell"
+              v-for="(day, idx) in days"
+              :key="'m_' + idx"
+              :class="{ 'is-month-start': day.monthStart }"
+            >
+              <text class="date-month" v-if="day.monthStart">{{ day.month }}</text>
+              <text class="date-month-placeholder" v-else></text>
+            </view>
+          </view>
+        </view>
+        <view class="gantt-header-row">
+          <view class="gantt-label-cell"></view>
+          <view class="gantt-date-header">
+            <!-- 日期行 -->
             <view class="date-cell"
               v-for="(day, idx) in days"
               :key="idx"
@@ -54,23 +75,29 @@
             </view>
           </view>
           <view class="gantt-bar-area">
-            <!-- 背景格子（可选周末高亮） -->
+            <!-- 背景格子：点击设置日期范围 -->
             <view class="date-cell-bg"
               v-for="(day, idx) in days"
               :key="idx"
-              :class="{ 'is-weekend': day.isWeekend }"
+              :class="{
+                'is-weekend': day.isWeekend,
+                'is-selected-start': settingMode && settingNode && settingNode.id === node.id && settingStartIdx === idx,
+                'is-selected-end': settingMode && settingNode && settingNode.id === node.id && settingEndIdx === idx && settingStartIdx !== settingEndIdx,
+                'is-in-range': settingMode && settingNode && settingNode.id === node.id && isInRange(idx)
+              }"
+              @click="onCellTap(node, idx)"
             ></view>
             <!-- 甘特条 -->
             <view
               v-if="node.plan_date && node.plan_end_date"
               class="gantt-bar"
-              :class="`bar-${node.status || 'pending'}`"
+              :class="[`bar-${node.status || 'pending'}`, { 'no-interact': settingMode }]"
               :style="getBarStyle(node)"
-              @click="editNodeDate(node)"
+              @click.stop="editNodeDate(node)"
             >
-              <text class="bar-text">{{ node.plan_date }} ~ {{ node.plan_end_date }}</text>
+              <text class="bar-text">{{ getBarText(node) }}</text>
             </view>
-            <view v-else class="no-date-tip-bar" @click="editNodeDate(node)">
+            <view v-else-if="!settingMode" class="no-date-tip-bar" @click.stop="editNodeDate(node)">
               点击设置日期
             </view>
           </view>
@@ -106,6 +133,92 @@ import { ref, computed, onMounted } from "vue";
 const project = ref({});
 const projectId = ref(0);
 
+// 设置模式
+const settingMode = ref(false);
+const settingNode = ref(null);
+const settingStartIdx = ref(-1);
+const settingEndIdx = ref(-1);
+
+const toggleSettingMode = () => {
+  settingMode.value = !settingMode.value;
+  if (!settingMode.value) {
+    settingNode.value = null;
+    settingStartIdx.value = -1;
+    settingEndIdx.value = -1;
+  }
+};
+
+// 判断格子是否在已选范围内
+const isInRange = (idx) => {
+  if (!settingMode.value || settingNode.value === null || settingStartIdx.value < 0) return false;
+  const start = Math.min(settingStartIdx.value, settingEndIdx.value >= 0 ? settingEndIdx.value : settingStartIdx.value);
+  const end = Math.max(settingStartIdx.value, settingEndIdx.value >= 0 ? settingEndIdx.value : settingStartIdx.value);
+  return idx > start && idx < end;
+};
+
+// 获取甘特条显示文字（同一日期只显示单个日期）
+const getBarText = (node) => {
+  if (!node.plan_date || !node.plan_end_date) return '';
+  const start = new Date(node.plan_date);
+  const end = new Date(node.plan_end_date);
+  const fmt = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
+  if (start.getTime() === end.getTime()) {
+    return fmt(start);
+  }
+  return `${fmt(start)} ~ ${fmt(end)}`;
+};
+
+// 点击格子：第一次是开始日期，第二次是结束日期
+const onCellTap = async (node, idx) => {
+  if (!settingMode.value) return;
+
+  const day = days.value[idx];
+  if (!day) return;
+
+  // 第一步：还没选过，开始选
+  if (settingNode.value === null || settingNode.value.id !== node.id) {
+    settingNode.value = node;
+    settingStartIdx.value = idx;
+    settingEndIdx.value = idx;
+    uni.showToast({ title: `开始：${day.dateStr}`, icon: "none", duration: 1000 });
+    return;
+  }
+
+  // 第二步：已选过同一节点，记录结束
+  settingEndIdx.value = idx;
+
+  const start = Math.min(settingStartIdx.value, settingEndIdx.value);
+  const end = Math.max(settingStartIdx.value, settingEndIdx.value);
+  const startDate = days.value[start]?.dateStr;
+  const endDate = days.value[end]?.dateStr;
+
+  if (!startDate || !endDate) return;
+
+  // 同一天时只上传单个日期，不冗余
+  const saveEndDate = startDate === endDate ? startDate : endDate;
+
+  // 保存
+  try {
+    const token = uni.getStorageSync("token");
+    await uni.request({
+      url: `/api/project-stages/${node.id}`,
+      method: "PUT",
+      header: { Authorization: token },
+      data: { plan_date: startDate, plan_end_date: saveEndDate },
+    });
+    await fetchDetail();
+    const label = startDate === saveEndDate ? startDate : `${startDate} ~ ${saveEndDate}`;
+    uni.showToast({ title: label, icon: "success" });
+  } catch (e) {
+    uni.showToast({ title: "保存失败", icon: "none" });
+  }
+
+  // 重置
+  settingNode.value = null;
+  settingStartIdx.value = -1;
+  settingEndIdx.value = -1;
+};
+
 // 计算工期天数
 const totalDays = computed(() => {
   if (!project.value.start_date || !project.value.end_date) return 0;
@@ -135,15 +248,20 @@ const days = computed(() => {
   today.setHours(0, 0, 0, 0);
 
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
   let current = new Date(start);
+  let prevMonth = -1;
 
   while (current <= end) {
+    const month = current.getMonth();
+    const monthStart = month !== prevMonth;
+    if (monthStart) prevMonth = month;
     const day = current.getDate();
     const week = weekDays[current.getDay()];
     const dateStr = current.toISOString().split('T')[0];
     const isToday = current.getTime() === today.getTime();
     const isWeekend = current.getDay() === 0 || current.getDay() === 6;
-    result.push({ day, week, dateStr, isToday, isWeekend });
+    result.push({ day, week, month: monthNames[month], monthStart, dateStr, isToday, isWeekend });
     current.setDate(current.getDate() + 1);
   }
   return result;
@@ -151,7 +269,7 @@ const days = computed(() => {
 
 // 获取甘特条的位置和宽度
 const getBarStyle = (node) => {
-  if (!node.plan_date || !node.plan_date) return {};
+  if (!node.plan_date || !node.plan_end_date) return {};
   const start = new Date(project.value.start_date);
   const nodeStart = new Date(node.plan_date);
   const nodeEnd = new Date(node.plan_end_date);
@@ -353,6 +471,21 @@ const goBack = () => {
   font-size: 11px;
 }
 
+.date-cell.is-month-start {
+  /* 去掉border-left，保持和下边日期格完全一致，避免边框叠加导致错位 */
+}
+
+.date-month {
+  font-size: 11px;
+  font-weight: bold;
+  color: rgba(255,255,255,0.9);
+  height: 18px;
+}
+
+.date-month-placeholder {
+  height: 18px;
+}
+
 .date-cell.is-today {
   background: rgba(255,255,255,0.3);
 }
@@ -495,30 +628,65 @@ const goBack = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #1E3A5F;
+  padding: 12px 8px;
+  background: #667eea;
   color: #fff;
-  padding: 12px 16px;
-  padding-top: max(12px, env(safe-area-inset-top));
-  position: sticky;
-  top: 0;
-  z-index: 100;
 }
 
 .nav-back {
-  font-size: 28px;
-  font-weight: 300;
+  font-size: 24px;
   width: 40px;
+  cursor: pointer;
 }
 
 .nav-title {
-  flex: 1;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: bold;
 }
 
-.nav-placeholder {
+.nav-set-btn {
+  font-size: 14px;
   width: 40px;
+  text-align: right;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.nav-set-btn.is-active {
+  opacity: 1;
+  font-weight: bold;
+}
+
+.gantt-data-row.row-setting {
+  cursor: crosshair;
+}
+
+.date-cell-bg.is-selected-start {
+  background: rgba(102, 126, 234, 0.2) !important;
+  box-shadow: inset 0 0 0 2px #667eea;
+}
+
+.date-cell-bg.is-selected-end {
+  background: rgba(102, 126, 234, 0.2) !important;
+  box-shadow: inset 0 0 0 2px #667eea;
+}
+
+.date-cell-bg.is-in-range {
+  background: rgba(102, 126, 234, 0.08) !important;
+}
+
+.gantt-bar.no-interact {
+  pointer-events: none;
+}
+
+.setting-tip {
+  font-size: 13px;
+  color: #667eea;
+  text-align: center;
+  padding: 6px;
+  background: rgba(102, 126, 234, 0.1);
+  border-radius: 6px;
+  margin-bottom: 8px;
 }
 
 </style>

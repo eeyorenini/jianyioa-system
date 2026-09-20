@@ -3,6 +3,10 @@
     <!-- 顶部导航（首页不需要返回按钮） -->
     <view class="nav-bar">
       <text class="nav-title">首页</text>
+      <view class="msg-icon" @click="goMessage">
+        <text>🔔</text>
+        <view class="msg-badge" v-if="unreadCount > 0">{{ unreadCount > 99 ? '99+' : unreadCount }}</view>
+      </view>
     </view>
 
     <!-- 顶部背景 -->
@@ -118,11 +122,14 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
+import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 
 const userStore = useUserStore();
 const userName = computed(() => userStore.state.name || '用户');
 const roleName = computed(() => userStore.state.position || userStore.state.role_name || '未知');
+
+const unreadCount = ref(0);
 
 const timeStr = computed(() => {
   const h = new Date().getHours();
@@ -148,6 +155,27 @@ const getRoleClass = (role) => {
   if (role.includes('财务')) return 'role-finance';
   return 'role-assistant';
 };
+
+const goMessage = () => {
+  uni.navigateTo({ url: '/pages/message/list' });
+};
+
+const loadUnread = async () => {
+  try {
+    const res = await uni.request({ url: '/api/notifications/unread-count' });
+    if (res.data?.code === 0 || res.data?.code === undefined) {
+      unreadCount.value = res.data?.data ?? 0;
+    }
+  } catch (e) {
+    // 忽略
+  }
+};
+
+onShow(() => { loadUnread(); });
+
+onMounted(() => {
+  // 实际加载时从后端拉取数据
+});
 
 const quickEntries = [
   { label: '项目管理', icon: '📁', bg: '#DBEAFE', action: 'projectList' },
@@ -693,5 +721,33 @@ onMounted(() => {
 
 .nav-placeholder {
   width: 40px;
+}
+
+/* 消息铃铛 */
+.msg-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.msg-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: #FF4949;
+  color: #fff;
+  font-size: 10px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  line-height: 1;
 }
 </style>

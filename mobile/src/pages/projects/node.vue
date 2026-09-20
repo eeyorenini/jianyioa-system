@@ -95,9 +95,7 @@
               <view class="node-card-body">
                 <view class="node-dates" v-if="n.plan_date">
                   <text class="node-date-icon">📅</text>
-                  <text class="node-date-text">{{ n.plan_date }}
-                    <text v-if="n.plan_end_date"> ~ {{ n.plan_end_date }}</text>
-                  </text>
+                  <text class="node-date-text">{{ formatNodeDateRange(n.plan_date, n.plan_end_date) }}</text>
                 </view>
                 <view class="node-dates" v-else>
                   <text class="node-date-text muted">未排期</text>
@@ -116,6 +114,7 @@
 
 <script setup >
 import { ref, onMounted } from "vue";
+import { formatNodeDateRange } from "../../utils/format";
 
 const projectId = ref(0);
 const nodeId = ref(0);
@@ -287,7 +286,7 @@ const goBack = () => {
 
 .node-status-card {
   background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
-  border-radius: 16px;
+  border-radius: 0;
   padding: 20px;
   color: #fff;
   margin-bottom: 16px;

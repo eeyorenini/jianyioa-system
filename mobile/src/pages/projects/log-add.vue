@@ -15,12 +15,17 @@
     <view class="form-card">
       <view class="form-item">
         <view class="form-label">施工内容 *</view>
-        <textarea
-          class="form-textarea"
-          v-model="form.content"
-          placeholder="描述今日施工内容..."
-          :maxlength="500"
-        ></textarea>
+        <view class="textarea-wrapper">
+          <textarea
+            class="form-textarea"
+            v-model="form.content"
+            placeholder="描述今日施工内容..."
+            :maxlength="500"
+          ></textarea>
+          <view class="textarea-toolbar">
+            <voice-input v-model="form.content" @ai-organize="handleAiOrganize($event, 'content')" />
+          </view>
+        </view>
         <text class="char-count">{{ form.content.length }}/500</text>
       </view>
 
@@ -82,11 +87,20 @@
 
 <script setup >
 import { ref, reactive, onMounted } from "vue";
+import VoiceInput from "@/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
 const photos = ref([]);
 const submitting = ref(false);
+
+// AI整理语音输入的文字（目前H5端直接使用原始文字，APP端可扩展）
+const handleAiOrganize = (text, field) => {
+  if (!text) return;
+  // 目前H5端Web Speech API识别出来的文字已经是中文，可直接使用
+  // 这里预留AI整理的扩展点，未来可调用后端AI接口优化格式
+  uni.showToast({ title: '已识别', icon: 'success', duration: 1000 });
+};
 
 const form = reactive({
   content: '',
@@ -254,6 +268,17 @@ const goBack = () => {
   box-sizing: border-box;
   min-height: 100px;
   resize: none;
+}
+
+.textarea-wrapper {
+  position: relative;
+}
+
+.textarea-toolbar {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
 }
 
 .form-input:focus, .form-textarea:focus {

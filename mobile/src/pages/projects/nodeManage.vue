@@ -28,17 +28,30 @@
     </view>
 
     <!-- 节点列表 -->
-    <view class="section-label">节点列表</view>
-    <view class="node-list">
+    <view class="section-label">
+      节点列表
+      <view class="sort-toggle" @click="toggleSortMode">
+        <text :class="sortMode ? 'sort-on' : 'sort-off'">{{ sortMode ? '✅ 调整顺序' : '📋 调整顺序' }}</text>
+      </view>
+    </view>
+    <view class="node-list" :class="{ 'sort-mode': sortMode }">
+      <transition-group name="node-slide" tag="view" class="node-cards-wrap">
       <view
         class="node-card"
+        :class="{ 'sorting': draggingIndex === index, 'swap-flash': swappingIndexes.includes(index) }"
         v-for="(node, index) in nodes"
         :key="node.id"
+        :data-index="index"
+        @touchstart="onDragStart($event, index)"
+        @touchmove.prevent="onDragMove($event, index)"
+        @touchend="onDragEnd($event, index)"
       >
-        <view class="node-drag-handle">↓</view>
+        <view class="node-drag-handle">
+          <text v-if="sortMode" class="drag-icon">⋮⋮</text>
+          <text v-else class="node-index">{{ index + 1 }}</text>
+        </view>
         <view class="node-main">
           <view class="node-header">
-            <view class="node-num">{{ index + 1 }}</view>
             <!-- 点击编辑名称 -->
             <input
               v-if="editingId === node.id"
@@ -88,6 +101,7 @@
         <text class="add-icon">+</text>
         <text class="add-text">新增节点</text>
       </view>
+    </transition-group>
     </view>
 
     <!-- 新增节点弹窗 -->
@@ -146,6 +160,59 @@ const addForm = ref({
 });
 
 const insertOptions = ref(['插入到最前面']);
+
+// ============= 拖拽排序 =============
+const sortMode = ref(false);
+const draggingIndex = ref(-1);
+let dragStartY = 0;
+// 记录刚交换过的两个卡片，产生缩放闪动反馈
+const swappingIndexes = ref([]);
+
+const toggleSortMode = () => {
+  if (sortMode.value) {
+    // 关闭时保存排序
+    sortMode.value = false;
+    saveSortOrder();
+  } else {
+    sortMode.value = true;
+  }
+};
+
+const onDragStart = (e, index) => {
+  if (!sortMode.value) return;
+  draggingIndex.value = index;
+  dragStartY = e.touches[0].clientY;
+};
+
+const onDragMove = (e, index) => {
+  if (!sortMode.value || draggingIndex.value < 0) return;
+  const currentY = e.touches[0].clientY;
+  const deltaY = currentY - dragStartY;
+  const cardHeight = 100;
+  const moved = Math.round(deltaY / cardHeight);
+  const newIndex = Math.max(0, Math.min(nodes.value.length - 1, draggingIndex.value + moved));
+  if (newIndex !== draggingIndex.value) {
+    // 记录被交换的两个位置，用于动画反馈
+    swappingIndexes.value = [draggingIndex.value, newIndex];
+    // 交换数组
+    const arr = [...nodes.value];
+    const [removed] = arr.splice(draggingIndex.value, 1);
+    arr.splice(newIndex, 0, removed);
+    nodes.value = arr;
+    draggingIndex.value = newIndex;
+    dragStartY = currentY;
+    // 300ms 后清除闪动状态
+    setTimeout(() => {
+      swappingIndexes.value = [];
+    }, 300);
+  }
+};
+
+const onDragEnd = (e, index) => {
+  if (!sortMode.value) return;
+  draggingIndex.value = -1;
+  dragOverIndex.value = -1;
+};
 
 // ============= API =============
 
@@ -517,6 +584,28 @@ const goBack = () => {
   color: #999;
   margin-bottom: 8px;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sort-toggle {
+  display: inline-block;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.sort-off {
+  background: #f0f0f0;
+  color: #666;
+}
+
+.sort-on {
+  background: #667eea;
+  color: #fff;
 }
 
 .template-section {
@@ -552,7 +641,16 @@ const goBack = () => {
   background: #ccc;
 }
 
+/* 节点卡片拖拽动画 */
+.node-slide-move {
+  transition: transform 0.3s ease;
+}
+
 .node-list {
+  /* 容器样式由 node-cards-wrap 承担 */
+}
+
+.node-cards-wrap {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -570,12 +668,66 @@ const goBack = () => {
 }
 
 .node-drag-handle {
-  color: #1E3A5F;
   font-size: 18px;
   font-weight: bold;
   padding: 4px 6px;
   line-height: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.drag-icon {
+  color: #667eea;
+  font-size: 16px;
+  letter-spacing: -2px;
+}
+
+.node-index {
+  width: 20px;
+  height: 20px;
+  background: #667eea;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sort-mode .node-card {
+  cursor: grab;
+}
+
+.sort-mode .node-card:active {
+  cursor: grabbing;
+}
+
+.node-card.sorting {
   opacity: 0.6;
+  transform: scale(0.98);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+
+.swap-flash {
+  animation: swap-pop 0.3s ease;
+}
+
+@keyframes swap-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.05); box-shadow: 0 0 16px rgba(102, 126, 234, 0.5); }
+  100% { transform: scale(1); }
+}
+
+.node-card.sort-drag-over {
+  border: 2px dashed #667eea;
+}
+
+.sort-mode .node-main > * {
+  pointer-events: none;
 }
 
 .node-main {

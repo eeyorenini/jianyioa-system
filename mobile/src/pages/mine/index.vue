@@ -4,10 +4,11 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">我的</text>
-      <view class="nav-placeholder"></view>
+      <view class="msg-icon" @click="goMessage">
+        <text>🔔</text>
+        <view class="msg-badge" v-if="unreadCount > 0">{{ unreadCount > 99 ? '99+' : unreadCount }}</view>
+      </view>
     </view>
-
-</view>
 
     <!-- 个人信息卡片 -->
     <view class="profile-card">
@@ -16,7 +17,9 @@
         <text class="profile-name">{{ userName }}</text>
         <view class="role-badge" :class="getRoleClass(roleName)">{{ roleName }}</view>
       </view>
-      <!-- 角色专属快捷 -->
+    </view>
+
+    <!-- 角色专属快捷 -->
     <view class="menu-section">
       <view class="menu-title">我的工作</view>
       <view class="menu-grid">
@@ -62,13 +65,45 @@
 </template>
 
 <script setup >
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 
 const userStore = useUserStore();
 const userName = computed(() => userStore.state.name || '用户');
 const roleName = computed(() => userStore.state.position || userStore.state.role_name || '未知');
 const avatarText = computed(() => (userName.value || 'U').substring(0, 1).toUpperCase());
+const unreadCount = ref(0);
+
+// TODO: 临时注释掉 loadUnread 排查超时问题
+// const loadUnread = () => {
+//   const token = uni.getStorageSync('token');
+//   if (!token) return;
+//   const userId = uni.getStorageSync('userInfo')?.id;
+//   if (!userId) return;
+//   uni.request({
+//     url: '/api/notifications/unread-count',
+//     header: {
+//       'Authorization': token,
+//       'x-user-id': String(userId)
+//     },
+//     success: (res) => {
+//       if (res.statusCode === 200 && res.data) {
+//         unreadCount.value = res.data.count || 0;
+//       }
+//     },
+//     fail: (err) => {
+//       console.log('loadUnread fail', err);
+//     }
+//   });
+// };
+
+// onMounted(() => loadUnread());
+// onShow(() => loadUnread());
+
+const goMessage = () => {
+  uni.navigateTo({ url: '/pages/message/list' });
+};
 
 const myWork = computed(() => {
   const role = roleName.value;
@@ -306,8 +341,29 @@ const goBack = () => {
   font-weight: 600;
 }
 
-.nav-placeholder {
+.msg-icon {
+  position: relative;
+  font-size: 20px;
   width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.msg-badge {
+  position: absolute;
+  top: -4px;
+  right: 0px;
+  background: #EF4444;
+  color: #fff;
+  font-size: 10px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
 }
 
 </style>

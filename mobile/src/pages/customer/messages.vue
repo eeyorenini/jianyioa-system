@@ -5,12 +5,12 @@
     </view>
 
     <view class="msg-list" v-if="messages.length">
-      <view class="msg-item" v-for="m in messages" :key="m.id" :class="`msg-${m.type}`">
+      <view class="msg-item" v-for="m in messages" :key="m.id" :class="`msg-${m.type || 'default'}`">
         <view class="msg-icon">{{ getMsgIcon(m.type) }}</view>
         <view class="msg-body">
           <view class="msg-header">
             <text class="msg-title">{{ m.title }}</text>
-            <text class="msg-time">{{ m.created_at }}</text>
+            <text class="msg-time">{{ formatTime(m.created_at) }}</text>
           </view>
           <text class="msg-content">{{ m.content }}</text>
         </view>
@@ -27,34 +27,50 @@
   </view>
 </template>
 
-<script setup >
-import customerTabbar from "@/components/customer-tabbar.vue";
-
-<script setup >
+<script setup>
 import { ref, onMounted } from "vue";
+import customerTabbar from "@/components/customer-tabbar.vue";
 
 const messages = ref([]);
 
 const getMsgIcon = (type) => {
   const map = {
-    inspect: '🔍', log: '📝', payment: '💰', node: '📋', system: '📢'
+    node_completed: '📋',
+    project_progress: '📝',
+    inspection_submit: '🔍',
+    system: '📢',
   };
   return map[type] || '📢';
+};
+
+const formatTime = (str) => {
+  if (!str) return '';
+  const d = new Date(str);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return '刚刚';
+  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
 };
 
 const fetchMessages = async () => {
   try {
     const userInfo = uni.getStorageSync('userInfo');
-    const customerId = userInfo?.id;
+    const phone = userInfo?.phone || '';
     const res = await uni.request({
-      url: `/api/notifications?customer_id=${customerId || 0}`,
+      url: `/api/notifications?phone=${phone}`,
     });
     const data = res.data;
-    if (Array.isArray(data)) {
+    if (data && data.list) {
+      messages.value = data.list || [];
+    } else if (Array.isArray(data)) {
       messages.value = data;
+    } else {
+      messages.value = [];
     }
   } catch (e) {
-    // 接口不存在时显示空
+    messages.value = [];
   }
 };
 
@@ -109,10 +125,9 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.msg-inspect .msg-icon { background: #FEE2E2; }
-.msg-log .msg-icon { background: #DBEAFE; }
-.msg-payment .msg-icon { background: #D1FAE5; }
-.msg-node .msg-icon { background: #FEF3C7; }
+.msg-inspection_submit .msg-icon { background: #FEE2E2; }
+.msg-node_completed .msg-icon { background: #FEF3C7; }
+.msg-project_progress .msg-icon { background: #DBEAFE; }
 
 .msg-body {
   flex: 1;
