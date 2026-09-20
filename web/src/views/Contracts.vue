@@ -881,6 +881,8 @@ const computePageBreaks = (html) => {
 // 预览模式的分页内容（变量已代入），用 ref 而非 computed 以便 setEditorMode 直接更新
 const previewPageBreaks = ref([''])
 const displayPages = ref([''])
+const pageElements = ref({})
+const editingPageIndex = ref(0)
 
 const recomputePreviewBreaks = () => {
   const content = editor.value?.getHTML() || ''

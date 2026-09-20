@@ -208,17 +208,20 @@ setTimeout(() => { checkAndInsertDefaultData(); }, 1000);
 // ==================== 通知规则默认配置 ====================
 function getDefaultNotificationRules() {
   return {
-    node_completed:    { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    node_completed:    { enabled: true, channels: ['inapp', 'sms'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    node_in_progress:  { enabled: true, channels: ['inapp', 'sms'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    node_pending:      { enabled: true, channels: ['inapp', 'sms'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
+    node_skipped:      { enabled: true, channels: ['inapp', 'sms'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
     project_progress:  { enabled: true, channels: ['inapp'], receivers: ['manager', 'designer', 'supervisor', 'customer'] },
     inspection_submit: { enabled: true, channels: ['inapp'], receivers: ['manager', 'supervisor'] },
   };
 }
 
 // ==================== 通用通知函数 ====================
-// type: node_completed / project_progress / inspection_submit / ...
+// type: node_completed / project_progress / inspection_submit / node_in_progress / node_pending / ...
 // extraTargets: [{phone, name, role}] 额外要通知的人（如提交人本人）
-// targets: ['manager','designer','supervisor','customer'] 或 ['all']
-async function notifyProject(type, projectId, title, content, sourceId, sourceType, extraTargets) {
+// templateId: 指定短信模板ID，优先级高于默认模板
+async function notifyProject(type, projectId, title, content, sourceId, sourceType, extraTargets, templateId) {
   // 读取通知规则
   let rules = getDefaultNotificationRules();
   try {
@@ -277,15 +280,50 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
       [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
     );
 
-    // 短信渠道：调用阿里云 SendSms
+    // 短信渠道：调用阿里云 SendSms（使用节点绑定的模板）
     if (rule.channels.includes('sms')) {
-      sendSmsFromNotify(t.phone, t.name, title, content).catch(console.error);
+      sendSmsFromNotify(t.phone, t.name, title, content, templateId).catch(console.error);
     }
   }
 }
 
+// 纯应用内通知（不发短信，不走通知规则，直接插入数据库）
+async function insertInAppNotification(projectId, title, content, sourceId, sourceType) {
+  try {
+    const [proj] = await db.prepare(`
+      SELECT p.*, c.name as customer_name, c.phone as customer_phone,
+      des.name as designer_name, des.phone as designer_phone,
+      sup.name as supervisor_name, sup.phone as supervisor_phone,
+      mgr.name as manager_name, mgr.phone as manager_phone
+      FROM projects p
+      LEFT JOIN customers c ON p.customer_id = c.id
+      LEFT JOIN employees des ON p.designer_id = des.id
+      LEFT JOIN employees sup ON p.supervisor_id = sup.id
+      LEFT JOIN employees mgr ON p.manager_id = mgr.id
+      WHERE p.id = ?`).all(projectId);
+    if (!proj) return;
+
+    const roles = [
+      { phone: proj.manager_phone, name: proj.manager_name },
+      { phone: proj.designer_phone, name: proj.designer_name },
+      { phone: proj.supervisor_phone, name: proj.supervisor_name },
+      { phone: proj.customer_phone, name: proj.customer_name },
+    ];
+
+    for (const t of roles) {
+      if (t.phone) {
+        await mysqlPool.query(
+          'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [title, content, 'inapp', sourceId || 0, sourceType || '', 0, t.phone, t.name || '', 'inapp', 'pending']
+        );
+      }
+    }
+  } catch (err) { console.error('insertInAppNotification error:', err); }
+}
+
 // ==================== 通知短信发送函数（被 notifyProject 调用）====================
-async function sendSmsFromNotify(phone, name, title, content) {
+// templateId 可选：指定则优先用该模板的 aliyun_template_code，否则用默认模板
+async function sendSmsFromNotify(phone, name, title, content, templateId) {
   if (!phone) return;
 
   // 读取阿里云短信配置（SQLite system_settings，category='sms'）
@@ -295,17 +333,30 @@ async function sendSmsFromNotify(phone, name, title, content) {
   if (!smsConfig || smsConfig.provider !== 'aliyun') return;
   if (!smsConfig.access_key_id || !smsConfig.access_key_secret) return;
 
-  // 读取默认短信模板（取第一个启用且有阿里云CODE的模板）
-  const [tmpl] = await db.prepare(
-    'SELECT aliyun_template_code, sign_name FROM sms_templates WHERE is_active=1 AND aliyun_template_code IS NOT NULL AND aliyun_template_code != "" LIMIT 1'
-  ).all();
-  if (!tmpl) return;
+  let signName = smsConfig.sign_name || '简逸装饰';
+  let templateCode = smsConfig.template_code || '';
 
-  const signName = tmpl.sign_name || smsConfig.sign_name || '简逸装饰';
-  const templateCode = tmpl.aliyun_template_code;
+  // 优先用节点绑定的模板，其次用默认模板
+  if (templateId) {
+    const [tmpl] = await db.prepare('SELECT aliyun_template_code, sign_name FROM sms_templates WHERE id=? AND is_active=1').all(templateId);
+    if (tmpl && tmpl.aliyun_template_code) {
+      templateCode = tmpl.aliyun_template_code;
+      signName = tmpl.sign_name || signName;
+    }
+  }
+  if (!templateCode) {
+    const [tmpl] = await db.prepare(
+      'SELECT aliyun_template_code, sign_name FROM sms_templates WHERE is_active=1 AND aliyun_template_code IS NOT NULL AND aliyun_template_code != "" LIMIT 1'
+    ).all();
+    if (tmpl) {
+      templateCode = tmpl.aliyun_template_code;
+      signName = tmpl.sign_name || signName;
+    }
+  }
+  if (!templateCode) return;
 
   // 提取项目名称（title格式：XXX：项目名）
-  const projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：)/, '');
+  const projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：|项目节点进行中：|项目节点待处理：|项目节点已跳过：)/, '');
 
   await sendAliyunSms({
     accessKeyId: smsConfig.access_key_id,
@@ -1345,10 +1396,20 @@ app.put('/api/project-stages/:id', async (req, res) => {
     const stmt = db.prepare('UPDATE project_progress_nodes SET node_name=?, plan_date=?, plan_end_date=?, actual_date=?, status=?, note=?, sms_template_id=?, sort_order=? WHERE id=?');
     await stmt.run(updated.node_name, updated.plan_date, updated.plan_end_date, updated.actual_date, updated.status, updated.note, updated.sms_template_id, updated.sort_order, req.params.id);
 
-    // ✅ 节点状态变为「已完成」时，通知项目成员和客户
-    if (row.status !== 'completed' && updated.status === 'completed') {
-      await notifyProject('node_completed', row.project_id, `项目节点完成：${updated.node_name || row.node_name}`,
-        `项目「${row.node_name}」已完成，请知悉。`, row.id, 'node');
+    // ✅ 节点状态变化时，通知项目成员和客户（任意状态变化都通知）
+    if (row.status !== updated.status) {
+      const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
+      const typeMap = { pending: 'node_pending', in_progress: 'node_in_progress', completed: 'node_completed', skipped: 'node_skipped' };
+      const type = typeMap[updated.status] || 'node_completed';
+      const title = `项目节点${statusLabel[updated.status] || updated.status}：${updated.node_name || row.node_name}`;
+      const content = `项目「${row.node_name}」已变更为「${statusLabel[updated.status] || updated.status}」，请知悉。`;
+      const smsNotify = parseInt(req.body.sms_notify || 0);
+      if (smsNotify) {
+        // 用户选择发送短信：用节点绑定的模板发短信
+        await notifyProject(type, row.project_id, title, content, row.id, 'node', null, updated.sms_template_id);
+      }
+      // 无论是否发短信，都写一条应用内消息记录状态变更
+      await insertInAppNotification(row.project_id, title, content, row.id, 'node');
     }
 
     res.json({ message: '更新成功' });
@@ -3996,6 +4057,78 @@ app.get('/api/notifications/unread-count', async (req, res) => {
 
     const [rows] = await mysqlPool.query('SELECT COUNT(*) as cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [phone]);
     res.json({ count: rows[0].cnt });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 消息管理 API（后台增删改）====================
+// POST 新增消息（管理员手动发消息）
+app.post('/api/notifications', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可操作' });
+    const { title, content, type, receiver_phone, receiver_name, channels } = req.body;
+    if (!title || !receiver_phone) return res.status(400).json({ error: '标题和接收人手机号不能为空' });
+    await mysqlPool.query(
+      'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+      [title, content || '', type || 'admin_notice', 0, 'admin', userId, receiver_phone, receiver_name || '', channels || 'inapp', 'pending']
+    );
+    res.json({ message: '消息发送成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE 删除消息
+app.delete('/api/notifications/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可操作' });
+    await mysqlPool.query('DELETE FROM notifications WHERE id = ?', [req.params.id]);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE 批量删除消息
+app.delete('/api/notifications', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可操作' });
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '请提供要删除的消息ID列表' });
+    const placeholders = ids.map(() => '?').join(',');
+    await mysqlPool.query(`DELETE FROM notifications WHERE id IN (${placeholders})`, ids);
+    res.json({ message: '批量删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET 后台消息列表（管理员查看所有消息，不受手机号限制）
+app.get('/api/notifications/admin-list', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可操作' });
+    const { page = 1, pageSize = 20, is_read, keyword } = req.query;
+    let where = '1=1';
+    const params = [];
+    if (is_read !== undefined) {
+      where += ' AND is_read = ?';
+      params.push(is_read === 'true' ? 1 : 0);
+    }
+    if (keyword) {
+      where += ' AND (title LIKE ? OR content LIKE ? OR receiver_name LIKE ?)';
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+    const [totalRows] = await mysqlPool.query(`SELECT COUNT(*) as cnt FROM notifications WHERE ${where}`, params);
+    const [list] = await mysqlPool.query(
+      `SELECT * FROM notifications WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize)]
+    );
+    res.json({ list, total: totalRows[0].cnt, page: parseInt(page), pageSize: parseInt(pageSize) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
