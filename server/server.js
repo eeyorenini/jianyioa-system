@@ -1800,6 +1800,27 @@ app.delete('/api/departments/:id', async (req, res) => {
   res.json({ message: '删除成功' });
 });
 
+app.get('/api/user/info', async (req, res) => {
+  const userId = parseInt(req.headers['x-user-id'] || '0');
+  if (!userId) {
+    return res.status(401).json({ error: '未登录' });
+  }
+  try {
+    const [rows] = await pool.query(
+      `SELECT e.id, e.username, e.name, e.phone, e.position, r.name as role_name
+       FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?`,
+      [userId]
+    );
+    if (rows[0]) {
+      res.json(rows[0]);
+    } else {
+      res.status(404).json({ error: '用户不存在' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/employees', async (req, res) => {
   const stmt = db.prepare(`
     SELECT e.*, d.name as department_name, r.name as role_name 
