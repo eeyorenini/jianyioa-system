@@ -353,12 +353,13 @@
                       }"
                       :data-day-idx="idx"
                     ></div>
-                    <!-- 节点条（显示工期段） -->
+                    <!-- 节点条（显示工期段），pointer-events:none 让点击穿透给底下的 day-cell -->
                     <div
                       v-if="node.plan_date"
                       class="gantt-bar"
                       :class="[`gantt-bar-${node.status || 'pending'}`, { 'gantt-bar-selecting': ganttSelectNode?.id === node.id }]"
                       :style="getGanttBarStyle(node)"
+                      @mousedown.prevent="onBarMouseDownForSelect($event, node)"
                     >
                       <span class="bar-label">{{ node.node_name || node.stage_name }}</span>
                     </div>
@@ -541,32 +542,38 @@ const ganttSelectEnd = ref(null)         // 当前悬停格索引
 const ganttSelectedProjectId = ref(null) // 甘特图当前选中项目ID
 const ganttSelectedProject = computed(() => projectList.value.find(p => p.id === ganttSelectedProjectId.value) || null)
 
-// 点击节点条 → 进入选择模式，同时记录节点
+// 点击节点条/日期格 → 进入选择模式，同时记录节点
 const onBarMouseDownForSelect = (event, node) => {
   ganttSelecting.value = true
   ganttSelectNode.value = node
   ganttSelectStart.value = null
   ganttSelectEnd.value = null
-  // 鼠标按下哪个格，就从这里开始
-  const target = event.target.closest('.gantt-day-cell')
-  if (target) {
-    const idx = parseInt(target.dataset.dayIdx)
-    if (!isNaN(idx)) {
-      ganttSelectStart.value = idx
-      ganttSelectEnd.value = idx
-    }
+  // 通过坐标计算点击的是哪个格（需要加上横向滚动量）
+  const area = event.currentTarget  // gantt-date-area
+  const scrollLeft = area.parentElement?.scrollLeft || 0
+  const rect = area.getBoundingClientRect()
+  const dayWidth = 32
+  const relativeX = event.clientX - rect.left + scrollLeft
+  const idx = Math.floor(relativeX / dayWidth)
+  const maxIdx = ganttDays.value.length - 1
+  if (idx >= 0 && idx <= maxIdx) {
+    ganttSelectStart.value = idx
+    ganttSelectEnd.value = idx
   }
   document.addEventListener('mousemove', onGanttDayMouseMove)
   document.addEventListener('mouseup', onGanttDayMouseUp)
 }
 
-// 鼠标经过日期格 → 更新范围高亮
+// 鼠标经过 → 更新范围高亮（通过坐标计算）
 const onGanttDayMouseMove = (event) => {
   if (!ganttSelecting.value || ganttSelectStart.value === null) return
-  const target = event.target.closest('.gantt-day-cell')
-  if (!target) return
-  const idx = parseInt(target.dataset.dayIdx)
-  if (!isNaN(idx)) {
+  const area = event.target.closest('.gantt-date-area')
+  if (!area) return
+  const rect = area.getBoundingClientRect()
+  const relativeX = event.clientX - rect.left
+  const idx = Math.floor(relativeX / 32)
+  const maxIdx = ganttDays.value.length - 1
+  if (idx >= 0 && idx <= maxIdx) {
     ganttSelectEnd.value = idx
   }
 }
@@ -596,11 +603,12 @@ const onGanttDayMouseUp = async () => {
     ElMessage.success(`已设置：${plan_date} ~ ${plan_end_date}`)
   } catch {
     ElMessage.error('保存失败')
+  } finally {
+    ganttSelecting.value = false
+    ganttSelectNode.value = null
+    ganttSelectStart.value = null
+    ganttSelectEnd.value = null
   }
-  ganttSelecting.value = false
-  ganttSelectNode.value = null
-  ganttSelectStart.value = null
-  ganttSelectEnd.value = null
 }
 
 // 判断某个日期格是否在当前选中范围内
@@ -2247,6 +2255,8 @@ onMounted(() => {
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,0.12);
   transition: filter 0.15s, box-shadow 0.15s;
+  /* pointer-events: none 让点击穿透到 day-cell，由 gantt-date-area 的 mousedown 处理选择 */
+  pointer-events: none;
 }
 
 .gantt-bar:hover {

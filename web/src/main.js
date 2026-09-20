@@ -5,6 +5,22 @@ import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+import axios from 'axios'
+
+// 全局 axios 拦截器：自动注入权限头（所有页面共用）
+axios.interceptors.request.use(config => {
+  const userStr = localStorage.getItem('user')
+  if (userStr) {
+    try {
+      const user = JSON.parse(userStr)
+      if (user?.id) config.headers['x-user-id'] = user.id
+      if (user?.role_code || user?.role_name) {
+        config.headers['x-user-role'] = user.role_code || user.role_name || ''
+      }
+    } catch (e) {}
+  }
+  return config
+})
 
 const app = createApp(App)
 const pinia = createPinia()

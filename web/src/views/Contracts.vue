@@ -31,23 +31,28 @@
         <el-button @click="loadContracts">搜索</el-button>
       </div>
       
-      <el-table :data="contractList" style="width:100%;margin-top:15px" stripe>
-        <el-table-column prop="contract_no" label="编号" width="150" />
-        <el-table-column prop="category" label="分类" width="110" align="center">
+      <el-table :data="contractList" style="width:100%;margin-top:15px" stripe table-layout="auto">
+        <el-table-column prop="contract_no" label="编号" min-width="130" />
+        <el-table-column prop="category" label="分类" min-width="80" align="center">
           <template #default="{row}">
             <el-tag size="small" type="info">{{ getCategoryLabel(row.category) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="customer_name" label="签约人" min-width="120" />
-        <el-table-column prop="total_amount" label="金额" width="120" align="right">
+        <el-table-column prop="customer_name" label="签约人" min-width="90" show-overflow-tooltip />
+        <el-table-column prop="created_by" label="创建人" min-width="80" align="center">
+          <template #default="{row}">
+            <span :style="{color: row.creator_name ? '#67c23a' : '#999'}">{{ row.creator_name || '系统' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="total_amount" label="金额" min-width="100" align="right">
           <template #default="{row}"><span class="amount">¥{{ row.total_amount }}</span></template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="100" align="center">
+        <el-table-column prop="status" label="状态" min-width="80" align="center">
           <template #default="{row}">
             <el-tag :type="row.status === '进行中' ? 'primary' : row.status === '已完成' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" align="center">
+        <el-table-column label="操作" min-width="280" align="center">
           <template #default="{row}">
             <div style="display:flex; gap:5px; justify-content:center; flex-wrap:nowrap;">
               <el-button size="small" type="primary" :loading="loadingContractId === row.id" @click="editContent(row)">编辑内容</el-button>

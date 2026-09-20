@@ -42,13 +42,16 @@ request.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`
     }
 
-    // 自动携带 x-user-id（用于后端权限过滤）
+    // 自动携带 x-user-id 和 x-user-role（用于后端权限过滤）
     const userStr = localStorage.getItem('user')
     if (userStr) {
       try {
         const user = JSON.parse(userStr)
         if (user?.id) {
           config.headers['x-user-id'] = user.id
+        }
+        if (user?.role_code || user?.role_name) {
+          config.headers['x-user-role'] = user.role_code || user.role_name || ''
         }
       } catch (e) { /* ignore */ }
     }

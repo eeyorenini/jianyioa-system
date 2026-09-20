@@ -71,7 +71,16 @@
         <el-tab-pane label="功能权限" name="permissions">
           <el-table :data="moduleList" border style="width: 100%">
             <el-table-column prop="name" label="模块" width="150" />
-            <el-table-column label="读" width="80">
+            <el-table-column label="全部" width="70">
+              <template #default="scope">
+                <el-checkbox
+                  v-model="scope.row.hasAll"
+                  :disabled="isAllPermission"
+                  @change="handlePermissionChange(scope.row, 'hasAll')"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="读" width="70">
               <template #default="scope">
                 <el-checkbox
                   v-model="scope.row.read"
@@ -80,7 +89,7 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="写" width="80">
+            <el-table-column label="写" width="70">
               <template #default="scope">
                 <el-checkbox
                   v-model="scope.row.write"
@@ -89,7 +98,7 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="删" width="80">
+            <el-table-column label="删" width="70">
               <template #default="scope">
                 <el-checkbox
                   v-model="scope.row.delete"
@@ -267,23 +276,23 @@ const presetRoles = [
 
 // 模块列表
 const moduleList = ref([
-  { key: 'customer', name: '客户管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'contract', name: '合同管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'project', name: '项目管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'inspection', name: '巡检验房', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'acceptance', name: '验收管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'approval', name: '审批管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'employee', name: '员工管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true },
-  { key: 'notice', name: '通知公告', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'report', name: '报表管理', read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'budget', name: '预算管理', read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'warehouse', name: '仓库管理', read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'settings', name: '系统设置', read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'sms', name: '短信模板', read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'role', name: '角色管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'dispatch', name: '派工管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'purchase', name: '采购管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'invoice', name: '发票管理', read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false }
+  { key: 'customer', name: '客户管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'contract', name: '合同管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'project', name: '项目管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'inspection', name: '巡检验房', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'acceptance', name: '验收管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'approval', name: '审批管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'employee', name: '员工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true },
+  { key: 'notice', name: '通知公告', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'report', name: '报表管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  { key: 'budget', name: '预算管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  { key: 'warehouse', name: '仓库管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  { key: 'settings', name: '系统设置', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  { key: 'sms', name: '短信模板', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  { key: 'role', name: '角色管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'purchase', name: '采购管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'invoice', name: '发票管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false }
 ])
 
 // 消息类型
@@ -376,7 +385,7 @@ const handleEdit = (row) => {
   try {
     const perms = JSON.parse(row.permissions || '[]')
     if (perms.includes('*')) {
-      form.code = 'admin'
+      // admin角色本身，form.code保持原值，不强制覆盖
     } else {
       parsePermissionsToModules(perms)
     }
@@ -403,11 +412,12 @@ const handleEdit = (row) => {
 
 const parsePermissionsToModules = (perms) => {
   moduleList.value.forEach(module => {
-    module.read = perms.includes(`${module.key}:read`)
-    module.write = perms.includes(`${module.key}:write`)
-    module.delete = perms.includes(`${module.key}:delete`)
-    module.reset_password = perms.includes(`${module.key}:reset_password`)
-  })
+    module.hasAll = perms.includes(`${module.key}:read_all`);
+    module.read = perms.includes(`${module.key}:read`);
+    module.write = perms.includes(`${module.key}:write`);
+    module.delete = perms.includes(`${module.key}:delete`);
+    module.reset_password = perms.includes(`${module.key}:reset_password`);
+  });
 }
 
 const handlePermissionChange = (row, type) => {
@@ -454,16 +464,17 @@ const handleSave = async () => {
   }
 
   // 构建权限数组
-  let permissions = []
+  let permissions = [];
   if (form.code === 'admin') {
-    permissions = ['*']
+    permissions = ['*'];
   } else {
     moduleList.value.forEach(module => {
-      if (module.read) permissions.push(`${module.key}:read`)
-      if (module.write) permissions.push(`${module.key}:write`)
-      if (module.delete) permissions.push(`${module.key}:delete`)
-      if (module.reset_password) permissions.push(`${module.key}:reset_password`)
-    })
+      if (module.hasAll) permissions.push(`${module.key}:read_all`);
+      if (module.read) permissions.push(`${module.key}:read`);
+      if (module.write) permissions.push(`${module.key}:write`);
+      if (module.delete) permissions.push(`${module.key}:delete`);
+      if (module.reset_password) permissions.push(`${module.key}:reset_password`);
+    });
   }
 
   try {
@@ -520,11 +531,12 @@ const resetFormData = () => {
   selectedNotifications.value = []
   selectedDepartments.value = []
   moduleList.value.forEach(module => {
-    module.read = false
-    module.write = false
-    module.delete = false
-    module.reset_password = false
-  })
+    module.hasAll = false;
+    module.read = false;
+    module.write = false;
+    module.delete = false;
+    module.reset_password = false;
+  });
 }
 
 onMounted(() => {
