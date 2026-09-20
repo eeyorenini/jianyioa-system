@@ -187,7 +187,7 @@ const loadData = async () => {
 const handleResetPassword = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确定要重置 ${row.name} 的密码吗？重置后密码将生成为6位随机数字。`,
+      `确定要重置 ${row.name} 的密码吗？重置后密码将变为该员工手机号后6位。`,
       '重置密码',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
