@@ -90,6 +90,7 @@
         <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
+        <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
       <div class="sidebar-version">v 2.1.13</div>
     </el-aside>
@@ -159,6 +160,7 @@
         <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
+        <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
       <div class="sidebar-version">v 2.1.13</div>
     </div>
@@ -198,7 +200,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
 import {
   OfficeBuilding, User, DataAnalysis, FolderOpened, Box, Checked,
-  Wallet, Setting, Ticket, Fold, Expand, Document, Money, Grid, Tools
+  Wallet, Setting, Ticket, Fold, Expand, Document, Money, Grid, Tools, Bell, Message
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -242,7 +244,8 @@ const pageTitle = computed(() => {
     '/acceptance': '验收管理', '/invoices': '发票管理',
     '/employees': '员工管理', '/roles': '角色权限',
     '/departments': '部门管理', '/sms-templates': '短信模板',
-    '/system-settings': '系统设置', '/operation-logs': '操作日志'
+    '/system-settings': '系统设置', '/operation-logs': '操作日志',
+    '/message-center': '消息中心'
   }
   return titles[route.path] || '简逸ERP'
 })

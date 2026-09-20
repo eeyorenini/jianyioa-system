@@ -30,6 +30,7 @@ const MainMaterials = () => import('../views/MainMaterials.vue')
 const SmsTemplates = () => import('../views/SmsTemplates.vue')
 const ProgressNodeTemplates = () => import('../views/ProgressNodeTemplates.vue')
 const Login = () => import('../views/Login.vue')
+const MessageCenter = () => import('../views/MessageCenter.vue')
 
 const routes = [
   { path: '/login', name: 'Login', component: Login, meta: { requiresAuth: false } },
@@ -61,6 +62,7 @@ const routes = [
   { path: '/progress-node-templates', name: 'ProgressNodeTemplates', component: ProgressNodeTemplates },
   { path: '/departments', name: 'Departments', component: Departments },
   { path: '/system-settings', name: 'SystemSettings', component: SystemSettings },
+  { path: '/message-center', name: 'MessageCenter', component: MessageCenter },
 ]
 
 const router = createRouter({

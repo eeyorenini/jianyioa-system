@@ -139,6 +139,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import request from '@/utils/request'
 
 const employeeList = ref([])
 const departments = ref([])
@@ -172,13 +173,13 @@ const loadData = async () => {
     const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
     currentUserRole.value = userInfo.role_code || ''
     const [empRes, deptRes, roleRes] = await Promise.all([
-      axios.get('/api/employees'),
-      axios.get('/api/departments'),
-      axios.get('/api/roles')
+      request.get('/employees'),
+      request.get('/departments'),
+      request.get('/roles')
     ])
-    employeeList.value = empRes.data
-    departments.value = deptRes.data
-    roles.value = roleRes.data
+    employeeList.value = empRes.data || empRes
+    departments.value = deptRes.data || deptRes
+    roles.value = roleRes.data || roleRes
   } catch (error) {
     console.error('加载失败:', error)
   }
@@ -187,15 +188,12 @@ const loadData = async () => {
 const handleResetPassword = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确定要重置 ${row.name} 的密码吗？重置后密码将变为该员工手机号后6位。`,
+      `确定要重置 ${row.name} 的密码吗？重置后密码将变为 888888。`,
       '重置密码',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
     )
-    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-    const res = await axios.post(`/api/employees/${row.id}/reset-password`, {
-      role_code: userInfo.role_code
-    })
-    ElMessage.success(`密码已重置，新密码：${res.data.password}`)
+    const res = await request.post(`/employees/${row.id}/reset-password`)
+    ElMessage.success(`密码已重置为 888888`)
   } catch (error) {
     if (error !== 'cancel') ElMessage.error('重置失败')
   }
@@ -232,11 +230,11 @@ const handleSave = async () => {
   }
   try {
     if (isEdit.value) {
-      await axios.put(`/api/employees/${form.id}`, form)
+      await request.put(`/employees/${form.id}`, form)
       ElMessage.success('更新成功')
     } else {
-      const res = await axios.post('/api/employees', form)
-      ElMessage.success(`添加成功，初始密码：${res.data.password}`)
+      const res = await request.post('/employees', form)
+      ElMessage.success(`添加成功，初始密码：${res.password || '888888'}`)
     }
     closeDialog()
     loadData()
@@ -252,7 +250,7 @@ const handleDelete = async (id) => {
       cancelButtonText: '取消',
       type: 'warning'
     })
-    await axios.delete(`/api/employees/${id}`)
+    await request.delete(`/employees/${id}`)
     ElMessage.success('删除成功')
     loadData()
   } catch (error) {

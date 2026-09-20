@@ -218,72 +218,95 @@ function getDefaultNotificationRules() {
 }
 
 // ==================== 通用通知函数 ====================
-// type: node_completed / project_progress / inspection_submit / node_in_progress / node_pending / ...
-// extraTargets: [{phone, name, role}] 额外要通知的人（如提交人本人）
-// templateId: 指定短信模板ID，优先级高于默认模板
-async function notifyProject(type, projectId, title, content, sourceId, sourceType, extraTargets, templateId) {
-  // 读取通知规则
-  let rules = getDefaultNotificationRules();
+// 改造后的 notifyProject：按角色订阅发送
+// 1. 查所有 notification_types 包含此type的角色
+// 2. 查这些角色的所有员工（去重）
+// 3. 查项目相关人（设计师/监理/客户）如果他们订阅了该消息类型也通知
+// 4. 管理员无论如何都收到
+// 5. 消息写入 notifications 表（receiver_phone=员工phone）
+async function notifyProject(type, projectId, title, content, sourceId, sourceType, templateId) {
   try {
-    const [rows] = await mysqlPool.query('SELECT setting_value FROM system_settings WHERE category = ?', ['notifications']);
-    if (rows[0]) {
-      const saved = JSON.parse(rows[0].setting_value);
-      // 合并：保存的值覆盖默认值
-      rules = { ...rules, ...saved };
-    }
-  } catch {}
+    // 1. 获取所有订阅了该消息类型的角色
+    const [roles] = await db.prepare('SELECT id, name FROM roles WHERE notification_types LIKE ?').all(`%${type}%`);
+    if (!roles || roles.length === 0) return;
 
-  const rule = rules[type];
-  if (!rule || !rule.enabled) return;
-
-  const [proj] = await db.prepare(`
-    SELECT p.*, c.name as customer_name, c.phone as customer_phone,
-    des.name as designer_name, des.phone as designer_phone,
-    sup.name as supervisor_name, sup.phone as supervisor_phone,
-    mgr.name as manager_name, mgr.phone as manager_phone
-    FROM projects p
-    LEFT JOIN customers c ON p.customer_id = c.id
-    LEFT JOIN employees des ON p.designer_id = des.id
-    LEFT JOIN employees sup ON p.supervisor_id = sup.id
-    LEFT JOIN employees mgr ON p.manager_id = mgr.id
-    WHERE p.id = ?`).all(projectId);
-
-  if (!proj) return;
-
-  // 按规则配置的接收人过滤
-  const receivers = rule.receivers || [];
-  const targets = [];
-  const addIf = (phone, name, role) => {
-    if (phone && receivers.includes(role) && !targets.find(t => t.phone === phone)) {
-      targets.push({ phone, name: name || '', role });
-    }
-  };
-
-  addIf(proj.manager_phone, proj.manager_name, 'manager');
-  addIf(proj.designer_phone, proj.designer_name, 'designer');
-  addIf(proj.supervisor_phone, proj.supervisor_name, 'supervisor');
-  addIf(proj.customer_phone, proj.customer_name, 'customer');
-
-  // 额外要通知的人不过滤角色
-  if (extraTargets) {
-    for (const t of extraTargets) {
-      if (t.phone && !targets.find(x => x.phone === t.phone)) {
-        targets.push(t);
+    const roleIds = roles.map(r => r.id);
+    const rolePlaceholders = roleIds.map(() => '?').join(',');
+    
+    // 2. 查这些角色的所有员工手机号（去重）
+    const [employees] = await db.prepare(
+      `SELECT DISTINCT e.phone, e.name FROM employees e WHERE e.role_id IN (${rolePlaceholders}) AND e.phone IS NOT NULL AND e.phone != ''`
+    ).all(...roleIds);
+    
+    // 3. 如果有 projectId，查项目相关人（设计师/监理/客户）
+    let projectTargets = [];
+    if (projectId) {
+      const [proj] = await db.prepare(`
+        SELECT c.phone as customer_phone, c.name as customer_name,
+        des.phone as designer_phone, des.name as designer_name,
+        sup.phone as supervisor_phone, sup.name as supervisor_name,
+        mgr.phone as manager_phone, mgr.name as manager_name
+        FROM projects p
+        LEFT JOIN customers c ON p.customer_id = c.id
+        LEFT JOIN employees des ON p.designer_id = des.id
+        LEFT JOIN employees sup ON p.supervisor_id = sup.id
+        LEFT JOIN employees mgr ON p.manager_id = mgr.id
+        WHERE p.id = ?
+      `).all(projectId);
+      
+      if (proj && proj[0]) {
+        const p = proj[0];
+        if (p.designer_phone) projectTargets.push({ phone: p.designer_phone, name: p.designer_name, role: 'designer' });
+        if (p.supervisor_phone) projectTargets.push({ phone: p.supervisor_phone, name: p.supervisor_name, role: 'supervisor' });
+        if (p.manager_phone) projectTargets.push({ phone: p.manager_phone, name: p.manager_name, role: 'manager' });
+        if (p.customer_phone) projectTargets.push({ phone: p.customer_phone, name: p.customer_name, role: 'customer' });
       }
     }
-  }
 
-  const channels = (rule.channels || ['inapp']).join(',');
-  for (const t of targets) {
-    await mysqlPool.query(
-      'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
-    );
-
-    // 短信渠道：调用阿里云 SendSms（使用节点绑定的模板）
-    if (rule.channels.includes('sms')) {
-      sendSmsFromNotify(t.phone, t.name, title, content, templateId).catch(console.error);
+    // 4. 合并去重（按phone去重）
+    const phoneSet = new Set();
+    const allTargets = [];
+    
+    // 先加角色对应的员工
+    if (employees) {
+      for (const e of employees) {
+        if (e.phone && !phoneSet.has(e.phone)) {
+          phoneSet.add(e.phone);
+          allTargets.push({ phone: e.phone, name: e.name || '', role: 'staff' });
+        }
+      }
     }
+    
+    // 再加项目相关人（避免覆盖有名字的）
+    if (projectTargets) {
+      for (const t of projectTargets) {
+        if (t.phone && !phoneSet.has(t.phone)) {
+          phoneSet.add(t.phone);
+          allTargets.push(t);
+        }
+      }
+    }
+    
+    // 5. 管理员（id=1对应的手机号）永远收到
+    const [adminEmp] = await db.prepare('SELECT phone, name FROM employees WHERE id = 1').all();
+    if (adminEmp && adminEmp.phone && !phoneSet.has(adminEmp.phone)) {
+      allTargets.push({ phone: adminEmp.phone, name: adminEmp.name || '管理员', role: 'admin' });
+    }
+
+    // 6. 写入 notifications 表
+    const channels = 'inapp';
+    for (const t of allTargets) {
+      await mysqlPool.query(
+        'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
+      );
+      // 短信渠道：如果配置了 templateId，走 sendSmsFromNotify
+      if (templateId) {
+        sendSmsFromNotify(t.phone, t.name, title, content, templateId).catch(console.error);
+      }
+    }
+  } catch (err) {
+    console.error('notifyProject error:', err);
   }
 }
 
@@ -402,7 +425,7 @@ app.get('/api/customers', async (req, res) => {
   }
 });
 
-app.post('/api/customers', async (req, res) => {
+app.post('/api/customers', checkPermission('customer:write'), async (req, res) => {
   try {
     const userId = getUserId(req);
     const { customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags } = req.body;
@@ -482,7 +505,7 @@ app.get('/api/customers/check-phone', async (req, res) => {
   }
 });
 
-app.put('/api/customers/:id', async (req, res) => {
+app.put('/api/customers/:id', checkPermission('customer:write'), async (req, res) => {
   try {
     const userId = getUserId(req);
     const { customer_no, name, phone, source, status, level, follow_user, address, area, budget, demand, next_follow_date, gender, entry_date, contact_name2, contact_phone2, other_phone, email, qq, provider, tags } = req.body;
@@ -516,7 +539,7 @@ app.put('/api/customers/:id/overwrite', async (req, res) => {
   }
 });
 
-app.delete('/api/customers/:id', async (req, res) => {
+app.delete('/api/customers/:id', checkPermission('customer:delete'), async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -635,7 +658,7 @@ async function generateContractNo() {
   }
 }
 
-app.post('/api/contracts', async (req, res) => {
+app.post('/api/contracts', checkPermission('contract:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -724,6 +747,13 @@ app.post('/api/contracts', async (req, res) => {
       } catch(e) { /* 签约人保存失败不影响合同保存 */ }
     }
     
+    // 通知：新增合同
+    notifyProject('contract_created', null,
+      `新合同签订：${customer_name || ''} - ${project_name || ''}`,
+      `合同编号：${contract_no}，客户：${customer_name || ''}，项目：${project_name || ''}，金额：${total_amount || ''}`,
+      lastId, 'contract'
+    ).catch(console.error);
+
     res.json({ id: lastId, message: '添加成功' });
   } catch (err) {
     console.error('数据库错误:', err);
@@ -731,7 +761,7 @@ app.post('/api/contracts', async (req, res) => {
   }
 });
 
-app.put('/api/contracts/:id', async (req, res) => {
+app.put('/api/contracts/:id', checkPermission('contract:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const editUserId = getUserId(req);
@@ -771,7 +801,7 @@ app.put('/api/contracts/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/contracts/:id', async (req, res) => {
+app.delete('/api/contracts/:id', checkPermission('contract:delete'), async (req, res) => {
   const rawUserId = req.headers['x-user-id'];
   const userId = rawUserId ? parseInt(rawUserId) : 0;
   console.log('[DELETE contracts] userId=%s, isAdmin=%s, targetId=%s', userId, await isAdmin(userId), req.params.id);
@@ -1033,6 +1063,33 @@ const isAdmin = async (userId) => {
   }
 };
 
+// 检查用户是否有指定权限码
+// permission 格式如 "employee:read", "contract:write"
+async function checkPermission(permission) {
+  return async (req, res, next) => {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    // 管理员跳过权限检查
+    if (await isAdmin(userId)) return next();
+    
+    const [emp] = await db.prepare('SELECT role_id FROM employees WHERE id = ?').all(userId);
+    if (!emp || !emp.role_id) return res.status(403).json({ error: '无权限' });
+    
+    const [role] = await db.prepare('SELECT permissions FROM roles WHERE id = ?').all(emp.role_id);
+    if (!role || !role.permissions) return res.status(403).json({ error: '无权限' });
+    
+    let perms = role.permissions;
+    if (typeof perms === 'string') {
+      try { perms = JSON.parse(perms); } catch { perms = []; }
+    }
+    
+    if (!Array.isArray(perms) || !perms.includes(permission)) {
+      return res.status(403).json({ error: '无此操作权限' });
+    }
+    next();
+  };
+}
+
 app.post('/api/contract-templates', async (req, res) => {
   const _rawUid = req.headers['x-user-id'] || req.body.user_id;
     
@@ -1150,7 +1207,7 @@ app.get('/api/budgets', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/budgets', async (req, res) => {
+app.post('/api/budgets', checkPermission('budget:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1161,7 +1218,7 @@ app.post('/api/budgets', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.delete('/api/budgets/:id', async (req, res) => {
+app.delete('/api/budgets/:id', checkPermission('budget:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1180,7 +1237,7 @@ app.get('/api/finance', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/finance', async (req, res) => {
+app.post('/api/finance', checkPermission('finance:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1191,7 +1248,7 @@ app.post('/api/finance', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.delete('/api/finance/:id', async (req, res) => {
+app.delete('/api/finance/:id', checkPermission('finance:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1283,7 +1340,7 @@ app.get('/api/projects/:id', async (req, res) => {
   }
 });
 
-app.post('/api/projects', async (req, res) => {
+app.post('/api/projects', checkPermission('project:write'), async (req, res) => {
   try {
     const userId = getUserId(req);
     const { name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id } = req.body;
@@ -1304,13 +1361,19 @@ app.post('/api/projects', async (req, res) => {
     }
 
     await addLog(userId, '', '新增', '项目管理', projectId, name, `项目名称: ${name}`, req.ip);
+    // 通知：新增项目
+    notifyProject('project_created', projectId,
+      `新项目创建：${name}`,
+      `项目「${name}」已创建，客户ID：${customer_id || ''}，请相关人员及时跟进。`,
+      projectId, 'project'
+    ).catch(console.error);
     res.json({ id: projectId, message: '添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/projects/:id', async (req, res) => {
+app.put('/api/projects/:id', checkPermission('project:write'), async (req, res) => {
   try {
     const userId = getUserId(req);
     const { name, customer_id, status, start_date, end_date, budget, description, designer_id, supervisor_id, manager_id, template_id } = req.body;
@@ -1321,13 +1384,21 @@ app.put('/api/projects/:id', async (req, res) => {
     const stmt = db.prepare('UPDATE projects SET name=?, customer_id=?, status=?, start_date=?, end_date=?, budget=?, description=?, designer_id=?, supervisor_id=?, manager_id=?, template_id=? WHERE id=?');
     await stmt.run(name, customer_id || null, status, start_date || null, end_date || null, budget || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, template_id || null, req.params.id);
     await addLog(userId, '', '编辑', '项目管理', req.params.id, name, `更新项目: ${name}`, req.ip);
+    // 通知：项目状态变更
+    if (existing.status !== status) {
+      notifyProject('project_status_changed', parseInt(req.params.id),
+        `项目状态变更：${name}`,
+        `项目「${name}」状态已变更为「${status}」，请知悉。`,
+        parseInt(req.params.id), 'project'
+      ).catch(console.error);
+    }
     res.json({ message: '更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/projects/:id', async (req, res) => {
+app.delete('/api/projects/:id', checkPermission('project:delete'), async (req, res) => {
   try {
     const userId = getUserId(req);
     const [proj] = await db.prepare('SELECT name, creator_id FROM projects WHERE id = ?').all(req.params.id);
@@ -1364,13 +1435,25 @@ app.post('/api/project-stages', async (req, res) => {
         await db.prepare('UPDATE project_progress_nodes SET sort_order = sort_order + 1 WHERE project_id = ? AND sort_order > ?').run(project_id, after.sort_order);
         const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, plan_end_date, sort_order, status, note, sms_template_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const result = await stmt.run(project_id, node_name, plan_date, plan_end_date || null, after.sort_order + 1, status || 'pending', note, sms_template_id || null, userId);
-        return res.json({ id: result.lastInsertRowid, message: '添加成功' });
+        const nodeId = result.lastInsertRowid;
+        notifyProject('node_status_changed', project_id,
+          `新增项目节点：${node_name}`,
+          `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
+          nodeId, 'node'
+        ).catch(console.error);
+        return res.json({ id: nodeId, message: '添加成功' });
       }
     }
     const [max] = await db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM project_progress_nodes WHERE project_id = ?').all(project_id);
     const stmt = db.prepare('INSERT INTO project_progress_nodes (project_id, node_name, plan_date, plan_end_date, sort_order, status, note, sms_template_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const result = await stmt.run(project_id, node_name, plan_date, plan_end_date || null, max.m + 1, status || 'pending', note, sms_template_id || null, userId);
-    res.json({ id: result.lastInsertRowid, message: '添加成功' });
+    const nodeId = result.lastInsertRowid;
+    notifyProject('node_status_changed', project_id,
+      `新增项目节点：${node_name}`,
+      `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
+      nodeId, 'node'
+    ).catch(console.error);
+    res.json({ id: nodeId, message: '添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1493,7 +1576,7 @@ app.get('/api/materials', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/materials', async (req, res) => {
+app.post('/api/materials', checkPermission('warehouse:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1504,7 +1587,7 @@ app.post('/api/materials', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/materials/:id', async (req, res) => {
+app.put('/api/materials/:id', checkPermission('warehouse:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1519,7 +1602,7 @@ app.put('/api/materials/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/materials/:id', async (req, res) => {
+app.delete('/api/materials/:id', checkPermission('warehouse:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1533,7 +1616,7 @@ app.delete('/api/materials/:id', async (req, res) => {
   res.json({ message: '删除成功' });
 });
 
-app.post('/api/materials/in', async (req, res) => {
+app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -1544,7 +1627,7 @@ app.post('/api/materials/in', async (req, res) => {
   res.json({ message: '入库成功' });
 });
 
-app.post('/api/materials/out', async (req, res) => {
+app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, res) => {
   const { material_id, quantity, project_id, operator, note, date } = req.body;
 
   // 库存校验：出库数量不能超过当前库存
@@ -2025,7 +2108,7 @@ app.get('/api/departments', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/departments', async (req, res) => {
+app.post('/api/departments', checkPermission('department:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2036,7 +2119,7 @@ app.post('/api/departments', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.delete('/api/departments/:id', async (req, res) => {
+app.delete('/api/departments/:id', checkPermission('department:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2113,7 +2196,7 @@ function passwordFromPhone(phone) {
   return phone ? phone.slice(-6) : '123456';
 }
 
-app.post('/api/employees', async (req, res) => {
+app.post('/api/employees', checkPermission('employee:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2134,7 +2217,7 @@ app.post('/api/employees', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功', password });
 });
 
-app.put('/api/employees/:id', async (req, res) => {
+app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2152,7 +2235,7 @@ app.put('/api/employees/:id', async (req, res) => {
 });
 
 // 管理员重置密码（重置为手机号后6位）
-app.post('/api/employees/:id/reset-password', async (req, res) => {
+app.post('/api/employees/:id/reset-password', checkPermission('employee:reset_password'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2189,7 +2272,7 @@ app.put('/api/employees/:id/password', async (req, res) => {
   res.json({ message: '密码修改成功' });
 });
 
-app.delete('/api/employees/:id', async (req, res) => {
+app.delete('/api/employees/:id', checkPermission('employee:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2245,7 +2328,7 @@ app.get('/api/roles', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/roles', async (req, res) => {
+app.post('/api/roles', checkPermission('role:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2256,7 +2339,7 @@ app.post('/api/roles', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/roles/:id', async (req, res) => {
+app.put('/api/roles/:id', checkPermission('role:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2267,7 +2350,7 @@ app.put('/api/roles/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/roles/:id', async (req, res) => {
+app.delete('/api/roles/:id', checkPermission('role:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2297,7 +2380,7 @@ app.get('/api/approvals', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/approvals', async (req, res) => {
+app.post('/api/approvals', checkPermission('approval:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2308,7 +2391,7 @@ app.post('/api/approvals', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/approvals/:id', async (req, res) => {
+app.put('/api/approvals/:id', checkPermission('approval:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2319,7 +2402,7 @@ app.put('/api/approvals/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/approvals/:id', async (req, res) => {
+app.delete('/api/approvals/:id', checkPermission('approval:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2377,7 +2460,7 @@ app.get('/api/notices', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/notices', async (req, res) => {
+app.post('/api/notices', checkPermission('notice:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2388,7 +2471,7 @@ app.post('/api/notices', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/notices/:id', async (req, res) => {
+app.put('/api/notices/:id', checkPermission('notice:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2399,7 +2482,7 @@ app.put('/api/notices/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/notices/:id', async (req, res) => {
+app.delete('/api/notices/:id', checkPermission('notice:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2417,7 +2500,7 @@ app.get('/api/inspections', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/inspections', async (req, res) => {
+app.post('/api/inspections', checkPermission('inspection:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2439,7 +2522,7 @@ app.post('/api/inspections', async (req, res) => {
   res.json({ id: result2.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/inspections/:id', async (req, res) => {
+app.put('/api/inspections/:id', checkPermission('inspection:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2455,7 +2538,7 @@ app.put('/api/inspections/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/inspections/:id', async (req, res) => {
+app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2474,7 +2557,7 @@ app.get('/api/acceptance', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/acceptance', async (req, res) => {
+app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2482,10 +2565,15 @@ app.post('/api/acceptance', async (req, res) => {
   const stmt = db.prepare('INSERT INTO acceptance (project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(project_id, project_name, stage, accept_status || '待验收', accept_date, quality_score, issues, attachment, userId);
   await addLog(userId, '', '新增', '验收管理', result.lastInsertRowid, project_name, `项目: ${project_name}`, req.ip);
+  notifyProject('acceptance_submit', project_id,
+    `验收提交：${project_name}`,
+    `项目「${project_name}」验收已提交，阶段：${stage || ''}，状态：${accept_status || '待验收'}。`,
+    result.lastInsertRowid, 'acceptance'
+  ).catch(console.error);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/acceptance/:id', async (req, res) => {
+app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2498,10 +2586,17 @@ app.put('/api/acceptance/:id', async (req, res) => {
   const stmt = db.prepare('UPDATE acceptance SET accept_status=?, accept_date=?, quality_score=?, issues=? WHERE id=?');
   await stmt.run(accept_status, accept_date, quality_score, issues, req.params.id);
   await addLog(userId, '', '编辑', '验收管理', req.params.id, aName, `更新验收: ${aName}`, req.ip);
+  if (existing.accept_status !== accept_status) {
+    notifyProject('acceptance_submit', null,
+      `验收状态变更：${aName}`,
+      `验收「${aName}」状态已变更为「${accept_status}」，请知悉。`,
+      parseInt(req.params.id), 'acceptance'
+    ).catch(console.error);
+  }
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/acceptance/:id', async (req, res) => {
+app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2521,7 +2616,7 @@ app.get('/api/dispatches', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/dispatches', async (req, res) => {
+app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2529,10 +2624,15 @@ app.post('/api/dispatches', async (req, res) => {
   const stmt = db.prepare('INSERT INTO dispatches (project_id, project_name, content, location, worker, fee, start_date, requirement, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(project_id, project_name || '', content, location || '', worker || '', fee || '', start_date || null, requirement || '', status || '待接单');
   await addLog(userId, '', '新增', '派工管理', result.lastInsertRowid, content, `派工内容: ${content}`, req.ip);
+  notifyProject('dispatch_created', project_id,
+    `新派工通知：${content}`,
+    `派工内容：${content || ''}，工人：${worker || ''}，项目：${project_name || ''}，请及时处理。`,
+    result.lastInsertRowid, 'dispatch'
+  ).catch(console.error);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/dispatches/:id', async (req, res) => {
+app.put('/api/dispatches/:id', checkPermission('dispatch:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2542,10 +2642,17 @@ app.put('/api/dispatches/:id', async (req, res) => {
   const stmt = db.prepare('UPDATE dispatches SET status=?, content=?, location=?, worker=?, fee=?, start_date=?, requirement=? WHERE id=?');
   await stmt.run(status, content, location, worker, fee, start_date, requirement, req.params.id);
   await addLog(userId, '', '编辑', '派工管理', req.params.id, dName, `更新派工: ${dName}`, req.ip);
+  if (d && d.status !== status) {
+    notifyProject('dispatch_status_changed', null,
+      `派工状态变更：${dName}`,
+      `派工「${dName}」状态已变更为「${status}」，请知悉。`,
+      parseInt(req.params.id), 'dispatch'
+    ).catch(console.error);
+  }
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/dispatches/:id', async (req, res) => {
+app.delete('/api/dispatches/:id', checkPermission('dispatch:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2562,7 +2669,7 @@ app.get('/api/invoices', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/invoices', async (req, res) => {
+app.post('/api/invoices', checkPermission('invoice:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2573,7 +2680,7 @@ app.post('/api/invoices', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/invoices/:id', async (req, res) => {
+app.put('/api/invoices/:id', checkPermission('invoice:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -2584,7 +2691,7 @@ app.put('/api/invoices/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/invoices/:id', async (req, res) => {
+app.delete('/api/invoices/:id', checkPermission('invoice:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -3588,7 +3695,7 @@ app.get('/api/sms-templates', async (req, res) => {
 });
 
 // POST 新建短信模板
-app.post('/api/sms-templates', async (req, res) => {
+app.post('/api/sms-templates', checkPermission('sms:write'), async (req, res) => {
   try {
     const { name, content, variables } = req.body;
     const result = await db.prepare(
@@ -3601,7 +3708,7 @@ app.post('/api/sms-templates', async (req, res) => {
 });
 
 // PUT 更新短信模板
-app.put('/api/sms-templates/:id', async (req, res) => {
+app.put('/api/sms-templates/:id', checkPermission('sms:write'), async (req, res) => {
   try {
     const { name, content, variables, is_active, sign_name, aliyun_template_code } = req.body;
     await db.prepare(
@@ -3614,7 +3721,7 @@ app.put('/api/sms-templates/:id', async (req, res) => {
 });
 
 // DELETE 删除短信模板
-app.delete('/api/sms-templates/:id', async (req, res) => {
+app.delete('/api/sms-templates/:id', checkPermission('sms:delete'), async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3928,7 +4035,7 @@ app.get('/api/system-settings', async (req, res) => {
   }
 });
 
-app.put('/api/system-settings/sms', async (req, res) => {
+app.put('/api/system-settings/sms', checkPermission('settings:write'), async (req, res) => {
   try {
     // 前端提交的是扁平对象 {provider, access_key_id, ...}，需要包裹成双重JSON格式
     const value = JSON.stringify({ category: 'sms', setting_value: req.body });
@@ -3946,7 +4053,7 @@ app.put('/api/system-settings/sms', async (req, res) => {
   }
 });
 
-app.put('/api/system-settings/wechat', async (req, res) => {
+app.put('/api/system-settings/wechat', checkPermission('settings:write'), async (req, res) => {
   try {
     const value = JSON.stringify(req.body);
     const existing = await db.prepare('SELECT id FROM system_settings WHERE category = ?').get('wechat');
@@ -3963,7 +4070,7 @@ app.put('/api/system-settings/wechat', async (req, res) => {
   }
 });
 
-app.put('/api/system-settings/email', async (req, res) => {
+app.put('/api/system-settings/email', checkPermission('settings:write'), async (req, res) => {
   try {
     const value = JSON.stringify(req.body);
     const existing = await db.prepare('SELECT id FROM system_settings WHERE category = ?').get('email');
@@ -4144,7 +4251,7 @@ app.get('/api/system-settings/notifications', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/system-settings/notifications', async (req, res) => {
+app.put('/api/system-settings/notifications', checkPermission('settings:write'), async (req, res) => {
   try {
     const value = JSON.stringify(req.body);
     const [existing] = await mysqlPool.query('SELECT id FROM system_settings WHERE category = ?', ['notifications']);
