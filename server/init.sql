@@ -347,8 +347,40 @@ CREATE TABLE IF NOT EXISTS approvals (
   status VARCHAR(50) DEFAULT '待审批',
   approver_id INT,
   approver_name VARCHAR(100),
+  approver_ids VARCHAR(500),
+  approver_names VARCHAR(500),
+  current_level INT DEFAULT 1,
+  max_level INT DEFAULT 1,
   approve_time VARCHAR(50),
   remark TEXT,
+  form_data TEXT,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+  updated_at DATETIME DEFAULT '2024-01-01 00:00:00'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 审批记录表
+CREATE TABLE IF NOT EXISTS approval_records (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  approval_id INT,
+  approver_id INT,
+  approver_name VARCHAR(100),
+  action VARCHAR(20) DEFAULT '同意',
+  comment TEXT,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 消息表
+CREATE TABLE IF NOT EXISTS messages (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  user_name VARCHAR(100),
+  title VARCHAR(255),
+  content TEXT,
+  type VARCHAR(50) DEFAULT '系统通知',
+  related_id INT,
+  related_type VARCHAR(50),
+  is_read TINYINT DEFAULT 0,
+  push_status VARCHAR(20) DEFAULT 'pending',
   created_at DATETIME DEFAULT '2024-01-01 00:00:00'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

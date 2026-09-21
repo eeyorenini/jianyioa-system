@@ -122,7 +122,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import request from '@/utils/request'
+import axios from 'axios'
 import { Search } from '@element-plus/icons-vue'
 
 const router = useRouter()
@@ -138,67 +138,25 @@ const keyword = ref('')
 
 // 消息类型映射
 const notificationTypes = [
-  { value: 'contract_created', label: '新增合同' },
-  { value: 'contract_updated', label: '合同变更' },
-  { value: 'project_created', label: '新增项目' },
-  { value: 'project_status_changed', label: '项目状态变更' },
-  { value: 'node_status_changed', label: '节点状态变更' },
-  { value: 'project_progress', label: '项目进展' },
-  { value: 'inspection_submit', label: '巡检提交' },
-  { value: 'acceptance_submit', label: '验收提交' },
-  { value: 'dispatch_created', label: '新增派工' },
-  { value: 'dispatch_status_changed', label: '派工状态变更' },
-  { value: 'approval_submit', label: '审批提交' },
-  { value: 'approval_result', label: '审批结果' },
-  { value: 'notice_published', label: '发布公告' },
-  { value: 'customer_follow', label: '客户跟进' },
-  { value: 'invoice_created', label: '新增发票' },
-  { value: 'system_notice', label: '系统通知' }
+  { value: '审批', label: '审批通知' },
+  { value: '系统通知', label: '系统通知' },
+  { value: '公告', label: '公告' },
+  { value: '合同', label: '合同通知' },
+  { value: '项目', label: '项目通知' }
 ]
-
-// 消息类型 → 跳转路由映射
-const typeRoutes = {
-  contract_created: '/contracts',
-  contract_updated: '/contracts',
-  project_created: '/projects',
-  project_status_changed: '/projects',
-  node_status_changed: '/projects',
-  project_progress: '/projects',
-  inspection_submit: '/inspections',
-  acceptance_submit: '/acceptance',
-  dispatch_created: '/projects',
-  dispatch_status_changed: '/projects',
-  approval_submit: '/approvals',
-  approval_result: '/approvals',
-  notice_published: '/notices',
-  customer_follow: '/customers',
-  invoice_created: '/invoices',
-  system_notice: '/notices'
-}
 
 const getTypeLabel = (type) => {
   const found = notificationTypes.find(t => t.value === type)
-  return found ? found.label : type
+  return found ? found.label : type || '系统通知'
 }
 
 const getTypeTagType = (type) => {
   const typeMap = {
-    contract_created: 'success',
-    contract_updated: 'warning',
-    project_created: 'primary',
-    project_status_changed: 'warning',
-    node_status_changed: 'info',
-    project_progress: 'info',
-    inspection_submit: 'primary',
-    acceptance_submit: 'primary',
-    dispatch_created: 'success',
-    dispatch_status_changed: 'warning',
-    approval_submit: 'warning',
-    approval_result: 'success',
-    notice_published: 'danger',
-    customer_follow: 'info',
-    invoice_created: 'success',
-    system_notice: 'danger'
+    '审批': 'warning',
+    '系统通知': 'danger',
+    '公告': 'primary',
+    '合同': 'success',
+    '项目': 'info'
   }
   return typeMap[type] || 'info'
 }
@@ -208,18 +166,17 @@ const loadData = async () => {
   try {
     const params = {
       page: currentPage.value,
-      pageSize: pageSize.value,
-      is_read: filterRead.value,
-      keyword: keyword.value,
-      type: filterType.value.length > 0 ? filterType.value.join(',') : ''
+      pageSize: pageSize.value
     }
+    if (filterType.value.length > 0) params.type = filterType.value[0]
+    if (filterRead.value !== '') params.is_read = filterRead.value
+    if (keyword.value) params.keyword = keyword.value
 
-    const res = await request.get('/notifications/admin-list', { params })
-    messageList.value = res.data || res.list || []
-    total.value = res.total || 0
+    const res = await axios.get('/api/messages', { params })
+    messageList.value = res.data || []
+    total.value = res.data?.length || 0
   } catch (error) {
     console.error('加载消息失败:', error)
-    ElMessage.error('加载消息失败')
   } finally {
     loading.value = false
   }
@@ -239,17 +196,23 @@ const handleCurrentChange = () => {
   loadData()
 }
 
-const handleRowClick = (row) => {
-  const route = typeRoutes[row.type] || '/'
-  router.push({
-    path: route,
-    query: { highlight: row.source_id }
-  })
+const handleRowClick = async (row) => {
+  // 标记已读
+  if (row.is_read === 0) {
+    try {
+      await axios.put(`/api/messages/${row.id}/read`)
+      row.is_read = 1
+    } catch (e) {}
+  }
+  // 跳转到审批详情
+  if (row.related_type === 'approval' && row.related_id) {
+    router.push('/approvals')
+  }
 }
 
 const handleMarkRead = async (row) => {
   try {
-    await request.put(`/notifications/${row.id}/read`)
+    await axios.put(`/api/messages/${row.id}/read`)
     row.is_read = 1
     ElMessage.success('已标记为已读')
   } catch (error) {
@@ -264,11 +227,10 @@ const handleDelete = async (row) => {
       cancelButtonText: '取消',
       type: 'warning'
     })
-    await request.delete(`/notifications/${row.id}`)
-    ElMessage.success('删除成功')
-    loadData()
+    // 暂时不支持删除
+    ElMessage.info('消息暂不支持删除')
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error('删除失败')
+    if (error !== 'cancel') ElMessage.error('操作失败')
   }
 }
 
@@ -279,11 +241,7 @@ const handleBatchRead = async () => {
       cancelButtonText: '取消',
       type: 'info'
     })
-    // 批量标记已读
-    const unreadIds = messageList.value.filter(m => m.is_read === 0).map(m => m.id)
-    if (unreadIds.length > 0) {
-      await request.delete('/notifications', { data: { ids: unreadIds } })
-    }
+    await axios.put('/api/messages/read-all')
     ElMessage.success('已全部标为已读')
     loadData()
   } catch (error) {

@@ -344,6 +344,41 @@ async function insertInAppNotification(projectId, title, content, sourceId, sour
   } catch (err) { console.error('insertInAppNotification error:', err); }
 }
 
+// 统一应用内通知：同时写 notifications 和 messages 表
+// type: 'purchase'|'material_in'|'material_out'|'node_status' 等
+// targets: 数组，每个元素是 { phone, name, user_id }
+// 注意：此函数内部按 phone 去重，避免同一人收到多条通知
+async function sendAppNotification(type, title, content, sourceId, sourceType, targets) {
+  if (!targets || targets.length === 0) return;
+  const channels = 'inapp';
+  // 按 phone 去重
+  const seen = new Set();
+  const uniqueTargets = [];
+  for (const t of targets) {
+    if (!t.phone || seen.has(t.phone)) continue;
+    seen.add(t.phone);
+    uniqueTargets.push(t);
+  }
+  for (const t of uniqueTargets) {
+    try {
+      // 写 notifications 表
+      await mysqlPool.query(
+        'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
+      );
+      // 写 messages 表（如果能查到 user_id）
+      if (t.user_id) {
+        await mysqlPool.query(
+          'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [t.user_id, t.name || '', title, content, type, sourceId || 0, sourceType || '', 0, 'sent', new Date()]
+        );
+      }
+    } catch (err) {
+      console.error('sendAppNotification error:', err);
+    }
+  }
+}
+
 // ==================== 通知短信发送函数（被 notifyProject 调用）====================
 // templateId 可选：指定则优先用该模板的 aliyun_template_code，否则用默认模板
 async function sendSmsFromNotify(phone, name, title, content, templateId) {
@@ -1724,14 +1759,52 @@ app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, re
   const userId = getUserId(req);
   const { material_id, quantity, unit_price, supplier, operator, note, date } = req.body;
   const stmt = db.prepare('INSERT INTO material_in (material_id, quantity, unit_price, supplier, operator, note, date, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  await stmt.run(material_id, quantity, unit_price || 0, supplier, operator, note, date, userId);
+  const result = await stmt.run(material_id, quantity, unit_price || 0, supplier, operator, note, date, userId);
   await db.prepare('UPDATE materials SET quantity = quantity + ? WHERE id = ?').run(quantity, material_id);
   const [matIn] = await db.prepare('SELECT name FROM materials WHERE id = ?').all(material_id);
-  await addLog(userId, '', '新增', '材料入库', result.lastInsertRowid, matIn?.name || material_id, `材料入库: ${matIn?.name || material_id}, 数量: ${quantity}`, req.ip);
+  const inId = result.lastInsertRowid;
+  await addLog(userId, '', '新增', '材料入库', inId, matIn?.name || material_id, `材料入库: ${matIn?.name || material_id}, 数量: ${quantity}`, req.ip);
+
+  // 发送应用内通知：查找使用了该材料的在建项目，通知相关人
+  try {
+    const [recentOut] = await db.prepare('SELECT project_id FROM material_out WHERE material_id = ? ORDER BY id DESC LIMIT 1').all(material_id);
+    if (recentOut && recentOut.project_id) {
+      const [proj] = await db.prepare(`
+        SELECT p.*,
+          des.phone as designer_phone, des.name as designer_name, des.id as designer_id,
+          sup.phone as supervisor_phone, sup.name as supervisor_name, sup.id as supervisor_id,
+          mgr.phone as manager_phone, mgr.name as manager_name, mgr.id as manager_id
+        FROM projects p
+        LEFT JOIN employees des ON p.designer_id = des.id
+        LEFT JOIN employees sup ON p.supervisor_id = sup.id
+        LEFT JOIN employees mgr ON p.manager_id = mgr.id
+        WHERE p.id = ?
+      `).all(recentOut.project_id);
+
+      const targets = [];
+      if (proj) {
+        if (proj.designer_phone) targets.push({ phone: proj.designer_phone, name: proj.designer_name, user_id: proj.designer_id });
+        if (proj.supervisor_phone) targets.push({ phone: proj.supervisor_phone, name: proj.supervisor_name, user_id: proj.supervisor_id });
+        if (proj.manager_phone) targets.push({ phone: proj.manager_phone, name: proj.manager_name, user_id: proj.manager_id });
+      }
+      const [admin] = await db.prepare('SELECT phone, name, id FROM employees WHERE id = 1').all();
+      if (admin && admin.phone) targets.push({ phone: admin.phone, name: admin.name || '管理员', user_id: admin.id });
+
+      if (targets.length > 0) {
+        const content = `【${matIn?.name || '材料'}】已入库，数量：${quantity}，供应商：${supplier || '未知'}`;
+        sendAppNotification('material_in', '材料已入库', content, inId, 'material_in', targets).catch(console.error);
+      }
+    }
+  } catch (err) {
+    console.error('material_in notification error:', err);
+  }
+
   res.json({ message: '入库成功' });
 });
 
 app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
+  const userId = getUserId(req);
   const { material_id, quantity, project_id, operator, note, date } = req.body;
 
   // 库存校验：出库数量不能超过当前库存
@@ -1744,10 +1817,45 @@ app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, r
   }
 
   const stmt = db.prepare('INSERT INTO material_out (material_id, quantity, project_id, operator, note, date) VALUES (?, ?, ?, ?, ?, ?)');
-  await stmt.run(material_id, quantity, project_id, operator, note, date);
+  const result = await stmt.run(material_id, quantity, project_id, operator, note, date);
   await db.prepare('UPDATE materials SET quantity = quantity - ? WHERE id = ?').run(quantity, material_id);
   const [matOut] = await db.prepare('SELECT name FROM materials WHERE id = ?').all(material_id);
-  await addLog(userId, '', '新增', '材料出库', result.lastInsertRowid, matOut?.name || material_id, `材料出库: ${matOut?.name || material_id}, 数量: ${quantity}`, req.ip);
+  const outId = result.lastInsertRowid;
+  await addLog(userId, '', '新增', '材料出库', outId, matOut?.name || material_id, `材料出库: ${matOut?.name || material_id}, 数量: ${quantity}`, req.ip);
+
+  // 发送应用内通知：通知项目相关人
+  if (project_id) {
+    try {
+      const [proj] = await db.prepare(`
+        SELECT p.*,
+          des.phone as designer_phone, des.name as designer_name, des.id as designer_id,
+          sup.phone as supervisor_phone, sup.name as supervisor_name, sup.id as supervisor_id,
+          mgr.phone as manager_phone, mgr.name as manager_name, mgr.id as manager_id
+        FROM projects p
+        LEFT JOIN employees des ON p.designer_id = des.id
+        LEFT JOIN employees sup ON p.supervisor_id = sup.id
+        LEFT JOIN employees mgr ON p.manager_id = mgr.id
+        WHERE p.id = ?
+      `).all(project_id);
+
+      const targets = [];
+      if (proj) {
+        if (proj.designer_phone) targets.push({ phone: proj.designer_phone, name: proj.designer_name, user_id: proj.designer_id });
+        if (proj.supervisor_phone) targets.push({ phone: proj.supervisor_phone, name: proj.supervisor_name, user_id: proj.supervisor_id });
+        if (proj.manager_phone) targets.push({ phone: proj.manager_phone, name: proj.manager_name, user_id: proj.manager_id });
+      }
+      const [admin] = await db.prepare('SELECT phone, name, id FROM employees WHERE id = 1').all();
+      if (admin && admin.phone) targets.push({ phone: admin.phone, name: admin.name || '管理员', user_id: admin.id });
+
+      if (targets.length > 0) {
+        const content = `【${matOut?.name || '材料'}】已出库，数量：${quantity}，用于项目ID：${project_id}`;
+        sendAppNotification('material_out', '材料已出库', content, outId, 'material_out', targets).catch(console.error);
+      }
+    } catch (err) {
+      console.error('material_out notification error:', err);
+    }
+  }
+
   res.json({ message: '出库成功' });
 });
 
@@ -2189,18 +2297,89 @@ app.post('/api/material-orders', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/material-orders/:id', async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
+// 采购申请（移动端专用）
+app.post('/api/material/purchase', async (req, res) => {
   const userId = getUserId(req);
-  const { material_id, quantity, status, order_date, expected_date, supplier, operator, note } = req.body;
+  const { project_id, material_name, spec, quantity, unit, supplier, amount, remark } = req.body;
+  if (!project_id) return res.status(400).json({ code: 1, msg: '请选择项目' });
+  if (!material_name) return res.status(400).json({ code: 1, msg: '请填写材料名称' });
+  if (!quantity) return res.status(400).json({ code: 1, msg: '请填写数量' });
+  const stmt = db.prepare(
+    'INSERT INTO material_orders (project_id, material_name, spec, quantity, unit, supplier, amount, note, status, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  const result = await stmt.run(project_id, material_name, spec || '', quantity, unit || '', supplier || '', amount || 0, remark || '', '待采购', userId);
+  const newPurchaseId = result.lastInsertRowid;
+  await addLog(userId, '', '新增', '采购申请', newPurchaseId, 0, `采购申请：${material_name}`, req.ip);
+
+  // 发送应用内通知：查项目相关人（设计师/监理/经理）+ 管理员
+  try {
+    const [proj] = await db.prepare(`
+      SELECT p.*,
+        des.phone as designer_phone, des.name as designer_name, des.id as designer_id,
+        sup.phone as supervisor_phone, sup.name as supervisor_name, sup.id as supervisor_id,
+        mgr.phone as manager_phone, mgr.name as manager_name, mgr.id as manager_id,
+        creator.phone as creator_phone, creator.name as creator_name
+      FROM projects p
+      LEFT JOIN employees des ON p.designer_id = des.id
+      LEFT JOIN employees sup ON p.supervisor_id = sup.id
+      LEFT JOIN employees mgr ON p.manager_id = mgr.id
+      LEFT JOIN employees creator ON creator.id = ?
+      WHERE p.id = ?
+    `).all(userId, project_id);
+
+    const targets = [];
+    if (proj) {
+      if (proj.designer_phone) targets.push({ phone: proj.designer_phone, name: proj.designer_name, user_id: proj.designer_id });
+      if (proj.supervisor_phone) targets.push({ phone: proj.supervisor_phone, name: proj.supervisor_name, user_id: proj.supervisor_id });
+      if (proj.manager_phone) targets.push({ phone: proj.manager_phone, name: proj.manager_name, user_id: proj.manager_id });
+      if (proj.creator_phone) targets.push({ phone: proj.creator_phone, name: proj.creator_name, user_id: userId });
+      // 管理员
+      const [admin] = await db.prepare('SELECT phone, name, id FROM employees WHERE id = 1').all();
+      if (admin && admin.phone) targets.push({ phone: admin.phone, name: admin.name || '管理员', user_id: admin.id });
+    }
+
+    const creatorName = proj?.creator_name || '未知';
+    const content = `【${material_name}】采购申请，数量：${quantity}${unit || ''}，金额：¥${amount || 0}，申请人：${creatorName}`;
+    sendAppNotification('purchase', '新采购申请', content, newPurchaseId, 'purchase', targets).catch(console.error);
+  } catch (err) {
+    console.error('purchase notification error:', err);
+  }
+
+  res.json({ code: 0, msg: '提交成功', id: newPurchaseId });
+});
+
+app.put('/api/material-orders/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const { project_id, material_id, material_name, spec, quantity, unit, supplier, amount, status, order_date, expected_date, operator, note } = req.body;
   // 权限检查
   const [existing] = await db.prepare('SELECT creator_id FROM material_orders WHERE id = ?').all(req.params.id);
   if (!existing) return res.status(404).json({ error: '订单不存在' });
   if (existing.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权修改他人的数据' });
-  const stmt = db.prepare('UPDATE material_orders SET material_id=?, quantity=?, status=?, order_date=?, expected_date=?, supplier=?, operator=?, note=? WHERE id=?');
-  await stmt.run(material_id, quantity, status, order_date, expected_date, supplier, operator, note, req.params.id);
-  await addLog(userId, '', '编辑', '材料订单', req.params.id, material_id, `更新材料订单 ID: ${material_id}`, req.ip);
+
+  // 查旧状态，用于判断是否变为"已到货"
+  const [oldOrder] = await db.prepare('SELECT status, project_id, material_name FROM material_orders WHERE id = ?').all(req.params.id);
+  const oldStatus = oldOrder?.status;
+
+  const stmt = db.prepare('UPDATE material_orders SET project_id=?, material_id=?, material_name=?, spec=?, quantity=?, unit=?, supplier=?, amount=?, status=?, order_date=?, expected_date=?, operator=?, note=? WHERE id=?');
+  await stmt.run(project_id || null, material_id || null, material_name || '', spec || '', quantity || '', unit || '', supplier || '', amount || 0, status, order_date || '', expected_date || '', operator || '', note || '', req.params.id);
+  await addLog(userId, '', '编辑', '材料订单', req.params.id, material_name || material_id || '', `更新材料订单：${material_name || material_id}`, req.ip);
+
+  // 状态变为"已到货"时，通知创建人
+  if (oldStatus !== '已到货' && status === '已到货') {
+    try {
+      const [order] = await db.prepare('SELECT creator_id, project_id, material_name FROM material_orders WHERE id = ?').all(req.params.id);
+      if (order) {
+        const [creator] = await db.prepare('SELECT phone, name, id FROM employees WHERE id = ?').all(order.creator_id);
+        if (creator && creator.phone) {
+          const content = `【${order.material_name}】采购材料已到货，请注意验收`;
+          sendAppNotification('purchase_status', '采购材料已到货', content, parseInt(req.params.id), 'purchase', [{ phone: creator.phone, name: creator.name, user_id: creator.id }]).catch(console.error);
+        }
+      }
+    } catch (err) {
+      console.error('purchase_status notification error:', err);
+    }
+  }
+
   res.json({ message: '更新成功' });
 });
 
@@ -2515,45 +2694,316 @@ app.post('/api/permissions', async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.get('/api/approvals', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM approvals ORDER BY created_at DESC');
-  res.json(await stmt.all());
+// 旧版审批 CRUD 已移除（见下方新版审批 API）
+
+// ==================== 审批相关 API ====================
+
+// 获取当前用户信息（从请求头）
+function getCurrentUser(req) {
+  const userId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id']) : null;
+  const userName = req.headers['x-user-name'] || '';
+  return { userId, userName };
+}
+
+// 我的申请列表
+app.get('/api/approvals/my', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    const { status, type, keyword } = req.query;
+    let sql = 'SELECT * FROM approvals WHERE applicant_id = ?';
+    const params = [userId];
+    
+    if (status) { sql += ' AND status = ?'; params.push(status); }
+    if (type) { sql += ' AND type = ?'; params.push(type); }
+    if (keyword) { sql += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+    
+    sql += ' ORDER BY created_at DESC';
+    const stmt = db.prepare(sql);
+    const list = await stmt.all(...params);
+    res.json(list);
+  } catch (err) {
+    console.error('approvals/my error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
 });
 
-app.post('/api/approvals', checkPermission('approval:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
+// 待我审批列表
+app.get('/api/approvals/todo', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
     
-  const userId = getUserId(req);
-  const { title, type, applicant_id, applicant_name, content, amount, status } = req.body;
-  const stmt = db.prepare('INSERT INTO approvals (title, type, applicant_id, applicant_name, content, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(title, type, applicant_id, applicant_name, content, amount, status || '待审批');
-  await addLog(userId, '', '新增', '审批管理', result.lastInsertRowid, title, `审批标题: ${title}`, req.ip);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+    const { status, type, keyword } = req.query;
+    // 查找 approver_ids 包含当前用户ID的记录
+    let sql = "SELECT * FROM approvals WHERE status = '待审批' AND FIND_IN_SET(?, approver_ids)";
+    const params = [userId.toString()];
+    
+    if (type) { sql += ' AND type = ?'; params.push(type); }
+    if (keyword) { sql += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+    
+    sql += ' ORDER BY created_at DESC';
+    const stmt = db.prepare(sql);
+    const list = await stmt.all(...params);
+    res.json(list);
+  } catch (err) {
+    console.error('approvals/todo error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
 });
 
-app.put('/api/approvals/:id', checkPermission('approval:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
+// 获取审批详情（含审批记录）
+app.get('/api/approvals/:id', async (req, res) => {
+  try {
+    const [approval] = await db.prepare('SELECT * FROM approvals WHERE id = ?').all(req.params.id);
+    if (!approval) return res.status(404).json({ error: '审批不存在' });
     
-  const userId = getUserId(req);
-  const { title, type, content, amount, status, approver_id, approver_name, approve_time, remark } = req.body;
-  const stmt = db.prepare('UPDATE approvals SET title=?, type=?, content=?, amount=?, status=?, approver_id=?, approver_name=?, approve_time=?, remark=? WHERE id=?');
-  await stmt.run(title, type, content, amount, status, approver_id, approver_name, approve_time, remark, req.params.id);
-  await addLog(userId, '', '编辑', '审批管理', req.params.id, title, `更新审批: ${title}`, req.ip);
-  res.json({ message: '更新成功' });
+    const records = await db.prepare('SELECT * FROM approval_records WHERE approval_id = ? ORDER BY created_at ASC').all(req.params.id);
+    res.json({ ...approval, records });
+  } catch (err) {
+    console.error('approvals/:id error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
 });
 
-app.delete('/api/approvals/:id', checkPermission('approval:delete'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
+// 发起审批
+app.post('/api/approvals', async (req, res) => {
   const userId = getUserId(req);
-  if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
-  const [a] = await db.prepare('SELECT title FROM approvals WHERE id = ?').all(req.params.id);
-  const aTitle = a ? a.title : req.params.id;
-  const stmt = db.prepare('DELETE FROM approvals WHERE id = ?');
-  await stmt.run(req.params.id);
-  await addLog(userId, '', '删除', '审批管理', req.params.id, aTitle, `删除审批: ${aTitle}`, req.ip);
-  res.json({ message: '删除成功' });
+  const { userId: uid, userName: uname } = getCurrentUser(req);
+  
+  const { title, type, content, amount, approver_id, approver_name, approver_ids, approver_names, form_data } = req.body;
+  
+  if (!title || !approver_id) {
+    return res.status(400).json({ error: '标题和审批人不能为空' });
+  }
+  
+  // 支持多审批人（逗号分隔）
+  const approverIdStr = approver_ids || approver_id.toString();
+  const approverNameStr = approver_names || approver_name;
+  
+  const stmt = db.prepare(`
+    INSERT INTO approvals (title, type, applicant_id, applicant_name, content, amount, 
+      status, approver_id, approver_name, approver_ids, approver_names, max_level, form_data)
+    VALUES (?, ?, ?, ?, ?, ?, '待审批', ?, ?, ?, ?, 1, ?)
+  `);
+  const result = await stmt.run(
+    title, type || '其他', uid, uname, content, amount,
+    approver_id, approver_name, approverIdStr, approverNameStr, 
+    form_data ? JSON.stringify(form_data) : null
+  );
+  
+  const approvalId = result.lastInsertRowid;
+  await addLog(uid, '', '新增', '审批管理', approvalId, title, `发起审批: ${title}`, req.ip);
+  
+  // 发送通知给审批人
+  const approverIdList = approverIdStr.split(',');
+  const approverNameList = approverNameStr.split(',');
+  for (let i = 0; i < approverIdList.length; i++) {
+    const aId = parseInt(approverIdList[i]);
+    if (aId && aId !== uid) {
+      await sendApprovalNotification({
+        userId: aId,
+        userName: approverNameList[i] || '',
+        title: '您有新的审批待处理',
+        content: `${uname} 提交了审批：${title}`,
+        type: '审批',
+        relatedId: approvalId,
+        relatedType: 'approval'
+      });
+    }
+  }
+  
+  res.json({ id: approvalId, message: '提交成功' });
 });
+
+// 审批操作（同意）
+app.post('/api/approvals/:id/approve', async (req, res) => {
+  const { userId, userName } = getCurrentUser(req);
+  const { comment } = req.body;
+  
+  const [approval] = await db.prepare('SELECT * FROM approvals WHERE id = ?').all(req.params.id);
+  if (!approval) return res.status(404).json({ error: '审批不存在' });
+  
+  // 检查是否是当前审批人
+  const approverIdList = (approval.approver_ids || approval.approver_id.toString()).split(',');
+  if (!approverIdList.includes(userId.toString())) {
+    return res.status(403).json({ error: '您不是此审批的审批人' });
+  }
+  
+  // 记录审批
+  await db.prepare(`
+    INSERT INTO approval_records (approval_id, approver_id, approver_name, action, comment)
+    VALUES (?, ?, ?, '同意', ?)
+  `).run(req.params.id, userId, userName, comment || '');
+  
+  // 更新审批状态
+  await db.prepare(`
+    UPDATE approvals SET status = '已通过', approve_time = ?, remark = CONCAT(IFNULL(remark, ''), ?)
+    WHERE id = ?
+  `).run(new Date().toISOString(), `${userName}同意${comment ? '：' + comment : ''}；`, req.params.id);
+  
+  await addLog(userId, '', '审批', '审批管理', req.params.id, approval.title, `审批通过: ${approval.title}`, req.ip);
+  
+  // 通知申请人
+  await sendApprovalNotification({
+    userId: approval.applicant_id,
+    userName: approval.applicant_name,
+    title: '审批已通过',
+    content: `您的审批「${approval.title}」已通过`,
+    type: '审批',
+    relatedId: approval.id,
+    relatedType: 'approval'
+  });
+  
+  res.json({ message: '审批成功' });
+});
+
+// 审批操作（驳回）
+app.post('/api/approvals/:id/reject', async (req, res) => {
+  const { userId, userName } = getCurrentUser(req);
+  const { comment } = req.body;
+  
+  const [approval] = await db.prepare('SELECT * FROM approvals WHERE id = ?').all(req.params.id);
+  if (!approval) return res.status(404).json({ error: '审批不存在' });
+  
+  const approverIdList = (approval.approver_ids || approval.approver_id.toString()).split(',');
+  if (!approverIdList.includes(userId.toString())) {
+    return res.status(403).json({ error: '您不是此审批的审批人' });
+  }
+  
+  await db.prepare(`
+    INSERT INTO approval_records (approval_id, approver_id, approver_name, action, comment)
+    VALUES (?, ?, ?, '驳回', ?)
+  `).run(req.params.id, userId, userName, comment || '');
+  
+  await db.prepare(`
+    UPDATE approvals SET status = '已驳回', approve_time = ?, remark = CONCAT(IFNULL(remark, ''), ?)
+    WHERE id = ?
+  `).run(new Date().toISOString(), `${userName}驳回${comment ? '：' + comment : ''}；`, req.params.id);
+  
+  await addLog(userId, '', '审批', '审批管理', req.params.id, approval.title, `审批驳回: ${approval.title}`, req.ip);
+  
+  await sendApprovalNotification({
+    userId: approval.applicant_id,
+    userName: approval.applicant_name,
+    title: '审批已被驳回',
+    content: `您的审批「${approval.title}」已被驳回${comment ? '：' + comment : ''}`,
+    type: '审批',
+    relatedId: approval.id,
+    relatedType: 'approval'
+  });
+  
+  res.json({ message: '驳回成功' });
+});
+
+// ==================== 消息相关 API ====================
+
+// 获取消息列表
+app.get('/api/messages', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    const { type, is_read, keyword, page = 1, pageSize = 20 } = req.query;
+    let sql = 'SELECT * FROM messages WHERE user_id = ?';
+    const params = [userId];
+    
+    if (type) { sql += ' AND type = ?'; params.push(type); }
+    if (is_read !== undefined && is_read !== '') { sql += ' AND is_read = ?'; params.push(parseInt(is_read)); }
+    if (keyword) { sql += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+    
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
+    
+    const stmt = db.prepare(sql);
+    const list = await stmt.all(...params);
+    res.json(list);
+  } catch (err) {
+    console.error('messages error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// 获取未读消息数量
+app.get('/api/messages/unread-count', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    const [row] = await db.prepare('SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND is_read = 0').all(userId);
+    res.json({ count: row.count });
+  } catch (err) {
+    console.error('unread-count error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// 标记消息已读
+app.put('/api/messages/:id/read', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    await db.prepare('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
+    res.json({ message: '已标记已读' });
+  } catch (err) {
+    console.error('mark read error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// 标记全部已读
+app.put('/api/messages/read-all', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    await db.prepare('UPDATE messages SET is_read = 1 WHERE user_id = ?').run(userId);
+    res.json({ message: '已全部标记已读' });
+  } catch (err) {
+    console.error('mark all read error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// 获取单条消息
+app.get('/api/messages/:id', async (req, res) => {
+  try {
+    const { userId } = getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    
+    const [msg] = await db.prepare('SELECT * FROM messages WHERE id = ? AND user_id = ?').all(req.params.id, userId);
+    if (!msg) return res.status(404).json({ error: '消息不存在' });
+    res.json(msg);
+  } catch (err) {
+    console.error('messages/:id error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// ==================== 审批通知推送服务 ====================
+
+// 发送审批通知（站内消息 + 短信）
+async function sendApprovalNotification({ userId, userName, title, content, type, relatedId, relatedType }) {
+  try {
+    // 1. 写入站内消息
+    await db.prepare(`
+      INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
+    `).run(userId, userName, title, content, type, relatedId, relatedType);
+    
+    // 2. 查询用户手机号，准备短信通知
+    const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+    if (emp && emp.phone) {
+      // 短信通知（异步，不阻塞）
+      sendSmsFromNotify(emp.phone, userName, title, content).catch(err => console.error('短信发送失败:', err));
+    }
+    
+  } catch (err) {
+    console.error('sendApprovalNotification error:', err);
+  }
+}
 
 app.get('/api/reports', async (req, res) => {
   const stmt = db.prepare('SELECT * FROM reports ORDER BY created_at DESC');
@@ -3535,11 +3985,16 @@ function extractVariablesByRules(content) {
 // ============================================================
 // PDF 生成服务 - 使用 Puppeteer + Chrome 渲染
 // ============================================================
+const isMac = process.platform === 'darwin';
+const isWindows = process.platform === 'win32';
 const PUPPETEER_CONFIG = {
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true,
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 };
+// Mac 本地开发用指定 Chrome；Windows/Linux 用系统 Chrome 或让 puppeteer 自动找
+if (isMac) {
+  PUPPETEER_CONFIG.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+}
 
 let browserInstance = null;
 
