@@ -36,19 +36,78 @@
           </el-form>
         </el-tab-pane>
 
-        <!-- 微信设置 -->
+        <!-- 微信设置（三个子Tab） -->
         <el-tab-pane label="微信设置" name="wechat">
-          <el-form :model="wechatForm" label-width="120px" style="max-width: 600px">
-            <el-form-item label="AppID">
-              <el-input v-model="wechatForm.app_id" placeholder="请输入微信小程序 AppID" />
-            </el-form-item>
-            <el-form-item label="AppSecret">
-              <el-input v-model="wechatForm.app_secret" placeholder="请输入 AppSecret" show-password />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="saveWechatSettings" :loading="saving">保存设置</el-button>
-            </el-form-item>
-          </el-form>
+          <el-tabs v-model="wechatSubTab" style="margin-left: 0">
+            <!-- 微信公众号配置 -->
+            <el-tab-pane label="微信公众号" name="mp">
+              <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+                用于推送模板消息、网页授权登录。需在微信公众平台设置 IP 白名单和服务器域名。
+              </el-alert>
+              <el-form :model="mpForm" label-width="130px" style="max-width: 650px">
+                <el-form-item label="AppID">
+                  <el-input v-model="mpForm.app_id" placeholder="请输入微信公众号 AppID" />
+                </el-form-item>
+                <el-form-item label="AppSecret">
+                  <el-input v-model="mpForm.app_secret" placeholder="请输入 AppSecret" show-password />
+                </el-form-item>
+                <el-form-item label="Token">
+                  <el-input v-model="mpForm.token" placeholder="用于微信回调验证" />
+                </el-form-item>
+                <el-form-item label="EncodingAESKey">
+                  <el-input v-model="mpForm.aes_key" placeholder="消息加解密密钥（可选）" show-password />
+                </el-form-item>
+                <el-form-item label="模板消息ID">
+                  <el-input v-model="mpForm.template_id" placeholder="用于推送通知的模板消息ID" />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveWechatConfig" :loading="saving">保存配置</el-button>
+                </el-form-item>
+              </el-form>
+            </el-tab-pane>
+
+            <!-- 微信小程序配置 -->
+            <el-tab-pane label="微信小程序" name="mini">
+              <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+                用于小程序内获取用户手机号、昵称，以及发送服务通知。
+              </el-alert>
+              <el-form :model="miniForm" label-width="130px" style="max-width: 650px">
+                <el-form-item label="AppID">
+                  <el-input v-model="miniForm.app_id" placeholder="请输入小程序 AppID" />
+                </el-form-item>
+                <el-form-item label="AppSecret">
+                  <el-input v-model="miniForm.app_secret" placeholder="请输入 AppSecret" show-password />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveWechatConfig" :loading="saving">保存配置</el-button>
+                </el-form-item>
+              </el-form>
+            </el-tab-pane>
+
+            <!-- 开放平台配置 -->
+            <el-tab-pane label="开放平台" name="openplatform">
+              <el-alert type="info" :closable="false" style="margin-bottom: 20px">
+                绑定公众号+小程序后，可获取 UnionID 实现跨平台用户身份打通。
+              </el-alert>
+              <el-form :model="openForm" label-width="130px" style="max-width: 650px">
+                <el-form-item label="AppID">
+                  <el-input v-model="openForm.app_id" placeholder="请输入开放平台 AppID" />
+                </el-form-item>
+                <el-form-item label="AppSecret">
+                  <el-input v-model="openForm.app_secret" placeholder="请输入 AppSecret" show-password />
+                </el-form-item>
+                <el-form-item label="Token">
+                  <el-input v-model="openForm.token" placeholder="用于开放平台回调验证" />
+                </el-form-item>
+                <el-form-item label="EncodingAESKey">
+                  <el-input v-model="openForm.aes_key" placeholder="消息加解密密钥（可选）" show-password />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="saveWechatConfig" :loading="saving">保存配置</el-button>
+                </el-form-item>
+              </el-form>
+            </el-tab-pane>
+          </el-tabs>
         </el-tab-pane>
 
         <!-- 邮件设置 -->
@@ -76,7 +135,7 @@
         <el-tab-pane label="通知设置" name="notifications">
           <div style="max-width: 700px">
             <el-alert type="info" :closable="false" style="margin-bottom: 20px">
-              开启/关闭各类业务通知，并设置通知发送给哪些角色（站内消息 / 短信）
+              开启/关闭各类业务通知，并设置通知发送给哪些角色（站内消息 / 短信 / 微信）
             </el-alert>
             <el-form :model="notifForm" label-width="140px">
               <div v-for="(rule, key) in notifForm.rules" :key="key" class="notif-rule-item">
@@ -88,6 +147,7 @@
                   <el-checkbox-group v-model="rule.channels">
                     <el-checkbox label="inapp">站内消息</el-checkbox>
                     <el-checkbox label="sms">短信</el-checkbox>
+                    <el-checkbox label="wechat">微信</el-checkbox>
                   </el-checkbox-group>
                 </el-form-item>
                 <el-form-item label="接收人">
@@ -116,6 +176,7 @@ import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
 const activeTab = ref('sms')
+const wechatSubTab = ref('mp')
 const saving = ref(false)
 
 const smsForm = reactive({
@@ -125,9 +186,27 @@ const smsForm = reactive({
   sign_name: ''
 })
 
-const wechatForm = reactive({
+// 微信公众号表单
+const mpForm = reactive({
+  app_id: '',
+  app_secret: '',
+  token: '',
+  aes_key: '',
+  template_id: ''
+})
+
+// 微信小程序表单
+const miniForm = reactive({
   app_id: '',
   app_secret: ''
+})
+
+// 开放平台表单
+const openForm = reactive({
+  app_id: '',
+  app_secret: '',
+  token: '',
+  aes_key: ''
 })
 
 const emailForm = reactive({
@@ -156,9 +235,6 @@ const loadSettings = async () => {
     if (data.sms) {
       Object.assign(smsForm, data.sms)
     }
-    if (data.wechat) {
-      Object.assign(wechatForm, data.wechat)
-    }
     if (data.email) {
       Object.assign(emailForm, data.email)
     }
@@ -178,6 +254,18 @@ const loadSettings = async () => {
   }
 }
 
+// 加载微信配置（三个平台）
+const loadWechatConfig = async () => {
+  try {
+    const { data } = await axios.get('/api/wechat/config')
+    if (data.mp) Object.assign(mpForm, data.mp)
+    if (data.mini) Object.assign(miniForm, data.mini)
+    if (data.openplatform) Object.assign(openForm, data.openplatform)
+  } catch (error) {
+    console.error('加载微信配置失败', error)
+  }
+}
+
 const saveSmsSettings = async () => {
   saving.value = true
   try {
@@ -190,11 +278,15 @@ const saveSmsSettings = async () => {
   }
 }
 
-const saveWechatSettings = async () => {
+const saveWechatConfig = async () => {
   saving.value = true
   try {
-    await axios.put('/api/system-settings/wechat', wechatForm)
-    ElMessage.success('微信设置保存成功')
+    await axios.put('/api/wechat/config', {
+      mp: { ...mpForm },
+      mini: { ...miniForm },
+      openplatform: { ...openForm }
+    })
+    ElMessage.success('微信配置保存成功')
   } catch (error) {
     ElMessage.error('保存失败')
   } finally {
@@ -228,6 +320,7 @@ const saveNotifSettings = async () => {
 
 onMounted(() => {
   loadSettings()
+  loadWechatConfig()
 })
 </script>
 

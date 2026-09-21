@@ -96,6 +96,86 @@
       </div>
     </el-card>
 
+    <!-- 微信客户列表 -->
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <div class="card-header">
+          <span>微信客户</span>
+          <div class="header-actions">
+            <el-input
+              v-model="wechatSearch"
+              placeholder="搜索昵称/手机/客户姓名"
+              style="width: 220px; margin-right: 10px;"
+              clearable
+              @keyup.enter="loadWechatUsers"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+            </el-input>
+            <el-select v-model="wechatFilterType" placeholder="绑定渠道" clearable style="width: 120px; margin-right: 10px;">
+              <el-option label="全部" value="" />
+              <el-option label="公众号" value="mp" />
+              <el-option label="小程序" value="mini" />
+            </el-select>
+            <el-button @click="loadWechatUsers">刷新</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="wechatUserList" style="width: 100%" v-loading="wechatLoading" empty-text="暂无绑定微信的客户">
+        <el-table-column label="头像" width="70">
+          <template #default="{ row }">
+            <el-avatar v-if="row.avatar" :src="row.avatar" :size="40" />
+            <el-avatar v-else :size="40" style="background: #409eff">微</el-avatar>
+          </template>
+        </el-table-column>
+        <el-table-column prop="nickname" label="微信昵称" width="140">
+          <template #default="{ row }">
+            {{ row.nickname || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="绑定渠道" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.mp_openid" type="success" size="small">公众号</el-tag>
+            <el-tag v-if="row.mini_openid" type="warning" size="small">小程序</el-tag>
+            <span v-if="!row.mp_openid && !row.mini_openid">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="phone" label="手机号" width="130" />
+        <el-table-column prop="customer_name" label="关联客户" width="120">
+          <template #default="{ row }">
+            <span v-if="row.customer_name">{{ row.customer_name }}</span>
+            <span v-else style="color: #c0c4cc">未关联</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="customer_phone" label="客户手机" width="130" />
+        <el-table-column prop="unionid" label="UnionID" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.unionid" style="font-size: 11px; color: #909399">{{ row.unionid }}</span>
+            <span v-else style="color: #c0c4cc">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="bind_time" label="绑定时间" width="160" />
+        <el-table-column label="操作" width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click="viewWechatUser(row)">查看</el-button>
+            <el-button size="small" type="danger" link v-if="userStore.isAdmin" @click="unbindWechatUser(row)">解绑</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="wechatPage"
+          v-model:page-size="wechatPageSize"
+          :total="wechatTotal"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @size-change="loadWechatUsers"
+          @current-change="loadWechatUsers"
+        />
+      </div>
+    </el-card>
+
     <!-- 添加/编辑客户弹窗 -->
     <el-dialog 
       v-model="showDialog" 
@@ -219,6 +299,37 @@
         <el-descriptions-item label="录入时间">{{ currentCustomer.create_time || '-' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
+
+    <!-- 微信用户详情弹窗 -->
+    <el-dialog v-model="showWechatDialog" title="微信用户详情" width="600px" destroy-on-close>
+      <el-descriptions :column="2" border v-if="currentWechatUser">
+        <el-descriptions-item label="头像" :span="2">
+          <el-avatar v-if="currentWechatUser.avatar" :src="currentWechatUser.avatar" :size="60" />
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="微信昵称">{{ currentWechatUser.nickname || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="性别">{{ currentWechatUser.gender === 1 ? '男' : currentWechatUser.gender === 2 ? '女' : '未知' }}</el-descriptions-item>
+        <el-descriptions-item label="手机号">{{ currentWechatUser.phone || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="绑定渠道">
+          <el-tag v-if="currentWechatUser.mp_openid" type="success" size="small">公众号</el-tag>
+          <el-tag v-if="currentWechatUser.mini_openid" type="warning" size="small">小程序</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="UnionID" :span="2">
+          <span style="font-size: 11px; word-break: break-all;">{{ currentWechatUser.unionid || '-' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="公众号OpenID" :span="2">
+          <span style="font-size: 11px; word-break: break-all;">{{ currentWechatUser.mp_openid || '-' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="小程序OpenID" :span="2">
+          <span style="font-size: 11px; word-break: break-all;">{{ currentWechatUser.mini_openid || '-' }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="关联客户">
+          <span v-if="currentWechatUser.customer_name">{{ currentWechatUser.customer_name }} ({{ currentWechatUser.customer_phone }})</span>
+          <span v-else style="color: #c0c4cc">未关联</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="绑定时间">{{ currentWechatUser.bind_time || '-' }}</el-descriptions-item>
+      </el-descriptions>
+    </el-dialog>
   </div>
 </template>
 
@@ -242,6 +353,17 @@ const currentCustomer = ref(null)
 const employeeList = ref([])
 const userStore = useUserStore()
 const token = localStorage.getItem('token') || ''
+
+// ============ 微信客户状态 ============
+const wechatLoading = ref(false)
+const wechatSearch = ref('')
+const wechatFilterType = ref('')
+const wechatUserList = ref([])
+const wechatPage = ref(1)
+const wechatPageSize = ref(20)
+const wechatTotal = ref(0)
+const showWechatDialog = ref(false)
+const currentWechatUser = ref(null)
 
 // ============ 搜索和筛选 ============
 const searchKeyword = ref('')
@@ -495,10 +617,63 @@ const removeTag = (tag) => {
   form.tags = form.tags.filter(t => t !== tag)
 }
 
+// ============ 微信客户方法 ============
+const loadWechatUsers = async () => {
+  wechatLoading.value = true
+  try {
+    const params = new URLSearchParams({
+      page: wechatPage.value,
+      pageSize: wechatPageSize.value
+    })
+    if (wechatSearch.value) params.append('keyword', wechatSearch.value)
+    if (wechatFilterType.value) params.append('type', wechatFilterType.value)
+    const res = await fetch(`/api/wechat/users?${params.toString()}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    }).then(r => r.json())
+    wechatUserList.value = res.list || []
+    wechatTotal.value = res.total || 0
+  } catch (e) {
+    console.error('加载微信用户失败', e)
+  } finally {
+    wechatLoading.value = false
+  }
+}
+
+const viewWechatUser = async (row) => {
+  try {
+    const res = await fetch(`/api/wechat/users/${row.id}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    }).then(r => r.json())
+    currentWechatUser.value = res
+    showWechatDialog.value = true
+  } catch (e) {
+    ElMessage.error('加载详情失败')
+  }
+}
+
+const unbindWechatUser = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定要解绑该微信用户吗？', '确认解绑', {
+      type: 'warning',
+      confirmButtonText: '确定解绑',
+      cancelButtonText: '取消'
+    })
+    await fetch(`/api/wechat/bind/${row.id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    ElMessage.success('解绑成功')
+    loadWechatUsers()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('解绑失败')
+  }
+}
+
 // ============ 生命周期 ============
 onMounted(() => {
   loadData()
   loadEmployees()
+  loadWechatUsers()
 })
 </script>
 

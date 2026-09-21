@@ -218,26 +218,54 @@ function getDefaultNotificationRules() {
 }
 
 // ==================== 通用通知函数 ====================
-// 改造后的 notifyProject：按角色订阅发送
+// 改造后的 notifyProject：按角色订阅发送，支持多渠道（站内/短信/微信）
 // 1. 查所有 notification_types 包含此type的角色
 // 2. 查这些角色的所有员工（去重）
 // 3. 查项目相关人（设计师/监理/客户）如果他们订阅了该消息类型也通知
 // 4. 管理员无论如何都收到
 // 5. 消息写入 notifications 表（receiver_phone=员工phone）
+// 6. 按通知规则的 channels 决定发送渠道（inapp写库 / sms发短信 / wechat发微信）
 async function notifyProject(type, projectId, title, content, sourceId, sourceType, templateId) {
   try {
+    // 0. 读取通知规则
+    let notifRules = {};
+    try {
+      const [rows] = await pool.query("SELECT setting_value FROM system_settings WHERE category = 'notifications'");
+      if (rows[0]) {
+        const parsed = JSON.parse(rows[0].setting_value);
+        notifRules = parsed.setting_value || parsed;
+      }
+    } catch {}
+
+    // 读取微信公众号模板消息ID
+    let mpTemplateId = null;
+    try {
+      const [rows] = await pool.query("SELECT setting_value FROM system_settings WHERE category = 'wechat_mp'");
+      if (rows[0]) {
+        const parsed = JSON.parse(rows[0].setting_value);
+        const cfg = parsed.setting_value || parsed;
+        mpTemplateId = cfg.template_id || null;
+      }
+    } catch {}
+
+    // 决定本条消息要走的渠道（兼容旧调用：没传 templateId 则默认只 inapp）
+    const rule = notifRules[type];
+    const enabledChannels = rule && rule.enabled
+      ? (rule.channels || ['inapp'])
+      : (templateId ? ['inapp'] : ['inapp']);
+
     // 1. 获取所有订阅了该消息类型的角色
     const [roles] = await db.prepare('SELECT id, name FROM roles WHERE notification_types LIKE ?').all(`%${type}%`);
     if (!roles || roles.length === 0) return;
 
     const roleIds = roles.map(r => r.id);
     const rolePlaceholders = roleIds.map(() => '?').join(',');
-    
+
     // 2. 查这些角色的所有员工手机号（去重）
     const [employees] = await db.prepare(
       `SELECT DISTINCT e.phone, e.name FROM employees e WHERE e.role_id IN (${rolePlaceholders}) AND e.phone IS NOT NULL AND e.phone != ''`
     ).all(...roleIds);
-    
+
     // 3. 如果有 projectId，查项目相关人（设计师/监理/客户）
     let projectTargets = [];
     if (projectId) {
@@ -253,7 +281,7 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
         LEFT JOIN employees mgr ON p.manager_id = mgr.id
         WHERE p.id = ?
       `).all(projectId);
-      
+
       if (proj && proj[0]) {
         const p = proj[0];
         if (p.designer_phone) projectTargets.push({ phone: p.designer_phone, name: p.designer_name, role: 'designer' });
@@ -266,8 +294,7 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
     // 4. 合并去重（按phone去重）
     const phoneSet = new Set();
     const allTargets = [];
-    
-    // 先加角色对应的员工
+
     if (employees) {
       for (const e of employees) {
         if (e.phone && !phoneSet.has(e.phone)) {
@@ -276,8 +303,7 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
         }
       }
     }
-    
-    // 再加项目相关人（避免覆盖有名字的）
+
     if (projectTargets) {
       for (const t of projectTargets) {
         if (t.phone && !phoneSet.has(t.phone)) {
@@ -286,27 +312,100 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
         }
       }
     }
-    
+
     // 5. 管理员（id=1对应的手机号）永远收到
     const [adminEmp] = await db.prepare('SELECT phone, name FROM employees WHERE id = 1').all();
     if (adminEmp && adminEmp.phone && !phoneSet.has(adminEmp.phone)) {
       allTargets.push({ phone: adminEmp.phone, name: adminEmp.name || '管理员', role: 'admin' });
     }
 
-    // 6. 写入 notifications 表
-    const channels = 'inapp';
+    // 6. 对每个接收人，按渠道发送
     for (const t of allTargets) {
-      await mysqlPool.query(
-        'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', channels, 'pending']
-      );
-      // 短信渠道：如果配置了 templateId，走 sendSmsFromNotify
-      if (templateId) {
+      // 站内消息（必须）
+      if (enabledChannels.includes('inapp')) {
+        await mysqlPool.query(
+          'INSERT INTO notifications (title, content, type, source_id, source_type, sender_id, receiver_phone, receiver_name, channels, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [title, content, type, sourceId || 0, sourceType || '', 0, t.phone, t.name || '', 'inapp', 'pending']
+        );
+      }
+
+      // 短信渠道
+      if (enabledChannels.includes('sms') && templateId) {
         sendSmsFromNotify(t.phone, t.name, title, content, templateId).catch(console.error);
+      }
+
+      // 微信渠道（调用 push）
+      if (enabledChannels.includes('wechat') && mpTemplateId) {
+        // 构造微信模板消息数据格式：{ key: { value: 'xxx', color: '#xxx' } }
+        const wechatData = {
+          first: { value: title, color: '#1890ff' },
+          keyword1: { value: t.name || '未知', color: '#333333' },
+          keyword2: { value: content.substring(0, 20), color: '#333333' },
+          remark: { value: '如有疑问请联系客服', color: '#999999' }
+        };
+        // 异步推送，不阻塞
+        pushWechatByPhone(t.phone, mpTemplateId, wechatData).catch(console.error);
       }
     }
   } catch (err) {
     console.error('notifyProject error:', err);
+  }
+}
+
+// 内部函数：通过手机号推送微信模板消息
+async function pushWechatByPhone(phone, templateId, data) {
+  try {
+    const [users] = await pool.query(
+      `SELECT * FROM wechat_users WHERE phone = ? AND status = 1 ORDER BY mp_openid DESC LIMIT 1`,
+      [phone]
+    );
+    if (!users[0]) return { success: false, reason: '未绑定微信' };
+
+    const user = users[0];
+    const openid = user.mp_openid || user.mini_openid;
+    if (!openid) return { success: false, reason: '无有效OpenID' };
+
+    const [configRows] = await pool.query("SELECT setting_value FROM system_settings WHERE category = 'wechat_mp'");
+    if (!configRows[0]) return { success: false, reason: '微信公众号未配置' };
+    const parsed = JSON.parse(configRows[0].setting_value);
+    const config = parsed.setting_value || parsed;
+    if (!config.app_id || !config.app_secret) return { success: false, reason: '微信公众号未完成配置' };
+
+    // 获取全局 access_token
+    const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${config.app_id}&secret=${config.app_secret}`;
+    const tokenData = await new Promise((resolve, reject) => {
+      https.get(tokenUrl, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      }).on('error', reject);
+    });
+    if (tokenData.errcode) return { success: false, reason: tokenData.errmsg };
+
+    // 发送模板消息
+    const sendUrl = `https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${tokenData.access_token}`;
+    const bodyStr = JSON.stringify({ touser: openid, template_id: templateId, data });
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request(sendUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) } }, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      });
+      req.on('error', reject);
+      req.write(bodyStr);
+      req.end();
+    });
+
+    if (result.errcode === 0) {
+      console.log(`[WechatPush] 推送成功 phone=${phone} msgid=${result.msgid}`);
+      return { success: true, msgid: result.msgid };
+    } else {
+      console.error(`[WechatPush] 推送失败 phone=${phone} errcode=${result.errcode} errmsg=${result.errmsg}`);
+      return { success: false, reason: result.errmsg, errcode: result.errcode };
+    }
+  } catch (err) {
+    console.error(`[WechatPush] 异常 phone=${phone}`, err.message);
+    return { success: false, reason: err.message };
   }
 }
 
@@ -4889,6 +4988,406 @@ app.put('/api/system-settings/notifications', checkPermission('settings:write'),
         ['notifications', value, new Date().toISOString(), new Date().toISOString()]);
     }
     res.json({ message: '保存成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 微信接入 API ====================
+
+// 微信 API 内部函数：通过 code 获取 openid/session_key（小程序用）
+async function getWechatSession(code, type, config) {
+  const url = type === 'mini'
+    ? `https://api.weixin.qq.com/sns/jscode2session?appid=${config.app_id}&secret=${config.app_secret}&js_code=${code}&grant_type=authorization_code`
+    : `https://api.weixin.qq.com/sns/oauth2/access_token?appid=${config.app_id}&secret=${config.app_secret}&code=${code}&grant_type=authorization_code`;
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+// 微信 API 内部函数：获取用户信息（公众号/开放平台）
+async function getWechatUserInfo(openid, accessToken) {
+  const url = `https://api.weixin.qq.com/cgi-bin/user/info?access_token=${accessToken}&openid=${openid}&lang=zh_CN`;
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+// 微信 API 内部函数：获取全局 access_token（用于发送模板消息）
+async function getGlobalAccessToken(config) {
+  const url = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${config.app_id}&secret=${config.app_secret}`;
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+// 微信 API 内部函数：发送模板消息
+async function sendWechatTemplateMsg(openid, templateId, data, accessToken) {
+  const url = `https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${accessToken}`;
+  const body = {
+    touser: openid,
+    template_id: templateId,
+    data: data
+  };
+  return new Promise((resolve, reject) => {
+    const bodyStr = JSON.stringify(body);
+    const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) } }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+// 读取 system_settings（兼容双重 JSON）
+async function getSetting(category) {
+  try {
+    const [row] = await pool.query('SELECT setting_value FROM system_settings WHERE category = ?', [category]);
+    if (!row[0]) return null;
+    const parsed = JSON.parse(row[0].setting_value);
+    return parsed.setting_value || parsed;
+  } catch { return null; }
+}
+
+// 保存 system_settings（兼容双重 JSON）
+async function saveSetting(category, data) {
+  const value = JSON.stringify({ setting_value: data });
+  const [existing] = await pool.query('SELECT id FROM system_settings WHERE category = ?', [category]);
+  if (existing[0]) {
+    await pool.query('UPDATE system_settings SET setting_value = ?, updated_at = ? WHERE category = ?',
+      [value, new Date().toISOString(), category]);
+  } else {
+    await pool.query('INSERT INTO system_settings (category, setting_value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      [category, value, new Date().toISOString(), new Date().toISOString()]);
+  }
+}
+
+// GET /api/wechat/config — 获取三个平台配置
+app.get('/api/wechat/config', async (req, res) => {
+  try {
+    const [mp, mini, openplatform] = await Promise.all([
+      getSetting('wechat_mp'),
+      getSetting('wechat_mini'),
+      getSetting('wechat_openplatform')
+    ]);
+    res.json({ mp: mp || {}, mini: mini || {}, openplatform: openplatform || {} });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/wechat/config — 保存三个平台配置
+app.put('/api/wechat/config', checkPermission('settings:write'), async (req, res) => {
+  try {
+    const { mp, mini, openplatform } = req.body;
+    if (mp) await saveSetting('wechat_mp', mp);
+    if (mini) await saveSetting('wechat_mini', mini);
+    if (openplatform) await saveSetting('wechat_openplatform', openplatform);
+    res.json({ message: '保存成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wechat/oauth-url — 获取微信授权链接
+// type=mp（公众号）或 type=mini（小程序）
+app.get('/api/wechat/oauth-url', async (req, res) => {
+  try {
+    const { type } = req.query;
+    const config = type === 'mini' ? await getSetting('wechat_mini') : await getSetting('wechat_mp');
+    if (!config || !config.app_id || !config.app_secret) {
+      return res.status(400).json({ error: '微信配置未完成，请在系统设置中配置' });
+    }
+    const redirectUri = encodeURIComponent(`${req.protocol}://${req.get('host')}/api/wechat/callback?type=${type}`);
+    const scope = type === 'mini' ? 'snsapi_userinfo' : 'snsapi_userinfo';
+    const state = type; // 标记来源类型
+    const url = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${config.app_id}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=${state}#wechat_redirect`;
+    res.json({ url });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wechat/callback — 微信授权回调
+app.get('/api/wechat/callback', async (req, res) => {
+  try {
+    const { code, type, state } = req.query;
+    if (!code) return res.status(400).json({ error: '缺少 code' });
+
+    const config = state === 'mini' ? await getSetting('wechat_mini') : await getSetting('wechat_mp');
+    if (!config) return res.status(400).json({ error: '微信配置未完成' });
+
+    // 用 code 换 openid + access_token
+    const session = await getWechatSession(code, state, config);
+    if (session.errcode) {
+      return res.status(400).json({ error: session.errmsg || '获取session失败' });
+    }
+
+    const openid = session.openid;
+    const accessToken = session.access_token;
+
+    // 获取用户基本信息
+    let userInfo = { openid, nickname: '', avatar: '', gender: 0, country: '', province: '', city: '' };
+    try {
+      const info = await getWechatUserInfo(openid, accessToken);
+      if (!info.errcode) {
+        userInfo = {
+          openid,
+          nickname: info.nickname || '',
+          avatar: info.headimgurl || '',
+          gender: info.sex || 0,
+          country: info.country || '',
+          province: info.province || '',
+          city: info.city || ''
+        };
+      }
+    } catch {}
+
+    // 检查是否已存在
+    const field = state === 'mini' ? 'mini_openid' : 'mp_openid';
+    const [existing] = await pool.query(`SELECT * FROM wechat_users WHERE ${field} = ? AND status = 1`, [openid]);
+
+    const result = {
+      openid,
+      nickname: userInfo.nickname,
+      avatar: userInfo.avatar,
+      gender: userInfo.gender,
+      country: userInfo.country,
+      province: userInfo.province,
+      city: userInfo.city,
+      type: state,
+      already_bound: existing.length > 0,
+      wechat_user_id: existing.length > 0 ? existing[0].id : null,
+      unionid: existing.length > 0 ? existing[0].unionid : (session.unionid || null)
+    };
+
+    // 返回 JSON 而不是跳转，前端处理绑定流程
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/wechat/bind — 绑定手机号 + 微信用户
+app.post('/api/wechat/bind', async (req, res) => {
+  try {
+    const { phone, openid, unionid, nickname, avatar, gender, type } = req.body;
+    if (!phone || !openid) return res.status(400).json({ error: '手机号和openid不能为空' });
+
+    const field = type === 'mini' ? 'mini_openid' : 'mp_openid';
+
+    // 查找该 openid 是否已绑定过
+    const [existing] = await pool.query(`SELECT id FROM wechat_users WHERE ${field} = ?`, [openid]);
+
+    const now = new Date().toISOString();
+
+    if (existing.length > 0) {
+      // 更新已有记录
+      await pool.query(
+        `UPDATE wechat_users SET phone=?, unionid=COALESCE(?,unionid), nickname=COALESCE(?,nickname), avatar=COALESCE(?,avatar), gender=?, bind_time=?, status=1, unsubscribe_time=NULL WHERE id=?`,
+        [phone, unionid, nickname, avatar, gender || 0, now, existing[0].id]
+      );
+      res.json({ message: '绑定成功', id: existing[0].id });
+    } else {
+      // 新增记录
+      const [result] = await pool.query(
+        `INSERT INTO wechat_users (${field}, unionid, phone, nickname, avatar, gender, bind_time, status, create_time, update_time) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [openid, unionid, phone, nickname, avatar, gender || 0, now, now, now]
+      );
+      res.json({ message: '绑定成功', id: result.insertId });
+    }
+
+    // 同步更新 customers 表的微信字段（按手机号匹配）
+    if (unionid) {
+      await pool.query(
+        `UPDATE customers SET wechat_unionid=?, wechat_nickname=?, wechat_avatar=?, wechat_bind_time=? WHERE phone=? AND (wechat_unionid IS NULL OR wechat_unionid='')`,
+        [unionid, nickname, avatar, now, phone]
+      );
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/wechat/bind/:id — 解绑
+app.delete('/api/wechat/bind/:id', checkPermission('settings:write'), async (req, res) => {
+  try {
+    const now = new Date().toISOString();
+    await pool.query('UPDATE wechat_users SET status=0, unsubscribe_time=? WHERE id=?', [now, req.params.id]);
+    res.json({ message: '解绑成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wechat/users — 微信用户列表（含关联客户信息）
+app.get('/api/wechat/users', async (req, res) => {
+  try {
+    const { page = 1, pageSize = 20, status, keyword, type } = req.query;
+    const userId = getUserId(req);
+    const userRole = req.headers['x-user-role'];
+
+    let where = 'WHERE w.status = 1';
+    const params = [];
+
+    if (status !== undefined) {
+      where += ' AND w.status = ?';
+      params.push(status);
+    }
+    if (keyword) {
+      where += ' AND (w.nickname LIKE ? OR w.phone LIKE ? OR c.name LIKE ?)';
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+    if (type) {
+      const field = type === 'mini' ? 'w.mini_openid' : 'w.mp_openid';
+      where += ` AND ${field} IS NOT NULL AND ${field} != ''`;
+    }
+
+    // 普通员工只能看自己关联的客户，admin 和有 customer_all 权限的看全部
+    let customerFilter = '';
+    if (userRole !== 'admin') {
+      const [empRows] = await pool.query('SELECT permissions FROM employees WHERE id = ?', [userId]);
+      const perms = empRows[0] ? JSON.parse(empRows[0].permissions || '[]') : [];
+      if (!perms.includes('customer_all')) {
+        customerFilter = ' AND c.creator_id = ?';
+        params.push(userId);
+      }
+    }
+
+    const offset = (parseInt(page) - 1) * parseInt(pageSize);
+    const [total] = await pool.query(
+      `SELECT COUNT(*) as cnt FROM wechat_users w LEFT JOIN customers c ON w.customer_id = c.id ${where}${customerFilter}`, params);
+    const [list] = await pool.query(
+      `SELECT w.*, c.name as customer_name, c.phone as customer_phone, c.customer_no
+       FROM wechat_users w
+       LEFT JOIN customers c ON w.customer_id = c.id
+       ${where}${customerFilter}
+       ORDER BY w.bind_time DESC
+       LIMIT ? OFFSET ?`,
+      [...params, parseInt(pageSize), offset]
+    );
+
+    res.json({ list, total: total[0].cnt, page: parseInt(page), pageSize: parseInt(pageSize) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wechat/users/:id — 单个微信用户详情
+app.get('/api/wechat/users/:id', async (req, res) => {
+  try {
+    const [row] = await pool.query(
+      `SELECT w.*, c.name as customer_name, c.phone as customer_phone, c.id as oa_customer_id,
+              e.name as employee_name, e.phone as employee_phone, e.id as oa_employee_id
+       FROM wechat_users w
+       LEFT JOIN customers c ON w.customer_id = c.id
+       LEFT JOIN employees e ON w.employee_id = e.id
+       WHERE w.id = ?`, [req.params.id]
+    );
+    if (!row[0]) return res.status(404).json({ error: '用户不存在' });
+    res.json(row[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/wechat/push — 推送微信消息（内部接口，供发消息逻辑调用）
+// body: { phone, template_id, data: { key: { value, color } } }
+app.post('/api/wechat/push', async (req, res) => {
+  try {
+    const { phone, template_id, data } = req.body;
+    if (!phone || !template_id) return res.status(400).json({ error: '手机号和模板ID不能为空' });
+
+    // 查找该手机号绑定的微信用户（优先用公众号）
+    const [users] = await pool.query(
+      `SELECT * FROM wechat_users WHERE phone = ? AND status = 1 ORDER BY mp_openid DESC LIMIT 1`,
+      [phone]
+    );
+
+    if (!users[0]) {
+      return res.json({ success: false, reason: '该手机号未绑定微信' });
+    }
+
+    const user = users[0];
+    const openid = user.mp_openid || user.mini_openid;
+    if (!openid) return res.json({ success: false, reason: '无有效OpenID' });
+
+    // 获取公众号配置（发送模板消息用公众号）
+    const config = await getSetting('wechat_mp');
+    if (!config || !config.app_id || !config.app_secret) {
+      return res.json({ success: false, reason: '微信公众号配置未完成' });
+    }
+
+    // 获取全局 access_token
+    const tokenResp = await getGlobalAccessToken(config);
+    if (tokenResp.errcode) {
+      return res.json({ success: false, reason: tokenResp.errmsg });
+    }
+
+    // 发送模板消息
+    const result = await sendWechatTemplateMsg(openid, template_id, data, tokenResp.access_token);
+    if (result.errcode === 0) {
+      res.json({ success: true, msgid: result.msgid });
+    } else {
+      res.json({ success: false, reason: result.errmsg, errcode: result.errcode });
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/wechat/push-by-unionid — 按 UnionID 推送（用于开放平台场景）
+app.post('/api/wechat/push-by-unionid', async (req, res) => {
+  try {
+    const { unionid, template_id, data } = req.body;
+    if (!unionid || !template_id) return res.status(400).json({ error: 'UnionID和模板ID不能为空' });
+
+    const [users] = await pool.query(
+      `SELECT * FROM wechat_users WHERE unionid = ? AND status = 1 LIMIT 1`,
+      [unionid]
+    );
+    if (!users[0]) return res.json({ success: false, reason: '未找到绑定的微信用户' });
+
+    const user = users[0];
+    const openid = user.mp_openid || user.mini_openid;
+    if (!openid) return res.json({ success: false, reason: '无有效OpenID' });
+
+    const config = await getSetting('wechat_mp');
+    if (!config) return res.json({ success: false, reason: '微信公众号配置未完成' });
+
+    const tokenResp = await getGlobalAccessToken(config);
+    if (tokenResp.errcode) return res.json({ success: false, reason: tokenResp.errmsg });
+
+    const result = await sendWechatTemplateMsg(openid, template_id, data, tokenResp.access_token);
+    if (result.errcode === 0) {
+      res.json({ success: true, msgid: result.msgid });
+    } else {
+      res.json({ success: false, reason: result.errmsg, errcode: result.errcode });
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/wechat/bind-status/:phone — 查询手机号绑定状态
+app.get('/api/wechat/bind-status/:phone', async (req, res) => {
+  try {
+    const [users] = await pool.query(
+      `SELECT id, nickname, avatar, bind_time, status, mp_openid, mini_openid, unionid FROM wechat_users WHERE phone = ?`,
+      [req.params.phone]
+    );
+    if (!users[0]) return res.json({ bound: false });
+    const u = users[0];
+    res.json({
+      bound: u.status === 1,
+      boundChannels: {
+        mp: !!(u.mp_openid),
+        mini: !!(u.mini_openid)
+      },
+      unionid: u.unionid,
+      nickname: u.nickname,
+      avatar: u.avatar,
+      bindTime: u.bind_time
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
