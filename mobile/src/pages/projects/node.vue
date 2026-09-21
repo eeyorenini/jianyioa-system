@@ -34,31 +34,34 @@
       </view>
     </view>
 
-    <!-- 操作按钮组 -->
-    <view class="action-cards">
-      <view class="action-card" v-if="node.status === 'pending'" @click="doReport('start')">
-        <view class="action-icon start">▶</view>
-        <text class="action-label">开工上报</text>
-        <text class="action-desc">标记节点开始施工</text>
+    <!-- 状态操作：一行横排小按钮 -->
+    <view class="status-action-row">
+      <view class="status-btn" :class="node.status === 'pending' ? 'active' : ''" @click="changeStatus('pending')">
+        <text class="status-btn-icon">⏳</text>
+        <text class="status-btn-text">待处理</text>
       </view>
-      <view class="action-card" v-if="node.status === 'in_progress'" @click="doReport('complete')">
-        <view class="action-icon complete">✅</view>
-        <text class="action-label">完工上报</text>
-        <text class="action-desc">申请节点验收确认</text>
+      <view class="status-btn" :class="node.status === 'in_progress' ? 'active' : ''" @click="changeStatus('in_progress')">
+        <text class="status-btn-icon">▶</text>
+        <text class="status-btn-text">开工</text>
       </view>
-      <view class="action-card" v-if="node.status === 'completed'">
-        <view class="action-icon done">✓</view>
-        <text class="action-label">已验收</text>
-        <text class="action-desc">节点已完成验收</text>
+      <view class="status-btn" :class="node.status === 'completed' ? 'active' : ''" @click="changeStatus('completed')">
+        <text class="status-btn-icon">✅</text>
+        <text class="status-btn-text">已验收</text>
       </view>
-      <view class="action-card" @click="goNodeManage">
-        <view class="action-icon manage">⚙️</view>
-        <text class="action-label">节点管理</text>
-        <text class="action-desc">编辑节点信息</text>
+      <view class="status-btn" :class="node.status === 'skipped' ? 'active' : ''" @click="changeStatus('skipped')">
+        <text class="status-btn-icon">⏭</text>
+        <text class="status-btn-text">跳过</text>
       </view>
     </view>
 
-    <!-- 验收标准 -->
+    <!-- 节点管理入口 -->
+    <view class="manage-card" @click="goNodeManage">
+      <text class="manage-icon">⚙️</text>
+      <text class="manage-label">节点管理</text>
+      <text class="manage-arrow">›</text>
+    </view>
+
+    <!-- 施工标准 -->
     <view class="section-card">
       <view class="section-title">施工标准</view>
       <view class="standard-content" v-if="node.note">
@@ -139,78 +142,56 @@ const getNodeStatusText = (status) => {
   return map[status] || '待开始';
 };
 
-const doReport = async (type) => {
-  if (type === 'start') {
-    const confirm = await new Promise((resolve) => {
-      uni.showModal({
-        title: '开工上报',
-        content: `确认「${node.value.node_name || node.value.stage_name}」开始施工？`,
-        success: (m) => resolve(m.confirm),
-      });
+// 状态修改（替换原来的 doReport）
+const changeStatus = async (newStatus) => {
+  const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
+  // 完工时需要填 progress_percent 和 actual_date
+  const extra = newStatus === 'completed'
+    ? { progress_percent: 100, actual_date: new Date().toISOString().split('T')[0] }
+    : {};
+
+  const confirm = await new Promise((resolve) => {
+    uni.showModal({
+      title: `确认修改状态`,
+      content: `确定将「${node.value.node_name || node.value.stage_name}」设为「${statusLabel[newStatus]}」？\n\n是否发送短信通知？`,
+      confirmText: '确认并发送短信',
+      cancelText: '仅保存',
+      success: (m) => resolve(m.confirm ? 'sms' : 'save'),
     });
-    if (!confirm) return;
-    try {
-      const token = uni.getStorageSync("token");
-      await uni.request({
-        url: `/api/project-stages/${nodeId.value}`,
-        method: "PUT",
-        header: { Authorization: token },
-        data: { status: 'in_progress' },
-      });
-      await uni.request({
-        url: "/api/project-logs",
-        method: "POST",
-        header: { Authorization: token },
-        data: {
-          project_id: projectId.value,
-          stage_id: nodeId.value,
-          action_type: 'node_started',
-          description: `节点「${node.value.node_name || node.value.stage_name}」开工`,
-        },
-      });
-      uni.showToast({ title: '已开工', icon: 'success' });
-      await fetchData();
-    } catch (e) {
-      uni.showToast({ title: '操作失败', icon: 'none' });
-    }
-  } else {
-    const confirm = await new Promise((resolve) => {
-      uni.showModal({
-        title: '完工上报',
-        content: `确认「${node.value.node_name || node.value.stage_name}」完工？`,
-        confirmText: '确认完工',
-        success: (m) => resolve(m.confirm),
-      });
+  });
+
+  try {
+    const token = uni.getStorageSync("token");
+    const payload = { status: newStatus, ...extra };
+    // 发送短信参数：sms_notify=1 表示需要发短信
+    if (confirm === 'sms') payload.sms_notify = 1;
+
+    await uni.request({
+      url: `/api/project-stages/${nodeId.value}`,
+      method: "PUT",
+      header: { Authorization: token },
+      data: payload,
     });
-    if (!confirm) return;
-    try {
-      const token = uni.getStorageSync("token");
-      await uni.request({
-        url: `/api/project-stages/${nodeId.value}`,
-        method: "PUT",
-        header: { Authorization: token },
-        data: {
-          status: 'completed',
-          progress_percent: 100,
-          actual_date: new Date().toISOString().split('T')[0],
-        },
-      });
-      await uni.request({
-        url: "/api/project-logs",
-        method: "POST",
-        header: { Authorization: token },
-        data: {
-          project_id: projectId.value,
-          stage_id: nodeId.value,
-          action_type: 'node_completed',
-          description: `节点「${node.value.node_name || node.value.stage_name}」完工上报`,
-        },
-      });
-      uni.showToast({ title: '已完工上报', icon: 'success' });
-      await fetchData();
-    } catch (e) {
-      uni.showToast({ title: '操作失败', icon: 'none' });
-    }
+
+    // 写项目日志
+    const actionMap = { pending: 'node_pending', in_progress: 'node_started', completed: 'node_completed', skipped: 'node_skipped' };
+    await uni.request({
+      url: "/api/project-logs",
+      method: "POST",
+      header: { Authorization: token },
+      data: {
+        project_id: projectId.value,
+        stage_id: nodeId.value,
+        action_type: actionMap[newStatus] || 'node_updated',
+        description: `节点「${node.value.node_name || node.value.stage_name}」状态变更为「${statusLabel[newStatus]}」${confirm === 'sms' ? '（已发短信）' : ''}`,
+      },
+    });
+
+    uni.showToast({ title: confirm === 'sms' ? '已保存并发送短信' : '已保存', icon: 'success' });
+    await fetchData();
+  } catch (e) {
+    console.error(e);
+    uni.showToast({ title: '操作失败', icon: 'none' });
   }
 };
 
@@ -280,23 +261,23 @@ const goBack = () => {
 .page {
   min-height: 100vh;
   background: #F5F7FA;
-  padding: 16px;
+  padding: 12px;
   padding-bottom: 30px;
 }
 
 .node-status-card {
   background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
   border-radius: 0;
-  padding: 20px;
+  padding: 14px;
   color: #fff;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .node-name-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .node-name {
@@ -320,14 +301,14 @@ const goBack = () => {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .date-item {
   flex: 1;
   background: rgba(255,255,255,0.1);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
 }
 
 .date-label {
@@ -350,50 +331,77 @@ const goBack = () => {
   color: rgba(255,255,255,0.5);
 }
 
-/* 操作卡片 */
-.action-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
+/* 状态操作：一行横排小按钮 */
+.status-action-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-.action-card {
+.status-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   background: #fff;
-  border-radius: 14px;
-  padding: 20px 16px;
-  text-align: center;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  border-radius: 10px;
+  padding: 10px 4px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border: 1.5px solid transparent;
   transition: all 0.15s;
 }
 
-.action-card:active {
-  transform: scale(0.97);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+.status-btn:active {
+  transform: scale(0.96);
+  background: #F5F7FA;
 }
 
-.action-icon {
-  font-size: 28px;
-  margin-bottom: 8px;
+.status-btn.active {
+  border-color: #1E3A5F;
+  background: #EEF2F7;
 }
 
-.action-icon.start { color: #3B82F6; }
-.action-icon.complete { color: #10B981; }
-.action-icon.done { color: #10B981; }
-.action-icon.manage { font-size: 24px; }
-
-.action-label {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1A1F36;
+.status-btn-icon {
+  font-size: 18px;
   margin-bottom: 4px;
 }
 
-.action-desc {
-  display: block;
+.status-btn-text {
   font-size: 11px;
+  color: #374151;
+  font-weight: 500;
+}
+
+/* 节点管理入口 */
+.manage-card {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.manage-card:active {
+  background: #F5F7FA;
+}
+
+.manage-icon {
+  font-size: 20px;
+  margin-right: 10px;
+}
+
+.manage-label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1A1F36;
+}
+
+.manage-arrow {
+  font-size: 18px;
   color: #9CA3AF;
 }
 

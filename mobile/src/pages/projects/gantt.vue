@@ -151,8 +151,10 @@ const toggleSettingMode = () => {
 // 判断格子是否在已选范围内
 const isInRange = (idx) => {
   if (!settingMode.value || settingNode.value === null || settingStartIdx.value < 0) return false;
-  const start = Math.min(settingStartIdx.value, settingEndIdx.value >= 0 ? settingEndIdx.value : settingStartIdx.value);
-  const end = Math.max(settingStartIdx.value, settingEndIdx.value >= 0 ? settingEndIdx.value : settingStartIdx.value);
+  // 还没点第二下时，只有起始格高亮（is-start-only 处理）
+  if (settingEndIdx.value < 0) return false;
+  const start = Math.min(settingStartIdx.value, settingEndIdx.value);
+  const end = Math.max(settingStartIdx.value, settingEndIdx.value);
   return idx > start && idx < end;
 };
 
@@ -211,12 +213,12 @@ const onCellTap = async (node, idx) => {
     uni.showToast({ title: label, icon: "success" });
   } catch (e) {
     uni.showToast({ title: "保存失败", icon: "none" });
+  } finally {
+    // 重置
+    settingNode.value = null;
+    settingStartIdx.value = -1;
+    settingEndIdx.value = -1;
   }
-
-  // 重置
-  settingNode.value = null;
-  settingStartIdx.value = -1;
-  settingEndIdx.value = -1;
 };
 
 // 计算工期天数

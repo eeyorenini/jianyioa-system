@@ -4,6 +4,21 @@ import { useUserStore } from "./stores/user";
 
 onLaunch(() => {
   console.log("App Launch");
+
+  // 包装 uni.request，自动注入 x-user-id 和 x-user-role（用于后端权限过滤）
+  const _origRequest = uni.request.bind(uni);
+  uni.request = (options) => {
+    const userInfo = uni.getStorageSync('userInfo');
+    const headers = options.header || {};
+    if (userInfo?.id) {
+      headers['x-user-id'] = userInfo.id;
+    }
+    if (userInfo?.role_code || userInfo?.role_name) {
+      headers['x-user-role'] = userInfo.role_code || userInfo.role_name || '';
+    }
+    options.header = headers;
+    return _origRequest(options);
+  };
 });
 
 onShow(() => {

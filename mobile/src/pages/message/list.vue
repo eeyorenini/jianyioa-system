@@ -142,11 +142,11 @@ function fetchMessages() {
   page.value = 1
   noMore.value = false
   uni.request({
-    url: '/api/notifications',
+    url: '/api/messages',
     data: { page: 1, pageSize: pageSize },
     success: (res) => {
-      if (res.data.list) {
-        messages.value = (res.data.list || []).map(m => ({ ...m, _translateX: 0 }))
+      if (res.data && Array.isArray(res.data)) {
+        messages.value = (res.data || []).map(m => ({ ...m, _translateX: 0 }))
       } else {
         messages.value = []
       }
@@ -166,11 +166,11 @@ function loadMore() {
   loadingMore.value = true
   page.value++
   uni.request({
-    url: '/api/notifications',
+    url: '/api/messages',
     data: { page: page.value, pageSize: pageSize },
     success: (res) => {
-      if (res.data.list) {
-        const list = res.data.list || []
+      if (res.data && Array.isArray(res.data)) {
+        const list = res.data || []
         messages.value = [...messages.value, ...list.map(m => ({ ...m, _translateX: 0 }))]
         if (list.length < pageSize) noMore.value = true
       } else {
@@ -200,7 +200,7 @@ function handleClick(msg) {
   // 标记已读
   if (!msg.is_read) {
     msg.is_read = true
-    uni.request({ url: `/api/notifications/${msg.id}/read`, method: 'PUT' })
+    uni.request({ url: `/api/messages/${msg.id}/read`, method: 'PUT' })
     setTimeout(() => refreshUnreadBadge(), 100)
   }
   
@@ -260,7 +260,7 @@ const goBack = () => {
 
 const refreshUnreadBadge = () => {
   uni.request({
-    url: '/api/notifications/unread-count',
+    url: '/api/messages/unread-count',
     header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
     success: (res) => {
       const count = res.data?.count || 0;
