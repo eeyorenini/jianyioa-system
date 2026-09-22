@@ -165,6 +165,11 @@
             </el-form>
           </div>
         </el-tab-pane>
+
+        <!-- 系统日志 -->
+        <el-tab-pane label="系统日志" name="systemlogs">
+          <SystemLogs />
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
@@ -174,6 +179,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import SystemLogs from './SystemLogs.vue'
 
 const activeTab = ref('sms')
 const wechatSubTab = ref('mp')

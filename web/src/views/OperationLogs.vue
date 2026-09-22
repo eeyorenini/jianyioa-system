@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>操作日志</span>
-          <el-button @click="loadData">
+          <el-button @click="loadData" :loading="loading">
             <el-icon><Refresh /></el-icon>
             刷新
           </el-button>
@@ -34,13 +34,17 @@ import axios from 'axios'
 import { Refresh } from '@element-plus/icons-vue'
 
 const logList = ref([])
+const loading = ref(false)
 
 const loadData = async () => {
+  loading.value = true
   try {
     const res = await axios.get('/api/operation-logs?limit=100')
-    logList.value = res.data
+    logList.value = Array.isArray(res.data) ? res.data : (res.data?.logs || [])
   } catch (error) {
-    ElMessage.error('加载失败')
+    ElMessage.error('加载失败: ' + (error.message || '网络错误'))
+  } finally {
+    loading.value = false
   }
 }
 

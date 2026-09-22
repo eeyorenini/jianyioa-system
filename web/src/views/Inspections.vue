@@ -46,6 +46,9 @@
         <el-form-item label="项目名称">
           <el-input v-model="form.project_name" />
         </el-form-item>
+        <el-form-item label="检查时间">
+          <el-date-picker v-model="form.created_at" type="datetime" placeholder="选择检查时间" value-format="YYYY-MM-DD HH:mm:ss" style="width: 100%" />
+        </el-form-item>
         <el-form-item label="检查人">
           <el-input v-model="form.inspector_name" />
         </el-form-item>
@@ -95,7 +98,8 @@ const form = reactive({
   status: '待整改',
   issues: '',
   result: '合格',
-  rectify_status: '待整改'
+  rectify_status: '待整改',
+  created_at: ''
 })
 
 const getScoreType = (score) => {
@@ -163,7 +167,8 @@ const closeDialog = () => {
   form.issues = ''
   form.result = '合格'
   form.rectify_status = '待整改'
-}
+  form.created_at = ''
+})
 
 onMounted(() => {
   loadData()

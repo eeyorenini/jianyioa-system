@@ -153,6 +153,28 @@ CREATE TABLE IF NOT EXISTS operation_logs (
   created_at DATETIME DEFAULT '2024-01-01 00:00:00'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 系统日志（记录所有 API 请求）
+CREATE TABLE IF NOT EXISTS system_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  method VARCHAR(10) NOT NULL,
+  path VARCHAR(500) NOT NULL,
+  query VARCHAR(500),
+  body TEXT,
+  user_id INT,
+  username VARCHAR(100),
+  ip_address VARCHAR(50),
+  user_agent VARCHAR(500),
+  status_code INT,
+  response_time INT,
+  error_message TEXT,
+  success TINYINT(1) DEFAULT 1,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+  INDEX idx_created_at (created_at),
+  INDEX idx_user_id (user_id),
+  INDEX idx_path (path(100)),
+  INDEX idx_success (success)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ========================================
 -- 财务与项目
 -- ========================================
@@ -622,7 +644,7 @@ CREATE TABLE IF NOT EXISTS progress_node_templates (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -634,7 +656,7 @@ CREATE TABLE IF NOT EXISTS progress_node_template_nodes (
   node_key VARCHAR(100),
   sort_order INT DEFAULT 0,
   default_sms_template_id INT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
   FOREIGN KEY (template_id) REFERENCES progress_node_templates(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -697,7 +719,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   category VARCHAR(50) NOT NULL UNIQUE,
   setting_value TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -713,7 +735,7 @@ CREATE TABLE IF NOT EXISTS dispatches (
   start_date DATE COMMENT '开始时间',
   requirement TEXT COMMENT '施工要求',
   status VARCHAR(20) DEFAULT '待接单' COMMENT '待接单/施工中/已完工',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME DEFAULT '2024-01-01 00:00:00',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

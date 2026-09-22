@@ -23,6 +23,96 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
+// ================================================================
+// 全局系统日志中间件 — 记录所有数据交互（POST/PUT/DELETE）
+// ================================================================
+let systemLogStmt = null;
+let systemLogTableChecked = false;
+
+async function ensureSystemLogTable() {
+  if (systemLogTableChecked) return;
+  systemLogTableChecked = true;
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS system_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      method VARCHAR(10) NOT NULL,
+      path VARCHAR(500) NOT NULL,
+      query VARCHAR(500),
+      body TEXT,
+      user_id INT,
+      username VARCHAR(100),
+      ip_address VARCHAR(50),
+      user_agent VARCHAR(500),
+      status_code INT,
+      response_time INT,
+      error_message TEXT,
+      success TINYINT(1) DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_created_at (created_at),
+      INDEX idx_user_id (user_id),
+      INDEX idx_path (path(100)),
+      INDEX idx_success (success)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    systemLogStmt = pool.format('INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ['', '', '', '', null, '', '', '', null, null, '', 1]);
+  } catch (e) { console.log('system_logs init error:', e.message); }
+}
+
+app.use((req, res, next) => {
+  // 只记录数据操作
+  if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    return next();
+  }
+  // 排除登录注册（密码不记录）
+  if (req.path === '/api/auth/login' || req.path === '/api/auth/register') {
+    return next();
+  }
+  const startTime = Date.now();
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+  const userId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id']) : null;
+  const username = req.headers['x-username'] || '';
+  const originalBody = req.body ? JSON.stringify(req.body) : '';
+
+  // 捕获响应完成后的状态
+  const originalEnd = res.end;
+  res.end = function (...args) {
+    const duration = Date.now() - startTime;
+    const status = res.statusCode;
+    const success = status >= 200 && status < 400 ? 1 : 0;
+    // 隐藏密码字段
+    let safeBody = originalBody;
+    try {
+      const parsed = JSON.parse(originalBody);
+      if (parsed.password) parsed.password = '***';
+      if (parsed.old_password) parsed.old_password = '***';
+      if (parsed.new_password) parsed.new_password = '***';
+      safeBody = JSON.stringify(parsed);
+    } catch {}
+
+    // 异步写入日志（不阻塞响应）
+    (async () => {
+      try {
+        await ensureSystemLogTable();
+      } catch (e) {
+        console.log('system_log ensure table error:', e.message);
+      }
+      try {
+        await pool.query(
+          `INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [req.method, req.path, JSON.stringify(req.query), safeBody.slice(0, 2000), userId, username, ip, (req.headers['user-agent'] || '').slice(0, 500), status, duration, success === 0 ? (res.errorMessage || '') : '', success]
+        );
+      } catch (e) {
+        console.log('system_log insert error:', e.message);
+      }
+    })();
+
+    return originalEnd.apply(this, args);
+  };
+  next();
+});
+
+// ================================================================
+
 const db = new Database();
 // MySQL 不需要 busy_timeout / journal_mode（适配层已忽略）
 // ✅ 直接导出 pool 供外部 MySQL 查询用（如 notifications 表）
@@ -53,6 +143,47 @@ async function initDatabase() {
           // 字段已存在，忽略
         }
       }
+
+      // 字段迁移：确保 rectification_issues 表有新字段（兼容已有数据库）
+      const riMigrations = [
+        'ALTER TABLE rectification_issues ADD COLUMN title VARCHAR(255) DEFAULT NULL AFTER remark',
+        'ALTER TABLE rectification_issues ADD COLUMN category VARCHAR(100) DEFAULT NULL AFTER title',
+        'ALTER TABLE rectification_issues ADD COLUMN location VARCHAR(100) DEFAULT NULL AFTER category',
+        'ALTER TABLE rectification_issues ADD COLUMN level VARCHAR(50) DEFAULT NULL AFTER location',
+        'ALTER TABLE rectification_issues ADD COLUMN description TEXT DEFAULT NULL AFTER level',
+      ];
+      for (const sql of riMigrations) {
+        try { await pool.query(sql); console.log('✅ 迁移成功:', sql.slice(0, 60)); } catch (_) { /* 字段已存在 */ }
+      }
+
+      // 建表迁移：确保 system_logs 表存在（全新建表语句，已存在则忽略）
+      const createSystemLogs = `CREATE TABLE IF NOT EXISTS system_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        method VARCHAR(10) NOT NULL,
+        path VARCHAR(500) NOT NULL,
+        query VARCHAR(500),
+        body TEXT,
+        user_id INT,
+        username VARCHAR(100),
+        ip_address VARCHAR(50),
+        user_agent VARCHAR(500),
+        status_code INT,
+        response_time INT,
+        error_message TEXT,
+        success TINYINT(1) DEFAULT 1,
+        created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        INDEX idx_created_at (created_at),
+        INDEX idx_user_id (user_id),
+        INDEX idx_path (path(100)),
+        INDEX idx_success (success)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`;
+      try {
+        await pool.query(createSystemLogs);
+        console.log('✅ system_logs 表已创建或已存在');
+      } catch (e) {
+        console.log('⚠️ system_logs 建表失败（可能已存在）:', e.message);
+      }
+
       return;
     }
   } catch (e) {}
@@ -1290,6 +1421,7 @@ app.post('/api/contract-templates', async (req, res) => {
   
   const stmt = db.prepare('INSERT INTO contract_templates (name, category, content, is_default, template_type, template_fields, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(name, category, content, is_default || 0, template_type || 'personal', template_fields || '', userId || null);
+  await addLog(userId, '', '新增', '合同模板', result.lastInsertRowid, name, `模板名称: ${name}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
@@ -1312,6 +1444,7 @@ app.put('/api/contract-templates/:id', async (req, res) => {
   
   const stmt = db.prepare('UPDATE contract_templates SET name=?, category=?, content=?, is_default=?, template_type=?, template_fields=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
   await stmt.run(name, category, content, is_default || 0, template_type || 'personal', template_fields || '', req.params.id);
+  await addLog(userId, '', '编辑', '合同模板', req.params.id, name, `更新模板: ${name}`, req.ip);
   res.json({ message: '更新成功' });
 });
 
@@ -1333,6 +1466,7 @@ app.delete('/api/contract-templates/:id', async (req, res) => {
   
   const stmt = db.prepare('DELETE FROM contract_templates WHERE id = ?');
   await await stmt.run(req.params.id);
+  await addLog(userId, '', '删除', '合同模板', req.params.id, template.name, `删除模板: ${template.name}`, req.ip);
   res.json({ message: '删除成功' });
 });
 
@@ -1341,11 +1475,14 @@ async function addLog(userId, username, action, module, targetId, targetName, de
     // username 为空时，自动通过 userId 查 employees 表获取真实姓名
     let displayName = username;
     if (!displayName && userId) {
-      const emp = await db.prepare('SELECT name FROM employees WHERE id = ?').get(userId);
-      displayName = emp ? emp.name : (username || '');
+      const [emps] = await pool.query('SELECT name FROM employees WHERE id = ?', [userId]);
+      displayName = emps[0] ? emps[0].name : (username || '');
     }
-    const stmt = db.prepare('INSERT INTO operation_logs (user_id, username, action, module, target_id, target_name, details, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    await stmt.run(userId, displayName, action, module, targetId, targetName, details, ipAddress);
+    const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    await pool.query(
+      'INSERT INTO operation_logs (user_id, username, action, module, target_id, target_name, details, ip_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, displayName, action, module, targetId, targetName, details, ipAddress, nowStr]
+    );
   } catch (e) {
     console.error('记录日志失败:', e.message);
   }
@@ -1353,6 +1490,10 @@ async function addLog(userId, username, action, module, targetId, targetName, de
 
 app.get('/api/operation-logs', async (req, res) => {
   const { page, limit, module, action } = req.query;
+  const p = parseInt(page) || 1;
+  const l = parseInt(limit) || 50;
+  const offset = (p - 1) * l;
+  let countSql = 'SELECT COUNT(*) as total FROM operation_logs';
   let sql = 'SELECT * FROM operation_logs';
   const params = [];
   const conditions = [];
@@ -1365,17 +1506,47 @@ app.get('/api/operation-logs', async (req, res) => {
     params.push(action);
   }
   if (conditions.length > 0) {
+    countSql += ' WHERE ' + conditions.join(' AND ');
     sql += ' WHERE ' + conditions.join(' AND ');
   }
-  sql += ' ORDER BY created_at DESC';
-  if (limit) {
-    sql += ' LIMIT ' + parseInt(limit);
-    if (page) {
-      sql += ' OFFSET ' + parseInt((page - 1) * limit);
-    }
-  }
+  sql += ' ORDER BY id DESC LIMIT ? OFFSET ?';
+  const [countResult] = await pool.query(countSql, params);
+  const [rows] = await pool.query(sql, [...params, l, offset]);
+  res.json({ logs: rows, total: countResult[0].total, page: p, limit: l });
+});
+
+// ================================================================
+// 系统日志（记录所有 API 请求）
+// ================================================================
+app.get('/api/system-logs', async (req, res) => {
+  const { page = 1, limit = 50, path, method, success, user_id, start_date, end_date } = req.query;
+  let sql = 'SELECT * FROM system_logs WHERE 1=1';
+  const params = [];
+  if (path) { sql += ' AND path LIKE ?'; params.push(`%${path}%`); }
+  if (method) { sql += ' AND method = ?'; params.push(method); }
+  if (success !== undefined && success !== '') { sql += ' AND success = ?'; params.push(parseInt(success)); }
+  if (user_id) { sql += ' AND user_id = ?'; params.push(parseInt(user_id)); }
+  if (start_date) { sql += ' AND created_at >= ?'; params.push(start_date); }
+  if (end_date) { sql += ' AND created_at <= ?'; params.push(end_date); }
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+  const countSql = 'SELECT COUNT(*) as total FROM system_logs WHERE 1=1' + sql.split('WHERE 1=1')[1].split('ORDER BY')[0];
   const stmt = db.prepare(sql);
-  res.json(await stmt.all(...params));
+  const countStmt = db.prepare(countSql);
+  try {
+    const data = await stmt.all(...params);
+    const countResult = await countStmt.all(...params.slice(0, -2));
+    const total = countResult[0] ? countResult[0].total : 0;
+    res.json({ data, total, page: parseInt(page), limit: parseInt(limit) });
+  } catch (e) {
+    res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+  }
+});
+
+// 清空系统日志
+app.delete('/api/system-logs', async (req, res) => {
+  await db.prepare('TRUNCATE TABLE system_logs').run();
+  res.json({ success: true, message: '系统日志已清空' });
 });
 
 app.get('/api/debug/save-contract', (req, res) => {
@@ -1747,10 +1918,11 @@ app.post('/api/project-logs', async (req, res) => {
   const { project_id, content, operator, images } = req.body;
   const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images, creator_id) VALUES (?, ?, ?, ?, ?)');
   const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []), userId);
+  const logId = result.lastInsertRowid;
 
   // ✅ 新增项目进展时，通知项目成员和客户
   const [proj] = await db.prepare('SELECT name FROM projects WHERE id = ?').all(project_id);
-  const logId = result.lastInsertRowid;
+  await addLog(userId, '', '新增', '项目进展', logId, proj?.name || project_id, `项目「${proj?.name || project_id}」添加进展`, req.ip);
   if (proj) {
     await notifyProject('project_progress', project_id,
       `项目新进展`,
@@ -2141,6 +2313,7 @@ app.delete('/api/main-materials/:id', async (req, res) => {
 });
 
 app.post('/api/main-materials/batch-upsert', async (req, res) => {
+  const userId = getUserId(req);
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   const insertStmt = db.prepare(`
     INSERT INTO main_materials (
@@ -2193,6 +2366,7 @@ app.post('/api/main-materials/batch-upsert', async (req, res) => {
       Number(row.is_fixed ?? 0)
     );
   }
+  await addLog(userId, '', '新增', '主材管理', null, '批量导入', `批量导入主材 ${rows.length} 条`, req.ip);
   res.json({ message: '导入成功', count: rows.length });
 });
 
@@ -2331,6 +2505,7 @@ print(json.dumps(rows,ensure_ascii=False))
       Number(row.is_fixed ?? 0)
     );
   }
+  await addLog(userId, '', '新增', '主材管理', null, '批量导入', `Excel导入主材 ${rows.length} 条`, req.ip);
   res.json({ message: '导入成功', count: rows.length });
 });
 
@@ -3635,10 +3810,19 @@ app.get('/api/rectification-issues', async (req, res) => {
 });
 
 app.post('/api/rectification-issues', async (req, res) => {
-  const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark } = req.body;
-  const stmt = db.prepare('INSERT INTO rectification_issues (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(inspection_id, project_id, project_name, issue_desc, priority || '普通', status || '待处理', responsible_id, responsible_name, due_date, JSON.stringify(images || []), remark);
-  await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${issue_desc?.slice(0, 30)}`, req.ip);
+  const userId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id']) : null;
+  const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description } = req.body;
+  const stmt = db.prepare(`INSERT INTO rectification_issues
+    (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const result = await stmt.run(
+    inspection_id, project_id, project_name,
+    issue_desc || title || '', priority || '普通', status || '待处理',
+    responsible_id, responsible_name, due_date,
+    JSON.stringify(images || []), remark || description || '',
+    title || issue_desc || '', category || '', location || '', level || '', description || ''
+  );
+  await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
@@ -4317,6 +4501,7 @@ app.get('/api/progress-nodes/:projectId', async (req, res) => {
 app.post('/api/progress-nodes/init/:projectId', async (req, res) => {
   try {
     const { template_id } = req.body;
+    const userId = getUserId(req);
 
     // 获取项目信息（用于计算日期范围）
     const [project] = await db.prepare('SELECT * FROM projects WHERE id = ?').all([req.params.projectId]);
@@ -4355,6 +4540,7 @@ app.post('/api/progress-nodes/init/:projectId', async (req, res) => {
         n._plan_start || null, n._plan_end || null, n.default_sms_template_id || null
       ]);
     }
+    await addLog(userId, '', '新增', '节点管理', parseInt(req.params.projectId), project.name, `从模板初始化项目节点，共${templateNodes.length}个节点`, req.ip);
     res.json({ message: '项目节点初始化成功', count: templateNodes.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4364,10 +4550,12 @@ app.post('/api/progress-nodes/init/:projectId', async (req, res) => {
 // POST 新增节点到项目
 app.post('/api/progress-nodes', async (req, res) => {
   try {
+    const userId = getUserId(req);
     const { project_id, node_name, node_key, sort_order, sms_template_id } = req.body;
     const result = await db.prepare(
       'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())'
     ).run([project_id, node_name, node_key, sort_order || 0, 'pending', sms_template_id || null]);
+    await addLog(userId, '', '新增', '节点管理', result.lastInsertRowid, node_name, `新增节点: ${node_name}`, req.ip);
     res.json({ id: result.lastInsertRowid, message: '节点添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4377,10 +4565,12 @@ app.post('/api/progress-nodes', async (req, res) => {
 // PUT 更新项目节点
 app.put('/api/progress-nodes/:id', async (req, res) => {
   try {
+    const userId = getUserId(req);
     const { node_name, node_key, sort_order, status, plan_date, actual_date, sms_template_id, note } = req.body;
     await db.prepare(
       'UPDATE project_progress_nodes SET node_name=?, node_key=?, sort_order=?, status=?, plan_date=?, actual_date=?, sms_template_id=?, note=?, updated_at=NOW() WHERE id=?'
     ).run([node_name, node_key, sort_order || 0, status, plan_date || null, actual_date || null, sms_template_id || null, note || null, req.params.id]);
+    await addLog(userId, '', '编辑', '节点管理', req.params.id, node_name, `更新节点: ${node_name}，状态: ${status}`, req.ip);
     res.json({ message: '节点更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4392,7 +4582,10 @@ app.delete('/api/progress-nodes/:id', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
+    const [node] = await db.prepare('SELECT node_name FROM project_progress_nodes WHERE id=?').all([req.params.id]);
+    const nodeName = node ? node.node_name : req.params.id;
     await db.prepare('DELETE FROM project_progress_nodes WHERE id=?').run([req.params.id]);
+    await addLog(userId, '', '删除', '节点管理', req.params.id, nodeName, `删除节点: ${nodeName}`, req.ip);
     res.json({ message: '节点删除成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4978,6 +5171,7 @@ app.get('/api/system-settings/notifications', async (req, res) => {
 
 app.put('/api/system-settings/notifications', checkPermission('settings:write'), async (req, res) => {
   try {
+    const userId = getUserId(req);
     const value = JSON.stringify(req.body);
     const [existing] = await mysqlPool.query('SELECT id FROM system_settings WHERE category = ?', ['notifications']);
     if (existing[0]) {
@@ -4987,6 +5181,7 @@ app.put('/api/system-settings/notifications', checkPermission('settings:write'),
       await mysqlPool.query('INSERT INTO system_settings (category, setting_value, created_at, updated_at) VALUES (?, ?, ?, ?)',
         ['notifications', value, new Date().toISOString(), new Date().toISOString()]);
     }
+    await addLog(userId, '', '编辑', '系统设置', null, '通知规则', `更新通知规则设置`, req.ip);
     res.json({ message: '保存成功' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
