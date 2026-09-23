@@ -7,24 +7,31 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">节点管理</view>
-
     <!-- 项目名称 -->
-    <view class="project-label" v-if="projectName">
-      📁 {{ projectName }}
+    <view class="project-banner" v-if="projectName">
+      <view class="project-banner-icon">📁</view>
+      <view class="project-banner-info">
+        <text class="project-banner-label">当前项目</text>
+        <text class="project-banner-name">{{ projectName }}</text>
+      </view>
     </view>
 
     <!-- 模板应用区 -->
     <view class="template-section">
       <view class="section-label">快速应用模板</view>
       <view class="template-pick">
-        <picker :value="templateIndex" :range="templateList" range-key="name" @change="onTemplateChange">
-          <view class="picker-value">
-            {{ templateIndex >= 0 ? templateList[templateIndex].name : '选择节点模板...' }}
-          </view>
-        </picker>
+        <view class="picker-value" @click="showTemplatePicker">{{ templateIndex >= 0 ? templateList[templateIndex].name : '选择节点模板...' }}</view>
         <button class="btn-apply" size="mini" :disabled="templateIndex < 0" @click="applyTemplate">应用</button>
       </view>
+
+      <!-- 模板选择弹窗 -->
+      <BottomPicker
+        v-model:visible="templatePicker.visible"
+        :title="templatePicker.title"
+        :items="templatePicker.items"
+        @select="onTemplateSelect"
+        @cancel="templatePicker.visible = false"
+      />
     </view>
 
     <!-- 节点列表 -->
@@ -35,10 +42,11 @@
       </view>
     </view>
     <view class="node-list" :class="{ 'sort-mode': sortMode }">
-      <transition-group name="node-slide" tag="view" class="node-cards-wrap">
+      <view class="node-cards-wrap">
+      <transition-group name="node-slide" tag="view">
       <view
         class="node-card"
-        :class="{ 'sorting': draggingIndex === index, 'swap-flash': swappingIndexes.includes(index) }"
+        :class="{ 'sorting': draggingIndex === index, 'swap-flash': swappingIndexes.includes(index), 'status-pending': node.status === 'pending', 'status-in_progress': node.status === 'in_progress', 'status-completed': node.status === 'completed', 'status-skipped': node.status === 'skipped' }"
         v-for="(node, index) in nodes"
         :key="node.id"
         :data-index="index"
@@ -97,11 +105,12 @@
       </view>
 
       <!-- 新增节点 -->
+      </transition-group>
+      </view>
       <view class="add-node-card" @click="showAddDialog">
         <text class="add-icon">+</text>
         <text class="add-text">新增节点</text>
       </view>
-    </transition-group>
     </view>
 
     <!-- 新增节点弹窗 -->
@@ -135,10 +144,32 @@
       </view>
     </view>
   </view>
+
+  <!-- 状态选择弹窗 -->
+  <BottomPicker
+    v-model:visible="statusPicker.visible"
+    :title="statusPicker.title"
+    :items="statusPicker.items"
+    @select="onStatusSelect"
+    @cancel="statusPicker.visible = false"
+  />
+
+  <!-- 短信模板选择弹窗 -->
+  <BottomPicker
+    v-model:visible="smsPicker.visible"
+    :title="smsPicker.title"
+    :items="smsPicker.items"
+    @select="onSmsSelect"
+    @cancel="smsPicker.visible = false"
+  />
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, nextTick } from "vue";
+import BottomPicker from "@/components/bottom-picker.vue";
+
+defineOptions({ inheritAttrs: false });
+const props = defineProps(['id']);
 
 const projectId = ref(0);
 const projectName = ref('');
@@ -211,7 +242,6 @@ const onDragMove = (e, index) => {
 const onDragEnd = (e, index) => {
   if (!sortMode.value) return;
   draggingIndex.value = -1;
-  dragOverIndex.value = -1;
 };
 
 // ============= API =============
@@ -254,6 +284,25 @@ const fetchTemplates = async () => {
 
 const onTemplateChange = (e) => {
   templateIndex.value = e.detail.value;
+};
+
+const templatePicker = ref({
+  visible: false,
+  title: '选择节点模板',
+  items: [],
+});
+
+const showTemplatePicker = () => {
+  templatePicker.value = {
+    visible: true,
+    title: '选择节点模板',
+    items: templateList.value.map((t) => ({ name: t.name, icon: '📋', _index: templateList.value.indexOf(t) })),
+  };
+};
+
+const onTemplateSelect = ({ item }) => {
+  templateIndex.value = item._index;
+  templatePicker.value.visible = false;
 };
 
 const applyTemplate = async () => {
@@ -353,96 +402,127 @@ const pickDate = async (node, type) => {
 
 // ============= 状态选择 =============
 
-const showStatusPicker = (node) => {
-  const options = ['待开始', '进行中', '已完成', '已跳过'];
-  uni.showActionSheet({
-    itemList: options,
-    title: `修改状态：${node.node_name || node.stage_name}`,
-    success: async (res) => {
-      const statusMap = ['pending', 'in_progress', 'completed', 'skipped'];
-      const newStatus = statusMap[res.tapIndex];
-      if (newStatus === 'completed') {
-        // 弹出确认：是否发送短信
-        const doUpdate = await new Promise((resolve) => {
-          uni.showModal({
-            title: '节点完成',
-            content: `是否发送短信通知？`,
-            confirmText: '发送短信',
-            cancelText: '仅保存',
-            success: (m) => resolve(m.confirm),
-          });
+const statusPicker = ref({
+  visible: false,
+  title: '',
+  items: [],
+  _node: null,
+});
+
+const onStatusSelect = async ({ item }) => {
+  const node = statusPicker.value._node;
+  statusPicker.value.visible = false;
+  if (!node) return;
+
+  const statusMap = { '待开始': 'pending', '进行中': 'in_progress', '已完成': 'completed', '已跳过': 'skipped' };
+  const newStatus = statusMap[item.name];
+
+  if (newStatus === 'completed') {
+    const doUpdate = await new Promise((resolve) => {
+      uni.showModal({
+        title: '节点完成',
+        content: `是否发送短信通知？`,
+        confirmText: '发送短信',
+        cancelText: '仅保存',
+        success: (m) => resolve(m.confirm),
+      });
+    });
+    const updateData = {
+      status: 'completed',
+      progress_percent: 100,
+      actual_date: new Date().toISOString().split('T')[0],
+    };
+    try {
+      const token = uni.getStorageSync("token");
+      await uni.request({
+        url: `/api/project-stages/${node.id}`,
+        method: "PUT",
+        header: { Authorization: token },
+        data: updateData,
+      });
+      if (doUpdate && node.sms_template_id) {
+        await uni.request({
+          url: `/api/sms/send`,
+          method: "POST",
+          header: { Authorization: token },
+          data: { node_id: node.id, template_id: node.sms_template_id },
         });
-        const updateData = {
-          status: 'completed',
-          progress_percent: 100,
-          actual_date: new Date().toISOString().split('T')[0],
-        };
-        try {
-          const token = uni.getStorageSync("token");
-          await uni.request({
-            url: `/api/project-stages/${node.id}`,
-            method: "PUT",
-            header: { Authorization: token },
-            data: updateData,
-          });
-          if (doUpdate && node.sms_template_id) {
-            await uni.request({
-              url: `/api/sms/send`,
-              method: "POST",
-              header: { Authorization: token },
-              data: { node_id: node.id, template_id: node.sms_template_id },
-            });
-            uni.showToast({ title: "已保存并发送短信", icon: "success" });
-          } else {
-            uni.showToast({ title: "已保存", icon: "success" });
-          }
-          await fetchNodes();
-        } catch (e) {
-          uni.showToast({ title: "更新失败", icon: "none" });
-        }
+        uni.showToast({ title: "已保存并发送短信", icon: "success" });
       } else {
-        const updateData = { status: newStatus };
-        try {
-          const token = uni.getStorageSync("token");
-          await uni.request({
-            url: `/api/project-stages/${node.id}`,
-            method: "PUT",
-            header: { Authorization: token },
-            data: updateData,
-          });
-          await fetchNodes();
-        } catch (e) {
-          uni.showToast({ title: "更新失败", icon: "none" });
-        }
+        uni.showToast({ title: "已保存", icon: "success" });
       }
-    },
-  });
+      await fetchNodes();
+    } catch (e) {
+      uni.showToast({ title: "更新失败", icon: "none" });
+    }
+  } else {
+    try {
+      const token = uni.getStorageSync("token");
+      await uni.request({
+        url: `/api/project-stages/${node.id}`,
+        method: "PUT",
+        header: { Authorization: token },
+        data: { status: newStatus },
+      });
+      await fetchNodes();
+    } catch (e) {
+      uni.showToast({ title: "更新失败", icon: "none" });
+    }
+  }
+};
+
+const showStatusPicker = (node) => {
+  statusPicker.value = {
+    visible: true,
+    title: `修改状态：${node.node_name || node.stage_name}`,
+    items: [
+      { name: '待开始', icon: '⏳', value: 'pending' },
+      { name: '进行中', icon: '🔄', value: 'in_progress' },
+      { name: '已完成', icon: '✅', value: 'completed' },
+      { name: '已跳过', icon: '⏭️', value: 'skipped' },
+    ],
+    _node: node,
+  };
 };
 
 // ============= 短信模板 =============
 
+const smsPicker = ref({
+  visible: false,
+  title: '',
+  items: [],
+  _node: null,
+});
+
+const onSmsSelect = async ({ item }) => {
+  const node = smsPicker.value._node;
+  smsPicker.value.visible = false;
+  if (!node) return;
+  const smsIndex = item._index;
+  try {
+    const token = uni.getStorageSync("token");
+    await uni.request({
+      url: `/api/project-stages/${node.id}`,
+      method: "PUT",
+      header: { Authorization: token },
+      data: { sms_template_id: smsIndex >= 0 ? smsTemplateList.value[smsIndex].id : null },
+    });
+    await fetchNodes();
+  } catch (e) {
+    uni.showToast({ title: "保存失败", icon: "none" });
+  }
+};
+
 const pickSmsTemplate = (node) => {
-  const options = ['不发送短信', ...smsTemplateList.value.map((t) => t.name)];
-  const indexMap = [-1, ...smsTemplateList.value.map((_, i) => i)];
-  uni.showActionSheet({
-    itemList: options,
+  smsPicker.value = {
+    visible: true,
     title: `选择短信模板：${node.node_name || node.stage_name}`,
-    success: async (res) => {
-      const smsIndex = indexMap[res.tapIndex];
-      try {
-        const token = uni.getStorageSync("token");
-        await uni.request({
-          url: `/api/project-stages/${node.id}`,
-          method: "PUT",
-          header: { Authorization: token },
-          data: { sms_template_id: smsIndex >= 0 ? smsTemplateList.value[smsIndex].id : null },
-        });
-        await fetchNodes();
-      } catch (e) {
-        uni.showToast({ title: "保存失败", icon: "none" });
-      }
-    },
-  });
+    items: [
+      { name: '不发送短信', icon: '🚫', value: -1, _index: -1 },
+      ...smsTemplateList.value.map((t) => ({ name: t.name, icon: '📩', value: t.id, _index: smsTemplateList.value.indexOf(t) })),
+    ],
+    _node: node,
+  };
 };
 
 // ============= 删除节点 =============
@@ -538,10 +618,7 @@ const getNodeStatusText = (status) => {
 // =============
 
 onMounted(async () => {
-  const pages = getCurrentPages();
-  const current = pages[pages.length - 1];
-    const options = (current.options || {});
-  projectId.value = parseInt(options.id || '0');
+  projectId.value = parseInt(props.id || '0');
   if (projectId.value) {
     await Promise.all([fetchNodes(), fetchTemplates()]);
   }
@@ -558,31 +635,49 @@ const goBack = () => {
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #f5f5f5;
-  padding: 15px;
-  padding-bottom: 30px;
+  background: #f0f2f7;
+  padding: 12px 14px 40px;
 }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 12px;
-}
-
-.project-label {
-  font-size: 13px;
-  color: #667eea;
-  background: #f0f4ff;
-  padding: 8px 12px;
-  border-radius: 8px;
+/* 项目名称横幅 */
+.project-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, #1e3a5f, #2d5a8a);
+  border-radius: 0;
+  padding: 12px 16px;
   margin-bottom: 14px;
+  box-shadow: 0 4px 12px rgba(30, 58, 95, 0.25);
+}
+.project-banner-icon {
+  font-size: 26px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 10px;
+  padding: 8px;
+  line-height: 1;
+}
+.project-banner-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.project-banner-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.project-banner-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
 }
 
 .section-label {
   font-size: 13px;
-  color: #999;
-  margin-bottom: 8px;
+  color: #888;
+  margin-bottom: 10px;
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -595,24 +690,16 @@ const goBack = () => {
   padding: 3px 10px;
   border-radius: 12px;
   margin-left: auto;
-  cursor: pointer;
 }
-
-.sort-off {
-  background: #f0f0f0;
-  color: #666;
-}
-
-.sort-on {
-  background: #667eea;
-  color: #fff;
-}
+.sort-off { background: #e8eaef; color: #666; }
+.sort-on { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
 
 .template-section {
   background: #fff;
-  border-radius: 10px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 14px;
   margin-bottom: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
 .template-pick {
@@ -625,30 +712,24 @@ const goBack = () => {
   flex: 1;
   font-size: 14px;
   color: #333;
-  background: #f5f5f5;
-  padding: 8px 12px;
-  border-radius: 6px;
+  background: #f5f5f7;
+  padding: 9px 12px;
+  border-radius: 8px;
 }
 
 .btn-apply {
-  background: #667eea;
+  background: linear-gradient(135deg, #667eea, #764ba2);
   color: #fff;
   border: none;
   font-size: 13px;
+  padding: 0 18px;
+  height: 34px;
+  border-radius: 8px;
 }
+.btn-apply[disabled] { background: #ccc; }
 
-.btn-apply[disabled] {
-  background: #ccc;
-}
-
-/* 节点卡片拖拽动画 */
-.node-slide-move {
-  transition: transform 0.3s ease;
-}
-
-.node-list {
-  /* 容器样式由 node-cards-wrap 承担 */
-}
+/* 节点列表 */
+.node-list { /* nothing */ }
 
 .node-cards-wrap {
   display: flex;
@@ -658,20 +739,21 @@ const goBack = () => {
 
 .node-card {
   background: #fff;
-  border-radius: 10px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 14px 12px;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  border: 2px solid transparent;
-  transition: border-color 0.2s;
+  border-left: 4px solid transparent;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transition: box-shadow 0.2s, border-color 0.3s;
 }
+.status-pending { border-left-color: #d9d9d9; }
+.status-in_progress { border-left-color: #ff9f43; }
+.status-completed { border-left-color: #52c41a; }
+.status-skipped { border-left-color: #bfbfbf; }
 
 .node-drag-handle {
-  font-size: 18px;
-  font-weight: bold;
-  padding: 4px 6px;
-  line-height: 1;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -679,60 +761,39 @@ const goBack = () => {
   width: 28px;
   height: 28px;
 }
-
 .drag-icon {
   color: #667eea;
-  font-size: 16px;
-  letter-spacing: -2px;
+  font-size: 18px;
+  letter-spacing: -3px;
 }
-
 .node-index {
-  width: 20px;
-  height: 20px;
-  background: #667eea;
+  width: 22px;
+  height: 22px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
   color: #fff;
   border-radius: 50%;
   font-size: 11px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-
-.sort-mode .node-card {
-  cursor: grab;
-}
-
-.sort-mode .node-card:active {
-  cursor: grabbing;
-}
-
+.sort-mode .node-card { cursor: grab; }
+.sort-mode .node-card:active { cursor: grabbing; }
 .node-card.sorting {
-  opacity: 0.6;
+  opacity: 0.7;
   transform: scale(0.98);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
 }
-
-.swap-flash {
-  animation: swap-pop 0.3s ease;
-}
-
+.swap-flash { animation: swap-pop 0.3s ease; }
 @keyframes swap-pop {
   0%   { transform: scale(1); }
-  50%  { transform: scale(1.05); box-shadow: 0 0 16px rgba(102, 126, 234, 0.5); }
+  50%  { transform: scale(1.04); box-shadow: 0 0 18px rgba(102, 126, 234, 0.5); }
   100% { transform: scale(1); }
 }
+.sort-mode .node-main > * { pointer-events: none; }
 
-.node-card.sort-drag-over {
-  border: 2px dashed #667eea;
-}
-
-.sort-mode .node-main > * {
-  pointer-events: none;
-}
-
-.node-main {
-  flex: 1;
-}
+.node-main { flex: 1; min-width: 0; }
 
 .node-header {
   display: flex;
@@ -740,232 +801,189 @@ const goBack = () => {
   gap: 8px;
   margin-bottom: 8px;
 }
-
-.node-num {
-  width: 20px;
-  height: 20px;
-  background: #667eea;
-  color: #fff;
-  border-radius: 50%;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
 .node-name {
   font-size: 15px;
-  font-weight: bold;
-  color: #333;
+  font-weight: 600;
+  color: #1a1a1a;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .node-name-input {
   font-size: 15px;
-  font-weight: bold;
-  border: 1px solid #667eea;
-  border-radius: 4px;
-  padding: 2px 6px;
+  font-weight: 600;
+  border: 1.5px solid #667eea;
+  border-radius: 6px;
+  padding: 2px 8px;
   flex: 1;
 }
-
-.edit-hint {
-  font-size: 12px;
-  margin-left: 4px;
-  opacity: 0.5;
-}
+.edit-hint { font-size: 11px; margin-left: 4px; opacity: 0.4; }
 
 .node-dates {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
-
-.date-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.date-label {
-  font-size: 12px;
-  color: #999;
-}
-
+.date-item { display: flex; align-items: center; gap: 4px; }
+.date-label { font-size: 11px; color: #aaa; }
 .date-val {
   font-size: 12px;
   color: #667eea;
   background: #f0f4ff;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-weight: 500;
 }
-
-.date-arrow {
-  color: #ccc;
-  font-size: 12px;
-}
+.date-arrow { color: #ccc; font-size: 11px; }
 
 .node-bottom {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
-
 .status-pill {
   font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 10px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 20px;
   cursor: pointer;
 }
-
-.s-pending { background: #f0f0f0; color: #999; }
-.s-progress { background: #fff7e6; color: #ff9f43; }
-.s-done { background: #e8f8f0; color: #52c41a; }
-.s-skipped { background: #fff3e6; color: #ff6600; }
+.s-pending { background: #f5f5f5; color: #999; }
+.s-progress { background: #fff7e6; color: #e67e00; font-weight: 600; }
+.s-done { background: linear-gradient(135deg, #e8f8f0, #d4f0e4); color: #27ae60; font-weight: 600; }
+.s-skipped { background: #f5f5f5; color: #aaa; }
 
 .sms-pill {
   font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 10px;
+  padding: 3px 10px;
+  border-radius: 20px;
   background: #f9f9f9;
-  color: #666;
+  color: #888;
   cursor: pointer;
+  border: 1px solid #eee;
 }
 
 .node-delete {
   color: #ff4d4f;
-  font-size: 16px;
-  padding: 4px;
+  font-size: 15px;
+  padding: 2px 6px;
   cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
 }
+.node-delete:hover { opacity: 1; }
 
 .add-node-card {
-  background: #f9f9f9;
-  border-radius: 10px;
-  padding: 16px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   cursor: pointer;
-  border: 2px dashed #ddd;
+  border: 2px dashed #dcdfe6;
+  margin-top: 6px;
+  transition: border-color 0.2s, background 0.2s;
 }
-
-.add-icon {
-  font-size: 22px;
-  color: #667eea;
-  font-weight: bold;
+.add-node-card:active {
+  background: #f0f4ff;
+  border-color: #667eea;
 }
-
-.add-text {
-  font-size: 14px;
-  color: #667eea;
-}
+.add-icon { font-size: 20px; color: #667eea; font-weight: bold; }
+.add-text { font-size: 14px; color: #667eea; font-weight: 500; }
 
 /* 弹窗 */
 .dialog-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.45);
   display: flex;
   align-items: flex-end;
   z-index: 999;
 }
-
 .dialog-box {
   background: #fff;
-  border-radius: 16px 16px 0 0;
+  border-radius: 20px 20px 0 0;
   width: 100%;
-  max-height: 70vh;
+  max-height: 75vh;
   overflow-y: auto;
 }
-
 .dialog-title {
-  font-size: 16px;
-  font-weight: bold;
+  font-size: 17px;
+  font-weight: 700;
   text-align: center;
-  padding: 16px;
+  padding: 18px 16px 14px;
   border-bottom: 1px solid #f0f0f0;
+  color: #1a1a1a;
 }
-
-.dialog-body {
-  padding: 16px;
-}
-
-.form-item {
-  margin-bottom: 14px;
-}
-
-.form-label {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 6px;
-  display: block;
-}
-
+.dialog-body { padding: 16px; }
+.form-item { margin-bottom: 16px; }
+.form-label { font-size: 13px; color: #666; margin-bottom: 7px; display: block; font-weight: 500; }
 .form-input {
-  border: 1px solid #eee;
-  border-radius: 8px;
+  border: 1.5px solid #eee;
+  border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
   width: 100%;
   box-sizing: border-box;
+  transition: border-color 0.2s;
 }
-
+.form-input:focus { border-color: #667eea; }
 .dialog-footer {
   display: flex;
   gap: 12px;
-  padding: 12px 16px 20px;
+  padding: 12px 16px 24px;
 }
-
 .btn-cancel {
   flex: 1;
-  background: #f5f5f5;
+  background: #f5f5f7;
   color: #333;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 15px;
+  height: 44px;
 }
-
 .btn-confirm {
   flex: 1;
   background: linear-gradient(135deg, #667eea, #764ba2);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 15px;
+  height: 44px;
+  font-weight: 600;
 }
+
 /* 导航栏 */
 .nav-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #1E3A5F;
+  background: linear-gradient(135deg, #1e3a5f, #264573);
   color: #fff;
   padding: 12px 16px;
   padding-top: max(12px, env(safe-area-inset-top));
   position: sticky;
   top: 0;
   z-index: 100;
+  box-shadow: 0 2px 12px rgba(30, 58, 95, 0.3);
 }
-
 .nav-back {
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 300;
   width: 40px;
+  line-height: 1;
 }
-
 .nav-title {
   flex: 1;
   text-align: center;
   font-size: 17px;
   font-weight: 600;
+  letter-spacing: 0.5px;
 }
-
-.nav-placeholder {
-  width: 40px;
-}
-
+.nav-placeholder { width: 40px; }
 </style>

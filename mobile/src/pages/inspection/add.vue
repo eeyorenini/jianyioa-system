@@ -12,7 +12,7 @@
     <view class="form-card">
       <view class="form-item">
         <view class="form-label">问题标题 *</view>
-        <input class="form-input" v-model="form.title" placeholder="简要描述问题" />
+        <input class="form-input" v-model="form.title" placeholder="自动生成，可手动修改" />
       </view>
 
       <view class="form-item">
@@ -48,8 +48,7 @@
             v-for="lv in levels"
             :key="lv.value"
             class="level-option"
-            :class="`level-${lv.value}`"
-            :classList="{ selected: form.level === lv.value }"
+            :class="[`level-${lv.value}`, { selected: form.level === lv.value }]"
             @click="form.level = lv.value"
           >
             <text>{{ lv.label }}</text>
@@ -69,38 +68,53 @@
 
       <view class="form-item">
         <view class="form-label">整改截止时间</view>
-        <input class="form-input" v-model="form.deadline" type="date" />
+        <picker mode="date" :value="form.deadline" @change="onDeadlineChange" class="picker-btn">
+          <view class="date-display">{{ form.deadline || '请选择日期' }}</view>
+        </picker>
       </view>
     </view>
 
-    <!-- 问题照片 -->
+    <!-- 问题照片/视频 -->
     <view class="form-card">
-      <view class="form-label">问题照片（标注缺陷）</view>
+      <view class="form-label">问题照片/视频</view>
       <view class="photo-grid">
-        <view class="photo-item" v-for="(img, idx) in photos" :key="idx">
-          <image class="photo-img" :src="img" mode="aspectFill"></image>
-          <view class="photo-del" @click="photos.splice(idx, 1)">✕</view>
+        <!-- 照片 -->
+        <view class="photo-item" v-for="(img, idx) in photos" :key="'photo_' + idx">
+          <video v-if="isVideo(img)" class="photo-img" :src="img" mode="aspectFill"></video>
+          <image v-else class="photo-img" :src="img" mode="aspectFill"></image>
+          <view class="photo-del" @click="removeMedia(idx)">✕</view>
         </view>
-        <view class="photo-add" @click="addPhoto">
+        <!-- 添加按钮 -->
+        <view class="photo-add" @click="showMediaOptions">
           <text class="photo-add-icon">📷</text>
-          <text class="photo-add-text">拍照</text>
+          <text class="photo-add-text">拍照/录像</text>
         </view>
       </view>
     </view>
 
     <view class="submit-bar">
-      <view class="btn btn-primary btn-block" @click="submit">提交巡检</view>
+      <view class="btn btn-primary btn-block" :class="{ 'btn-loading': submitting }" @click="submit" :disabled="submitting">
+        <text v-if="submitting">提交中...</text>
+        <text v-else>提交巡检</text>
+      </view>
+    </view>
+
+    <!-- 提交遮罩 -->
+    <view class="loading-overlay" v-if="submitting">
+      <view class="spinner"></view>
+      <text class="loading-text">提交中...</text>
     </view>
   </view>
 </template>
 
 <script setup >
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, watch, onMounted } from "vue";
 import VoiceInput from "@/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
 const photos = ref([]);
+const submitting = ref(false);
 
 const categories = ['水电问题', '防水问题', '泥瓦问题', '木工问题', '油漆问题', '安全隐患', '卫生问题'];
 const locations = ['客厅', '卧室', '厨房', '卫生间', '阳台', '全屋'];
@@ -119,46 +133,186 @@ const form = reactive({
   deadline: '',
 });
 
+// 自动生成标题：项目名 + 问题分类 + 日期
+const generateTitle = () => {
+  const today = new Date().toISOString().split('T')[0];
+  const catPrefix = form.category ? `[${form.category}] ` : '';
+  form.title = `${projectName.value || '未知项目'} ${catPrefix}${today}`;
+};
+
+// 监听分类变化，重新生成标题
+watch(() => form.category, generateTitle);
+
 // AI整理语音输入的文字
 const handleAiOrganize = (text) => {
   if (!text) return;
   uni.showToast({ title: '已识别', icon: 'success', duration: 1000 });
 };
 
+// 日期选择
+const onDeadlineChange = (e) => {
+  form.deadline = e.detail.value;
+};
+
+// 判断是否是视频
+const isVideo = (url) => url && (url.startsWith('blob:') || url.startsWith('http') && (url.includes('.mp4') || url.includes('.mov') || url.includes('.3gp') || url.includes('wxfile')));
+
+// 判断是否是视频
+const showMediaOptions = () => {
+  uni.showActionSheet({
+    itemList: ['📷 拍照', '🎬 录像', '🖼 从相册选择'],
+    success: (res) => {
+      if (res.tapIndex === 0) {
+        // 拍照
+        addPhoto();
+      } else if (res.tapIndex === 1) {
+        // 录像
+        addVideo();
+      } else {
+        // 相册
+        addFromAlbum();
+      }
+    }
+  });
+};
+
+// 拍照
 const addPhoto = () => {
-  uni.chooseImage({ count: 9, sourceType: ['camera', 'album'], success: (r) => {
-    photos.value.push(...r.tempFilePaths.map(f => f));
+  uni.chooseImage({ count: 1, sourceType: ['camera'], success: (r) => {
+    compressAndAdd(r.tempFilePaths[0], 'image');
   }});
 };
 
+// 录像
+const addVideo = () => {
+  uni.chooseVideo({
+    sourceType: ['camera'],
+    maxDuration: 60,
+    success: (r) => {
+      if (r.tempFilePath) {
+        compressAndAdd(r.tempFilePath, 'video');
+      }
+    }
+  });
+};
+
+// 从相册选择（照片+视频混合）
+const addFromAlbum = () => {
+  // 先选照片
+  uni.chooseImage({
+    count: 9,
+    sourceType: ['album'],
+    success: (r) => {
+      r.tempFilePaths.forEach(p => compressAndAdd(p, 'image'));
+    }
+  });
+};
+
+// 删除媒体
+const removeMedia = (idx) => {
+  photos.value.splice(idx, 1);
+};
+
+// 压缩并添加（图片压缩，视频暂不压缩）
+const compressAndAdd = (filePath, type) => {
+  if (type === 'image') {
+    // 图片压缩
+    uni.compressImage({
+      src: filePath,
+      quality: 80,
+      success: (res) => {
+        photos.value.push(res.tempFilePath);
+      },
+      fail: () => {
+        // 压缩失败，直接添加原图
+        photos.value.push(filePath);
+      }
+    });
+  } else {
+    // 视频暂不压缩（uni-app H5 不支持直接压缩），直接添加
+    photos.value.push(filePath);
+  }
+};
+
+// 提交
 const submit = async () => {
   if (!form.title.trim()) {
     uni.showToast({ title: '请填写问题标题', icon: 'none' }); return;
   }
+  if (submitting.value) return;
+  submitting.value = true;
   try {
     const token = uni.getStorageSync("token");
-    await uni.request({
-      url: "/api/inspections",
-      method: "POST",
-      header: { Authorization: token },
-      data: {
-        project_id: projectId.value,
-        title: form.title,
-        category: form.category,
-        location: form.location,
-        level: form.level,
-        description: form.description,
-        deadline: form.deadline,
-      },
+
+    // 处理图片/视频文件上传
+    const imageUrls = [];
+    for (const filePath of photos.value) {
+      const isVid = isVideo(filePath);
+      const ext = isVid ? 'mp4' : 'jpg';
+      const mime = isVid ? 'video/mp4' : 'image/jpeg';
+      try {
+        await new Promise((resolve, reject) => {
+          uni.uploadFile({
+            url: '/api/upload',
+            filePath,
+            name: 'file',
+            header: { Authorization: token },
+            formData: { type: isVid ? 'video' : 'image' },
+            timeout: 30000,
+            success: (res) => {
+              try {
+                const data = JSON.parse(res.data);
+                if (data.url) imageUrls.push(data.url);
+                else if (data.path) imageUrls.push(data.path);
+                resolve();
+              } catch { resolve(); }
+            },
+            fail: () => reject(new Error('上传失败')),
+          });
+        });
+      } catch (e) {
+        // 单个文件上传失败不影响整体
+      }
+    }
+
+    // 提交数据
+    await new Promise((resolve, reject) => {
+      uni.request({
+        url: "/api/rectification-issues",
+        method: "POST",
+        header: { Authorization: token },
+        data: {
+          project_id: projectId.value,
+          project_name: projectName.value,
+          title: form.title,
+          category: form.category,
+          location: form.location,
+          level: form.level,
+          description: form.description,
+          issue_desc: form.description,
+          due_date: form.deadline,
+          images: imageUrls,
+        },
+        timeout: 15000,
+        success: (res) => {
+          if (res.statusCode === 200 || res.statusCode === 201) resolve();
+          else reject(new Error('提交失败'));
+        },
+        fail: () => reject(new Error('请求失败')),
+      });
     });
-    uni.showToast({ title: '已提交', icon: 'success' });
-    setTimeout(() => uni.navigateBack(), 1500);
+
+    uni.showToast({ title: '提交成功', icon: 'success', duration: 1200 });
+    setTimeout(() => { uni.navigateBack(); }, 1200);
   } catch (e) {
     uni.showToast({ title: '提交失败', icon: 'none' });
+  } finally {
+    submitting.value = false;
   }
 };
 
 onMounted(async () => {
+  generateTitle();
   const pages = getCurrentPages();
   const current = pages[pages.length - 1];
   const options = (current).options || {};
@@ -174,8 +328,8 @@ onMounted(async () => {
       if (p) projectName.value = p.name;
     } catch (e) {}
   }
+  generateTitle();
 });
-
 
 const goBack = () => {
   uni.navigateBack();
@@ -199,8 +353,6 @@ const goBack = () => {
   border-radius: 8px;
   margin-bottom: 12px;
 }
-
-
 
 .form-card {
   background: #fff;
@@ -292,6 +444,22 @@ const goBack = () => {
 .level-serious.selected { border-color: #991B1B; }
 .level-stop.selected { border-color: #7C3AED; }
 
+/* 日期选择 */
+.date-display {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 8px;
+  min-height: 44px;
+  box-sizing: border-box;
+  font-size: 14px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  color: #6B7280;
+}
+.picker-btn { width: 100%; }
+
 .photo-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -347,7 +515,43 @@ const goBack = () => {
   box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
   z-index: 100;
 }
-/* 导航栏 */
+
+.btn-primary {
+  background: #1E3A5F;
+  color: #fff;
+  border-radius: 24px;
+  font-size: 16px;
+  height: 48px;
+  line-height: 48px;
+  text-align: center;
+  border: none;
+  width: 100%;
+}
+.btn-primary[disabled] { background: #9CA3AF; }
+.btn-loading { opacity: 0.8; }
+
+/* 加载遮罩 */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { color: #fff; margin-top: 16px; font-size: 16px; }
+
 .nav-bar {
   display: flex;
   align-items: center;
@@ -361,21 +565,7 @@ const goBack = () => {
   z-index: 100;
 }
 
-.nav-back {
-  font-size: 28px;
-  font-weight: 300;
-  width: 40px;
-}
-
-.nav-title {
-  flex: 1;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.nav-placeholder {
-  width: 40px;
-}
-
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+.nav-placeholder { width: 40px; }
 </style>

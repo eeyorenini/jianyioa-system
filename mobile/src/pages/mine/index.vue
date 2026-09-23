@@ -61,6 +61,15 @@
     <view class="version-info">
       <text>简逸装饰 · 工地管理系统 v1.0</text>
     </view>
+
+    <!-- 角色选择弹窗 -->
+    <BottomPicker
+      v-model:visible="rolePicker.visible"
+      :title="rolePicker.title"
+      :items="rolePicker.items"
+      @select="onRoleSelect"
+      @cancel="rolePicker.visible = false"
+    />
   </view>
 </template>
 
@@ -68,6 +77,7 @@
 import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
+import BottomPicker from "@/components/bottom-picker.vue";
 
 const userStore = useUserStore();
 const userName = computed(() => userStore.state.name || '用户');
@@ -142,15 +152,33 @@ const goPage = (url) => {
 };
 
 const showRolePicker = () => {
-  const roles = ['管理员', '设计师', '工长', '监理', '业主', '主材', '财务', '助理'];
-  uni.showActionSheet({
-    itemList: roles,
-    success: (res) => {
-      userStore.state.role_name = roles[res.tapIndex];
-      userStore.state.position = roles[res.tapIndex];
-      uni.showToast({ title: `已切换为 ${roles[res.tapIndex]}`, icon: 'none' });
-    },
-  });
+  rolePicker.value = {
+    visible: true,
+    title: '切换角色',
+    items: [
+      { name: '管理员', icon: '👑', value: '管理员' },
+      { name: '设计师', icon: '✏️', value: '设计师' },
+      { name: '工长', icon: '👷', value: '工长' },
+      { name: '监理', icon: '🔍', value: '监理' },
+      { name: '业主', icon: '🏠', value: '业主' },
+      { name: '主材', icon: '🧱', value: '主材' },
+      { name: '财务', icon: '💰', value: '财务' },
+      { name: '助理', icon: '📋', value: '助理' },
+    ],
+  };
+};
+
+const rolePicker = ref({
+  visible: false,
+  title: '切换角色',
+  items: [],
+});
+
+const onRoleSelect = ({ item }) => {
+  rolePicker.value.visible = false;
+  userStore.state.role_name = item.value;
+  userStore.state.position = item.value;
+  uni.showToast({ title: `已切换为 ${item.value}`, icon: 'none' });
 };
 
 const logout = () => {

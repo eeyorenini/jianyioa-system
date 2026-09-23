@@ -167,17 +167,20 @@ const handleCustomerLogin = async () => {
       method: 'POST',
       data: { phone: custForm.phone, name: custForm.name },
     });
+    console.log('登录响应:', res);
     const data = res.data;
-    if (data.success && data.customer) {
+    console.log('data:', data);
+    if (data && data.success && data.customer) {
       uni.setStorageSync('userInfo', data.customer);
       uni.setStorageSync('token', 'logged-in');
       uni.setStorageSync('userType', 'customer');
-      // 客户 → 客户首页
-      uni.switchTab({ url: '/pages/customer/home' });
+      // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
+      uni.reLaunch({ url: '/pages/customer/home' });
     } else {
-      uni.showToast({ title: data.message || '登录失败', icon: 'none' });
+      uni.showToast({ title: data?.message || '登录失败', icon: 'none' });
     }
   } catch (e) {
+    console.error('登录错误:', e);
     uni.showToast({ title: '网络错误', icon: 'none' });
   } finally {
     loading.value = false;

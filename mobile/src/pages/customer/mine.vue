@@ -48,11 +48,9 @@
   </view>
 </template>
 
-<script setup >
-import customerTabbar from "@/components/customer-tabbar.vue";
-
-<script setup >
+<script setup>
 import { computed } from "vue";
+import customerTabbar from "@/components/customer-tabbar.vue";
 
 const userInfo = computed(() => uni.getStorageSync('userInfo'));
 

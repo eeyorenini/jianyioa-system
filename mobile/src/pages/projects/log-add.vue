@@ -136,41 +136,48 @@ const submit = async () => {
   }
   submitting.value = true;
   try {
-    const token = uni.getStorageSync("token");
-    // 先上传照片
+    const userInfo = uni.getStorageSync('userInfo');
+    console.log('提交日志 - userInfo:', userInfo);
+    console.log('提交日志 - projectId:', projectId.value);
+    console.log('提交日志 - content:', form.content);
+    console.log('提交日志 - photos:', photos.value);
+
     const photoUrls = [];
+    // 先上传照片
     for (const path of photos.value) {
-      const uploadRes = await uni.uploadFile({
-        url: '/api/upload',
-        filePath: path,
-        name: 'file',
-        header: { Authorization: token },
-      });
-      const data = JSON.parse(uploadRes.data);
-      if (data.url) photoUrls.push(data.url);
+      console.log('上传图片:', path);
+      try {
+        const uploadRes = await uni.uploadFile({
+          url: '/api/upload',
+          filePath: path,
+          name: 'file',
+        });
+        console.log('上传结果:', uploadRes);
+        const data = JSON.parse(uploadRes.data);
+        if (data.url) photoUrls.push(data.url);
+      } catch (uploadErr) {
+        console.error('上传失败:', uploadErr);
+      }
     }
 
-    await uni.request({
+    console.log('准备提交到 /api/project-logs');
+    const res = await uni.request({
       url: "/api/project-logs",
       method: "POST",
-      header: { Authorization: token },
       data: {
         project_id: projectId.value,
-        action_type: 'note_added',
-        description: form.content,
         content: form.content,
-        worker_count: form.worker_count,
-        work_type: form.work_type,
-        tomorrow_plan: form.tomorrow_plan,
-        note: form.note,
-        photos: photoUrls.join(','),
+        operator: userInfo?.name || userInfo?.username || '未知',
+        images: JSON.stringify(photoUrls),
       },
     });
+    console.log('提交结果:', res);
 
     uni.showToast({ title: '日志已提交', icon: 'success' });
     setTimeout(() => uni.navigateBack(), 1500);
   } catch (e) {
-    uni.showToast({ title: '提交失败', icon: 'none' });
+    console.error('提交失败:', e);
+    uni.showToast({ title: '提交失败: ' + (e.message || e), icon: 'none' });
   } finally {
     submitting.value = false;
   }

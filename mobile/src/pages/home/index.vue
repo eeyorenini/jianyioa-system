@@ -2,6 +2,7 @@
   <view class="page">
     <!-- 顶部导航（首页不需要返回按钮） -->
     <view class="nav-bar">
+      <view class="nav-placeholder"></view>
       <text class="nav-title">首页</text>
       <view class="msg-icon" @click="goMessage">
         <text>🔔</text>
@@ -117,13 +118,42 @@
         </view>
       </view>
     </view>
+
+    <!-- ===== 底部选择弹窗 ===== -->
+    <!-- 项目选择弹窗（通用） -->
+    <BottomPicker
+      v-model:visible="projectPicker.visible"
+      :title="projectPicker.title"
+      :items="projectPicker.items"
+      @select="onProjectSelect"
+      @cancel="onProjectPickerCancel"
+    />
+
+    <!-- 材料管理弹窗 -->
+    <BottomPicker
+      v-model:visible="materialPicker.visible"
+      :title="materialPicker.title"
+      :items="materialPicker.items"
+      @select="onMaterialSelect"
+      @cancel="onMaterialPickerCancel"
+    />
+
+    <!-- 甘特图项目选择弹窗 -->
+    <BottomPicker
+      v-model:visible="ganttPicker.visible"
+      :title="ganttPicker.title"
+      :items="ganttPicker.items"
+      @select="onGanttSelect"
+      @cancel="onGanttPickerCancel"
+    />
   </view>
 </template>
 
-<script setup >
+<script setup>
 import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
+import BottomPicker from "@/components/bottom-picker.vue";
 
 const userStore = useUserStore();
 const userName = computed(() => userStore.state.name || '用户');
@@ -177,13 +207,14 @@ onMounted(() => {
   // 实际加载时从后端拉取数据
 });
 
+// ====== 快捷入口 ======
 const quickEntries = [
   { label: '项目管理', icon: '📁', bg: '#DBEAFE', action: 'projectList' },
   { label: '新建项目', icon: '📋', bg: '#D1FAE5', action: 'newProject' },
   { label: '施工日志', icon: '📝', bg: '#D1FAE5', action: 'newLog' },
   { label: '质量巡检', icon: '🔍', bg: '#FEE2E2', action: 'newInspect' },
   { label: '派工管理', icon: '👷', bg: '#FEF3C7', action: 'newDispatch' },
-  { label: '材料申请', icon: '🧱', bg: '#EDE9FE', action: 'newMaterial' },
+  { label: '主材管理', icon: '🧱', bg: '#EDE9FE', action: 'newMaterial' },
   { label: '验收管理', icon: '✅', bg: '#D1FAE5', action: 'newAccept' },
   { label: '变更单', icon: '📄', bg: '#FEF3C7', action: 'newChange' },
   { label: '收支记录', icon: '💰', bg: '#DBEAFE', action: 'newFinance' },
@@ -210,25 +241,58 @@ const recentProjects = ref([
   { id: 5, name: '撒打算', customer: '郭大大', statusText: '即将竣工', progress: 88 },
 ]);
 
+// ====== 底部弹窗状态 ======
+// 通用项目选择弹窗
+const projectPicker = ref({
+  visible: false,
+  title: '选择项目',
+  items: [],
+});
+let projectPickerCallback = null; // 回调函数
+
+// 材料管理弹窗
+const materialPicker = ref({
+  visible: false,
+  title: '选择项目',
+  items: [],
+});
+
+// 甘特图项目弹窗
+const ganttPicker = ref({
+  visible: false,
+  title: '选择项目',
+  items: [],
+});
+
+// ====== 快捷操作处理 ======
 const handleQuick = (item) => {
   switch (item.action) {
     case 'projectList': uni.switchTab({ url: '/pages/projects/list' }); break;
     case 'newProject': uni.navigateTo({ url: '/pages/projects/add' }); break;
-    case 'newLog': pickProjectThen('/pages/projects/log-add'); break;
-    case 'newInspect': pickProjectThen('/pages/inspection/add'); break;
-    case 'newDispatch': pickProjectThen('/pages/dispatch/add'); break;
-    case 'newMaterial': pickProjectThenMaterial(); break;
-    case 'newAccept': pickProjectThen('/pages/acceptance/list'); break;
-    case 'newChange': pickProjectThen('/pages/change/list'); break;
-    case 'newFinance': pickProjectThen('/pages/finance/add'); break;
+    case 'newLog': openProjectPicker('选择项目后添加施工日志', (p) => {
+      uni.navigateTo({ url: `/pages/projects/log-add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
+    case 'newInspect': openProjectPicker('选择项目后添加巡检', (p) => {
+      uni.navigateTo({ url: `/pages/inspection/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
+    case 'newDispatch': openProjectPicker('选择项目后添加派工', (p) => {
+      uni.navigateTo({ url: `/pages/dispatch/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
+    case 'newMaterial': openMaterialPicker(); break;
+    case 'newAccept': uni.navigateTo({ url: '/pages/acceptance/list' }); break;
+    case 'newChange': uni.navigateTo({ url: '/pages/change/list' }); break;
+    case 'newFinance': openProjectPicker('选择项目后添加收支记录', (p) => {
+      uni.navigateTo({ url: `/pages/finance/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
     case 'addressbook': uni.navigateTo({ url: '/pages/addressbook/addressbook' }); break;
     case 'customer': uni.navigateTo({ url: '/pages/customers/customers' }); break;
-    case 'gantt': showGanttPicker(); break;
+    case 'gantt': openGanttPicker(); break;
   }
 };
 
-// 选项目后跳转（通用）
-const pickProjectThen = async (targetUrl) => {
+// ====== 通用项目选择弹窗 ======
+const openProjectPicker = async (title, callback) => {
+  projectPickerCallback = callback;
   try {
     uni.showLoading({ title: '加载中...' });
     const token = uni.getStorageSync('token');
@@ -239,23 +303,42 @@ const pickProjectThen = async (targetUrl) => {
       uni.showToast({ title: '暂无项目', icon: 'none' });
       return;
     }
-    const items = data.map((p) => p.name);
-    uni.showActionSheet({
-      title: '选择项目',
-      itemList: items,
-      success: (res) => {
-        const selected = data[res.tapIndex];
-        uni.navigateTo({ url: `${targetUrl}?projectId=${selected.id}&projectName=${encodeURIComponent(selected.name)}` });
-      },
-    });
+    projectPicker.value = {
+      visible: true,
+      title: title || '选择项目',
+      items: data.map((p) => ({
+        name: p.name,
+        desc: p.customer_name ? `客户: ${p.customer_name}` : (p.status || ''),
+        value: p.id,
+        _raw: p,
+      })),
+    };
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: '加载失败', icon: 'none' });
   }
 };
 
-// 材料管理选项目后弹操作菜单
-const pickProjectThenMaterial = async () => {
+const onProjectSelect = ({ item }) => {
+  projectPicker.value.visible = false;
+  if (projectPickerCallback && item._raw) {
+    projectPickerCallback(item._raw);
+    projectPickerCallback = null;
+  }
+};
+
+const onProjectPickerCancel = () => {
+  projectPicker.value.visible = false;
+  projectPickerCallback = null;
+};
+
+// ====== 材料管理弹窗 ======
+const materialActionItems = [
+  { name: '采购申请', desc: '向供应商提交材料采购', icon: '🛒', value: 'purchase' },
+  { name: '到货验收', desc: '验收已到货的材料', icon: '📦', value: 'inbound' },
+];
+
+const openMaterialPicker = async () => {
   try {
     uni.showLoading({ title: '加载中...' });
     const token = uni.getStorageSync('token');
@@ -263,79 +346,102 @@ const pickProjectThenMaterial = async () => {
     uni.hideLoading();
     const data = (res.data) || [];
     if (data.length === 0) {
-      uni.showToast({ title: '暂无项目', icon: 'none' });
+      // 没有项目时，直接显示操作选项
+      materialPicker.value = {
+        visible: true,
+        title: '选择操作',
+        items: materialActionItems,
+      };
       return;
     }
-    const items = data.map((p) => p.name);
-    uni.showActionSheet({
-      title: '选择项目',
-      itemList: [...items, '采购申请', '到货验收'],
+    // 有项目时，显示操作选项列表
+    materialPicker.value = {
+      visible: true,
+      title: '主材管理',
+      items: materialActionItems.concat(
+        data.map((p) => ({
+          name: p.name,
+          desc: p.customer_name ? `客户: ${p.customer_name}` : (p.status || ''),
+          icon: '📁',
+          value: `proj_${p.id}`,
+          _raw: p,
+        }))
+      ),
+    };
+  } catch (e) {
+    uni.hideLoading();
+    uni.showToast({ title: '加载失败', icon: 'none' });
+  }
+};
+
+const onMaterialSelect = ({ item }) => {
+  materialPicker.value.visible = false;
+  if (item.value === 'purchase') {
+    uni.navigateTo({ url: '/pages/material/purchase' });
+  } else if (item.value === 'inbound') {
+    uni.navigateTo({ url: '/pages/material/inbound' });
+  } else if (item.value && item.value.startsWith('proj_') && item._raw) {
+    // 选了具体项目，再选操作
+    const p = item._raw;
+    uni.showModal({
+      title: `${p.name}`,
+      content: '请选择操作',
+      confirmText: '采购申请',
+      cancelText: '到货验收',
       success: (res) => {
-        if (res.tapIndex < data.length) {
-          const selected = data[res.tapIndex];
-          // 选项目后再选操作类型
-          uni.showActionSheet({
-            title: `「${selected.name}」的操作`,
-            itemList: ['采购申请', '到货验收'],
-            success: (r) => {
-              if (r.tapIndex === 0) {
-                uni.navigateTo({ url: `/pages/material/purchase?projectId=${selected.id}&projectName=${encodeURIComponent(selected.name)}` });
-              } else {
-                uni.navigateTo({ url: `/pages/material/inbound?projectId=${selected.id}&projectName=${encodeURIComponent(selected.name)}` });
-              }
-            },
-          });
+        if (res.confirm) {
+          uni.navigateTo({ url: `/pages/material/purchase?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
         } else {
-          // 不选项目，直接选操作
-          uni.showActionSheet({
-            title: '选择操作',
-            itemList: ['采购申请', '到货验收'],
-            success: (r) => {
-              if (r.tapIndex === 0) {
-                uni.navigateTo({ url: '/pages/material/purchase' });
-              } else {
-                uni.navigateTo({ url: '/pages/material/inbound' });
-              }
-            },
-          });
+          uni.navigateTo({ url: `/pages/material/inbound?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
         }
       },
     });
-  } catch (e) {
-    uni.hideLoading();
-    uni.showToast({ title: '加载失败', icon: 'none' });
   }
 };
 
-const showGanttPicker = async () => {
+const onMaterialPickerCancel = () => {
+  materialPicker.value.visible = false;
+};
+
+// ====== 甘特图项目选择 ======
+const openGanttPicker = async () => {
   try {
     uni.showLoading({ title: '加载中...' });
     const token = uni.getStorageSync('token');
-    const res = await uni.request({
-      url: '/api/projects',
-      header: { Authorization: token },
-    });
+    const res = await uni.request({ url: '/api/projects', header: { Authorization: token } });
     uni.hideLoading();
     const data = (res.data) || [];
-    // 过滤出有日期的项目
     const withDates = data.filter((p) => p.start_date && p.end_date);
     if (withDates.length === 0) {
       uni.showToast({ title: '暂无可用甘特图的项目', icon: 'none' });
       return;
     }
-    const items = withDates.map((p) => p.name);
-    uni.showActionSheet({
-      title: '选择项目',
-      itemList: items,
-      success: (res) => {
-        const selected = withDates[res.tapIndex];
-        uni.navigateTo({ url: `/pages/projects/gantt?id=${selected.id}` });
-      },
-    });
+    ganttPicker.value = {
+      visible: true,
+      title: '选择项目查看甘特图',
+      items: withDates.map((p) => ({
+        name: p.name,
+        desc: `${p.start_date} → ${p.end_date}`,
+        icon: '📊',
+        value: p.id,
+        _raw: p,
+      })),
+    };
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: '加载失败', icon: 'none' });
   }
+};
+
+const onGanttSelect = ({ item }) => {
+  ganttPicker.value.visible = false;
+  if (item._raw) {
+    uni.navigateTo({ url: `/pages/projects/gantt?id=${item._raw.id}` });
+  }
+};
+
+const onGanttPickerCancel = () => {
+  ganttPicker.value.visible = false;
 };
 
 const goProjects = (filter) => {
@@ -361,10 +467,6 @@ const goTodo = (todo) => {
 const goProject = (id) => {
   uni.navigateTo({ url: `/pages/projects/detail?id=${id}` });
 };
-
-onMounted(() => {
-  // 实际加载时从后端拉取数据
-});
 </script>
 
 <style scoped>
@@ -498,207 +600,237 @@ onMounted(() => {
 
 .quick-label {
   font-size: 11px;
-  color: #6B7280;
+  color: #444;
+  text-align: center;
+  line-height: 1.3;
 }
 
 /* 待办 */
 .todo-section {
-  margin: 16px 16px 0;
+  margin: 16px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
 }
 
 .todo-count {
-  background: var(--color-accent, #FF6B35);
+  background: #FF4D4F;
   color: #fff;
   font-size: 11px;
-  padding: 1px 7px;
+  padding: 2px 7px;
   border-radius: 10px;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .todo-list {
-  background: #fff;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .todo-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid #F5F7FA;
-  cursor: pointer;
+  padding: 12px 0;
+  border-bottom: 1px solid #F5F5F5;
 }
 
-.todo-item:last-child {
-  border-bottom: none;
-}
-
-.todo-item:active {
-  background: #F9FAFB;
-}
+.todo-item:last-child { border-bottom: none; }
 
 .todo-left {
   display: flex;
   align-items: center;
   gap: 10px;
   flex: 1;
+  min-width: 0;
 }
 
 .todo-priority {
-  width: 4px;
-  height: 32px;
-  border-radius: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.priority-danger { background: #EF4444; }
-.priority-warning { background: #F59E0B; }
-.priority-info { background: #3B82F6; }
+.priority-warning { background: #FF9C3A; }
+.priority-danger { background: #FF4D4F; }
+.priority-info { background: #36BFC8; }
 
 .todo-content {
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .todo-title {
-  display: block;
   font-size: 14px;
-  color: #1A1F36;
-  font-weight: 500;
-  margin-bottom: 2px;
+  color: #1A1A1A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .todo-meta {
   font-size: 12px;
-  color: #9CA3AF;
+  color: #999;
 }
 
 .todo-arrow {
-  font-size: 20px;
-  color: #D1D5DB;
+  font-size: 18px;
+  color: #CCC;
+  flex-shrink: 0;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+  gap: 8px;
+}
+
+.empty-icon {
+  font-size: 32px;
+  color: #52C41A;
+}
+
+.empty-text {
+  font-size: 13px;
+  color: #999;
 }
 
 /* 预警 */
 .warning-section {
-  margin: 16px 16px 0;
+  margin: 0 16px;
+  background: #FFF7E6;
+  border-radius: 14px;
+  padding: 16px;
+  border: 1px solid #FFE7B0;
 }
 
 .warning-title {
-  color: #DC2626;
+  color: #D46B08;
+  margin-bottom: 12px;
 }
 
 .warning-list {
-  background: #fff;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .warning-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid #FEF2F2;
-  cursor: pointer;
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
 }
 
-.warning-item:last-child { border-bottom: none; }
+.warning-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .warning-name {
-  display: block;
   font-size: 14px;
-  font-weight: 500;
-  color: #1A1F36;
-  margin-bottom: 2px;
+  font-weight: 600;
+  color: #1A1A1A;
 }
 
 .warning-desc {
   font-size: 12px;
-  color: #EF4444;
+  color: #D46B08;
 }
 
 .warning-days {
-  background: #FEE2E2;
-  color: #991B1B;
+  background: #FF4D4F;
+  color: #fff;
   font-size: 12px;
-  font-weight: 600;
-  padding: 4px 10px;
+  padding: 3px 8px;
   border-radius: 8px;
+  font-weight: 600;
 }
 
 /* 最近项目 */
 .recent-section {
-  margin: 16px 16px 0;
+  margin: 16px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
 }
 
 .more-link {
   font-size: 12px;
-  color: #9CA3AF;
+  color: #1E3A5F;
   margin-left: auto;
 }
 
 .recent-list {
-  background: #fff;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .recent-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid #F5F7FA;
-  cursor: pointer;
+  gap: 12px;
 }
 
-.recent-item:last-child { border-bottom: none; }
-.recent-item:active { background: #F9FAFB; }
+.recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
 
 .recent-name {
-  display: block;
   font-size: 14px;
-  font-weight: 500;
-  color: #1A1F36;
-  margin-bottom: 2px;
+  font-weight: 600;
+  color: #1A1A1A;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .recent-meta {
   font-size: 12px;
-  color: #9CA3AF;
+  color: #999;
 }
 
 .recent-progress {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .progress-bar-sm {
   width: 60px;
-  height: 5px;
-  background: #E5E7EB;
-  border-radius: 3px;
-  overflow: hidden;
+  height: 4px;
+  background: #EEE;
+  border-radius: 2px;
 }
 
 .progress-fill-sm {
   height: 100%;
-  background: linear-gradient(90deg, #1E3A5F, #3B82F6);
-  border-radius: 3px;
+  background: #1E3A5F;
+  border-radius: 2px;
 }
 
 .progress-num-sm {
-  font-size: 12px;
-  color: #1E3A5F;
-  font-weight: 600;
-  width: 32px;
-  text-align: right;
+  font-size: 11px;
+  color: #999;
 }
 
-/* 导航栏 */
+/* 顶部导航 */
 .nav-bar {
   display: flex;
   align-items: center;
@@ -707,38 +839,32 @@ onMounted(() => {
   color: #fff;
   padding: 12px 16px;
   padding-top: max(12px, env(safe-area-inset-top));
-  position: sticky;
-  top: 0;
-  z-index: 100;
 }
 
 .nav-title {
-  flex: 1;
-  text-align: center;
   font-size: 17px;
   font-weight: 600;
+  text-align: center;
+  flex: 1;
 }
 
 .nav-placeholder {
   width: 40px;
 }
 
-/* 消息铃铛 */
 .msg-icon {
   position: relative;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   font-size: 20px;
+  width: 40px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .msg-badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  background: #FF4949;
+  top: -6px;
+  right: -6px;
+  background: #FF4D4F;
   color: #fff;
   font-size: 10px;
   min-width: 16px;
@@ -748,6 +874,5 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 0 4px;
-  line-height: 1;
 }
 </style>

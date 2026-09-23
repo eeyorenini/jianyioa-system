@@ -43,6 +43,13 @@
       }
     },
     {
+      "path": "pages/customer/logs",
+      "style": {
+        "navigationBarTitleText": "施工日志",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/projects/list",
       "style": {
         "navigationBarTitleText": "项目管理",

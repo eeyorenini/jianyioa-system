@@ -49,11 +49,9 @@
   </view>
 </template>
 
-<script setup >
-import customerTabbar from "@/components/customer-tabbar.vue";
-
-<script setup >
+<script setup>
 import { ref, computed, onMounted } from "vue";
+import customerTabbar from "@/components/customer-tabbar.vue";
 
 const keyword = ref('');
 const list = ref([]);
@@ -90,9 +88,9 @@ const fetchList = async () => {
   try {
     const userInfo = uni.getStorageSync('userInfo');
     const customerId = userInfo?.id;
+    // 客户通过 customer_id 参数查询项目
     const res = await uni.request({
-      url: '/api/projects',
-      header: customerId ? { 'x-user-id': customerId } : {},
+      url: `/api/projects${customerId ? '?customer_id=' + customerId : ''}`,
     });
     const data = res.data;
     if (Array.isArray(data)) {

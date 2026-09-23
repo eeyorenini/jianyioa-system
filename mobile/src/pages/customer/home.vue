@@ -13,107 +13,106 @@
 
     <!-- 内容 -->
     <view class="content-wrapper">
-
-    <!-- 项目卡片 -->
-    <view class="project-section" v-if="project">
-      <view class="project-card">
-        <view class="project-header">
-          <text class="project-name">{{ project.name }}</text>
-          <view class="status-badge" :class="getStatusClass(project.status)">
-            {{ project.status || '进行中' }}
-          </view>
-        </view>
-        <view class="project-address">
-          📍 {{ project.customer_address || project.address || '地址待确认' }}
-        </view>
-
-        <!-- 进度 -->
-        <view class="progress-section">
-          <view class="progress-header">
-            <text class="progress-label">整体进度</text>
-            <text class="progress-pct" :class="getProgressClass(project.progress)">
-              {{ project.progress || 0 }}%
-            </text>
-          </view>
-          <view class="progress-bar">
-            <view class="progress-fill" :class="getProgressClass(project.progress)"
-              :style="{ width: (project.progress || 0) + '%' }"></view>
-          </view>
-        </view>
-
-        <!-- 当前节点 -->
-        <view class="current-node" v-if="currentNode">
-          <text class="node-label">📅 当前节点</text>
-          <text class="node-name">{{ currentNode.node_name || currentNode.stage_name }}</text>
-        </view>
-      </view>
-
-      <!-- 异常提醒 -->
-      <view class="alert-card" v-if="hasAlerts">
-        <view class="alert-item" v-if="pendingInspect > 0" @click="goInspections">
-          <text class="alert-icon">🔍</text>
-          <text class="alert-text">有 {{ pendingInspect }} 条巡检记录待整改</text>
-          <text class="alert-arrow">›</text>
-        </view>
-        <view class="alert-item" v-if="pendingPay > 0">
-          <text class="alert-icon">💰</text>
-          <text class="alert-text">待回款 ¥{{ pendingPay }}</text>
-        </view>
-      </view>
-
-      <!-- 施工日志 -->
-      <view class="section-card">
-        <view class="section-title">
-          <text>最近施工日志</text>
-          <text class="more-link" @click="goLogs">查看全部 ›</text>
-        </view>
-        <view class="log-list" v-if="logs.length">
-          <view class="log-item" v-for="log in logs" :key="log.id" @click="goLogDetail(log)">
-            <view class="log-dot"></view>
-            <view class="log-content">
-              <text class="log-title">{{ log.content }}</text>
-              <text class="log-meta">{{ log.creator_name }} · {{ log.created_at }}</text>
+      <!-- 项目卡片 -->
+      <view class="project-section" v-if="project">
+        <view class="project-card">
+          <view class="project-header">
+            <text class="project-name">{{ project.name }}</text>
+            <view class="status-badge" :class="getStatusClass(project.status)">
+              {{ project.status || '进行中' }}
             </view>
           </view>
-        </view>
-        <view class="empty-tip" v-else>
-          <text>暂无施工日志</text>
-        </view>
-      </view>
+          <view class="project-address">
+            📍 {{ project.customer_address || project.address || '地址待确认' }}
+          </view>
 
-      <!-- 节点进度 -->
-      <view class="section-card">
-        <view class="section-title">
-          <text>项目进度</text>
-        </view>
-        <view class="node-track" v-if="project.nodes && project.nodes.length">
-          <view
-            class="node-step"
-            v-for="(node, idx) in project.nodes"
-            :key="node.id"
-          >
-            <view class="step-circle" :class="`circle-${node.status || 'pending'}`">
-              <text v-if="node.status === 'completed'">✓</text>
-              <text v-else-if="node.status === 'in_progress'">●</text>
-              <text v-else>○</text>
+          <!-- 进度 -->
+          <view class="progress-section">
+            <view class="progress-header">
+              <text class="progress-label">整体进度</text>
+              <text class="progress-pct" :class="getProgressClass(project.progress)">
+                {{ project.progress || 0 }}%
+              </text>
             </view>
-            <text class="step-name" :class="`name-${node.status || 'pending'}`">
-              {{ node.node_name || node.stage_name }}
-            </text>
+            <view class="progress-bar">
+              <view class="progress-fill" :class="getProgressClass(project.progress)"
+                :style="{ width: (project.progress || 0) + '%' }"></view>
+            </view>
+          </view>
+
+          <!-- 当前节点 -->
+          <view class="current-node" v-if="currentNode">
+            <text class="node-label">📅 当前节点</text>
+            <text class="node-name">{{ currentNode.node_name || currentNode.stage_name }}</text>
           </view>
         </view>
-        <view class="empty-tip" v-else>
-          <text>暂无节点信息</text>
+
+        <!-- 异常提醒 -->
+        <view class="alert-card" v-if="hasAlerts">
+          <view class="alert-item" v-if="pendingInspect > 0" @click="goInspections">
+            <text class="alert-icon">🔍</text>
+            <text class="alert-text">有 {{ pendingInspect }} 条巡检记录待整改</text>
+            <text class="alert-arrow">›</text>
+          </view>
+          <view class="alert-item" v-if="pendingPay > 0">
+            <text class="alert-icon">💰</text>
+            <text class="alert-text">待回款 ¥{{ pendingPay }}</text>
+          </view>
+        </view>
+
+        <!-- 施工日志 -->
+        <view class="section-card">
+          <view class="section-title">
+            <text>最近施工日志</text>
+            <text class="more-link" @click="goLogs">查看全部 ›</text>
+          </view>
+          <view class="log-list" v-if="logs.length">
+            <view class="log-item" v-for="log in logs" :key="log.id" @click="goLogDetail(log)">
+              <view class="log-dot"></view>
+              <view class="log-content">
+                <text class="log-title">{{ log.content }}</text>
+                <text class="log-meta">{{ log.creator_name }} · {{ log.created_at }}</text>
+              </view>
+            </view>
+          </view>
+          <view class="empty-tip" v-else>
+            <text>暂无施工日志</text>
+          </view>
+        </view>
+
+        <!-- 节点进度 -->
+        <view class="section-card">
+          <view class="section-title">
+            <text>项目进度</text>
+          </view>
+          <view class="node-track" v-if="project.nodes && project.nodes.length">
+            <view
+              class="node-step"
+              v-for="(node, idx) in project.nodes"
+              :key="node.id"
+            >
+              <view class="step-circle" :class="`circle-${node.status || 'pending'}`">
+                <text v-if="node.status === 'completed'">✓</text>
+                <text v-else-if="node.status === 'in_progress'">●</text>
+                <text v-else>○</text>
+              </view>
+              <text class="step-name" :class="`name-${node.status || 'pending'}`">
+                {{ node.node_name || node.stage_name }}
+              </text>
+            </view>
+          </view>
+          <view class="empty-tip" v-else>
+            <text>暂无节点信息</text>
+          </view>
         </view>
       </view>
-    </view>
 
-    </view>
-    <!-- 无项目 -->
-    <view class="empty-state" v-else>
-      <text class="empty-icon">🏠</text>
-      <text class="empty-text">暂无关联项目</text>
-      <text class="empty-sub">请联系工作人员为您绑定项目</text>
+      <!-- 无项目 -->
+      <view class="empty-state" v-else>
+        <text class="empty-icon">🏠</text>
+        <text class="empty-text">暂无关联项目</text>
+        <text class="empty-sub">请联系工作人员为您绑定项目</text>
+      </view>
     </view>
 
     <!-- 客户专属底部导航 -->
@@ -182,18 +181,29 @@ const fetchProject = async () => {
   try {
     const userInfo = uni.getStorageSync('userInfo');
     const customerId = userInfo?.id;
-    if (!customerId) return;
+    console.log('用户信息:', userInfo);
+    console.log('客户ID:', customerId);
+    if (!customerId) {
+      console.log('没有客户ID');
+      return;
+    }
 
+    // 客户通过 customer_id 参数查询项目
     const res = await uni.request({
-      url: '/api/projects',
-      header: { 'x-user-id': customerId },
+      url: `/api/projects?customer_id=${customerId}`,
     });
+    console.log('项目接口返回:', res.data);
     const data = res.data;
     if (Array.isArray(data) && data.length > 0) {
       // 取第一个关联到该客户的项目
       project.value = data[0];
+      console.log('设置项目:', project.value);
       // 获取日志
-      fetchLogs(data[0].id);
+      if (data[0].id) {
+        fetchLogs(data[0].id);
+      }
+    } else {
+      console.log('没有找到项目');
     }
   } catch (e) {
     console.error('获取项目失败', e);
@@ -203,7 +213,7 @@ const fetchProject = async () => {
 const fetchLogs = async (projectId) => {
   try {
     const res = await uni.request({
-      url: `/api/project-logs?project_id=${projectId}`,
+      url: `/api/project-logs/${projectId}`,
     });
     const data = res.data;
     if (Array.isArray(data)) {

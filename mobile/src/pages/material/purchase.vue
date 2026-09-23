@@ -1,6 +1,5 @@
 <template>
   <view class="page">
-    <!-- 头部 -->
     <!-- 顶部导航 -->
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
@@ -13,12 +12,10 @@
       <view class="form-title">基本信息</view>
       <view class="form-item">
         <text class="form-label">项目</text>
-        <picker :value="projectIndex" :range="projects" range-key="name" @change="onProjectChange">
-          <view class="picker-value">
-            {{ selectedProject?.name || '请选择项目' }}
-            <text class="iconfont icon-arrow-down"></text>
-          </view>
-        </picker>
+        <view class="picker-value" @click="showProjectPicker">
+          {{ selectedProject?.name || '请选择项目' }}
+          <text class="iconfont icon-arrow-down"></text>
+        </view>
       </view>
       <view class="form-item">
         <text class="form-label">材料名称</text>
@@ -54,11 +51,21 @@
     <view class="submit-bar">
       <button class="btn-primary" :disabled="submitting" @click="submit">提交申请</button>
     </view>
+
+    <!-- 项目选择弹窗 -->
+    <BottomPicker
+      v-model:visible="projectPicker.visible"
+      :title="projectPicker.title"
+      :items="projectPicker.items"
+      @select="onProjectSelect"
+      @cancel="projectPicker.visible = false"
+    />
   </view>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import BottomPicker from "@/components/bottom-picker.vue";
 
 const projects = ref([])
 const projectIndex = ref(-1)
@@ -68,8 +75,28 @@ const form = ref({
   material_name: '', spec: '', quantity: '', unit: '', supplier: '', amount: '', remark: '', project_id: ''
 })
 
+const projectPicker = ref({
+  visible: false,
+  title: '选择项目',
+  items: [],
+})
+
+const showProjectPicker = () => {
+  projectPicker.value = {
+    visible: true,
+    title: '选择项目',
+    items: projects.value.map((p) => ({ name: p.name, icon: '📁', _index: projects.value.indexOf(p) })),
+  }
+}
+
+const onProjectSelect = ({ item }) => {
+  projectIndex.value = item._index
+  selectedProject.value = projects.value[item._index]
+  form.value.project_id = selectedProject.value?.id || ''
+  projectPicker.value.visible = false
+}
+
 onMounted(() => {
-  // 从 URL 参数预填项目
   const pages = getCurrentPages();
   const current = pages[pages.length - 1];
   const options = (current || {}).options || {};
@@ -77,7 +104,7 @@ onMounted(() => {
     form.value.project_id = options.projectId;
     if (options.projectName) {
       selectedProject.value = { id: options.projectId, name: decodeURIComponent(options.projectName) };
-      projectIndex.value = -1; // 禁用 picker 选择
+      projectIndex.value = -1;
     }
   }
   uni.request({
@@ -86,7 +113,6 @@ onMounted(() => {
     success: (res) => {
       if (res.data.code === 0) {
         projects.value = res.data.data?.list || [];
-        // 如果有预填项目，补全名称
         if (options.projectId && options.projectName) {
           const name = decodeURIComponent(options.projectName);
           const idx = projects.value.findIndex((p) => String(p.id) === String(options.projectId));
@@ -131,9 +157,6 @@ function submit() {
 
 <style lang="scss" scoped>
 .page { min-height: 100vh; background: #f5f5f5; padding-bottom: 120rpx; }
-
-
-
 .form-card { margin: 20rpx; background: #fff; border-radius: 16rpx; padding: 30rpx; }
 .form-title { font-size: 28rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 24rpx; }
 .form-item { display: flex; align-items: flex-start; padding: 20rpx 0; border-bottom: 1rpx solid #f5f5f5; }
@@ -144,7 +167,6 @@ function submit() {
 .picker-value { flex: 1; font-size: 28rpx; color: #333; display: flex; justify-content: space-between; align-items: center; }
 .submit-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 20rpx 40rpx; background: #fff; box-shadow: 0 -2rpx 10rpx rgba(0,0,0,0.05); }
 .btn-primary { background: #1E3A5F; color: #fff; border-radius: 40rpx; font-size: 28rpx; height: 88rpx; line-height: 88rpx; }
-/* 导航栏 */
 .nav-bar {
   display: flex;
   align-items: center;
@@ -157,22 +179,7 @@ function submit() {
   top: 0;
   z-index: 100;
 }
-
-.nav-back {
-  font-size: 28px;
-  font-weight: 300;
-  width: 40px;
-}
-
-.nav-title {
-  flex: 1;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.nav-placeholder {
-  width: 40px;
-}
-
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+.nav-placeholder { width: 40px; }
 </style>
