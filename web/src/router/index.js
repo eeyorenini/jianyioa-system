@@ -22,7 +22,6 @@ const SystemSettings = () => import('../views/SystemSettings.vue')
 const Approvals = () => import('../views/Approvals.vue')
 const Reports = () => import('../views/Reports.vue')
 const Notices = () => import('../views/Notices.vue')
-const Inspections = () => import('../views/Inspections.vue')
 const Acceptance = () => import('../views/Acceptance.vue')
 const Invoices = () => import('../views/Invoices.vue')
 const Channels = () => import('../views/Channels.vue')
@@ -55,7 +54,6 @@ const routes = [
   { path: '/approvals', name: 'Approvals', component: Approvals },
   { path: '/reports', name: 'Reports', component: Reports },
   { path: '/notices', name: 'Notices', component: Notices },
-  { path: '/inspections', name: 'Inspections', component: Inspections },
   { path: '/acceptance', name: 'Acceptance', component: Acceptance },
   { path: '/invoices', name: 'Invoices', component: Invoices },
   { path: '/employees', name: 'Employees', component: Employees },

@@ -60,7 +60,6 @@
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
-          <el-menu-item index="/inspections">工地巡检</el-menu-item>
           <el-menu-item index="/acceptance">验收管理</el-menu-item>
           <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>
         </el-sub-menu>
@@ -93,7 +92,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.16</div>
+      <div class="sidebar-version">v 2.1.17</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -131,7 +130,6 @@
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
-          <el-menu-item index="/inspections">工地巡检</el-menu-item>
           <el-menu-item index="/acceptance">验收管理</el-menu-item>
           <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>
         </el-sub-menu>
@@ -164,7 +162,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.16</div>
+      <div class="sidebar-version">v 2.1.17</div>
     </div>
     
     <!-- 主内容区 -->
@@ -242,7 +240,7 @@ const pageTitle = computed(() => {
     '/quotes': '报价管理', '/main-materials': '主材管理',
     '/warehouse': '仓库管理', '/material-orders': '采购订单',
     '/approvals': '审批管理', '/reports': '工作汇报',
-    '/notices': '公告管理', '/inspections': '工地巡检',
+    '/notices': '公告管理',
     '/acceptance': '验收管理', '/invoices': '发票管理',
     '/employees': '员工管理', '/roles': '角色权限',
     '/departments': '部门管理', '/sms-templates': '短信模板',

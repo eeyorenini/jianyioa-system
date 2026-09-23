@@ -100,7 +100,7 @@ const form = reactive({
   result: '合格',
   rectify_status: '待整改',
   created_at: ''
-})
+});
 
 const getScoreType = (score) => {
   if (score >= 90) return 'success'
@@ -168,7 +168,7 @@ const closeDialog = () => {
   form.result = '合格'
   form.rectify_status = '待整改'
   form.created_at = ''
-})
+});
 
 onMounted(() => {
   loadData()
