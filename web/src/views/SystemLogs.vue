@@ -158,7 +158,7 @@ const loadData = async () => {
       params.end_date = filters.dateRange[1]
     }
     const res = await axios.get('/api/system-logs', { params })
-    logList.value = res.data.data || []
+    logList.value = res.data.logs || []
     total.value = res.data.total || 0
   } catch (e) {
     ElMessage.error('加载失败')

@@ -53,7 +53,7 @@ async function ensureSystemLogTable() {
       INDEX idx_path (path(100)),
       INDEX idx_success (success)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    systemLogStmt = pool.format('INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    systemLogStmt = pool.format('INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
       ['', '', '', '', null, '', '', '', null, null, '', 1]);
   } catch (e) { console.log('system_logs init error:', e.message); }
 }
@@ -98,7 +98,7 @@ app.use((req, res, next) => {
       }
       try {
         await pool.query(
-          `INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [req.method, req.path, JSON.stringify(req.query), safeBody.slice(0, 2000), userId, username, ip, (req.headers['user-agent'] || '').slice(0, 500), status, duration, success === 0 ? (res.errorMessage || '') : '', success]
         );
       } catch (e) {
@@ -1489,6 +1489,9 @@ async function addLog(userId, username, action, module, targetId, targetName, de
 }
 
 app.get('/api/operation-logs', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const { page, limit, module, action } = req.query;
   const p = parseInt(page) || 1;
   const l = parseInt(limit) || 50;
@@ -1519,6 +1522,9 @@ app.get('/api/operation-logs', async (req, res) => {
 // 系统日志（记录所有 API 请求）
 // ================================================================
 app.get('/api/system-logs', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const { page = 1, limit = 50, path, method, success, user_id, start_date, end_date } = req.query;
   let sql = 'SELECT * FROM system_logs WHERE 1=1';
   const params = [];
@@ -1534,12 +1540,12 @@ app.get('/api/system-logs', async (req, res) => {
   const stmt = db.prepare(sql);
   const countStmt = db.prepare(countSql);
   try {
-    const data = await stmt.all(...params);
+    const logs = await stmt.all(...params);
     const countResult = await countStmt.all(...params.slice(0, -2));
     const total = countResult[0] ? countResult[0].total : 0;
-    res.json({ data, total, page: parseInt(page), limit: parseInt(limit) });
+    res.json({ logs, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (e) {
-    res.json({ data: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
+    res.json({ logs: [], total: 0, page: parseInt(page), limit: parseInt(limit) });
   }
 });
 
@@ -1665,14 +1671,17 @@ app.get('/api/projects', async (req, res) => {
                LEFT JOIN customers c ON p.customer_id = c.id`;
     const params = [];
     const conditions = [];
-    if (!hasAll) {
-      conditions.push('p.creator_id = ?');
-      params.push(userId);
-    }
+
+    // 客户查询：通过 customer_id 参数直接查询，忽略 creator_id 限制
     if (customer_id) {
       conditions.push('p.customer_id = ?');
       params.push(customer_id);
+    } else if (!hasAll) {
+      // 非客户查询且无权限时，用 creator_id 限制
+      conditions.push('p.creator_id = ?');
+      params.push(userId);
     }
+
     if (status) {
       conditions.push('p.status = ?');
       params.push(status);

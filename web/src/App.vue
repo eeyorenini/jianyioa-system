@@ -86,6 +86,7 @@
           <template #title><el-icon><Tools /></el-icon><span>系统设置</span></template>
           <el-menu-item index="/system-settings">API接口</el-menu-item>
           <el-menu-item index="/operation-logs">操作日志</el-menu-item>
+          <el-menu-item index="/system-logs">系统日志</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
@@ -156,6 +157,7 @@
           <template #title><el-icon><Tools /></el-icon><span>系统设置</span></template>
           <el-menu-item index="/system-settings">API接口</el-menu-item>
           <el-menu-item index="/operation-logs">操作日志</el-menu-item>
+          <el-menu-item index="/system-logs">系统日志</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
@@ -244,7 +246,7 @@ const pageTitle = computed(() => {
     '/acceptance': '验收管理', '/invoices': '发票管理',
     '/employees': '员工管理', '/roles': '角色权限',
     '/departments': '部门管理', '/sms-templates': '短信模板',
-    '/system-settings': '系统设置', '/operation-logs': '操作日志',
+    '/system-settings': '系统设置', '/operation-logs': '操作日志', '/system-logs': '系统日志',
     '/message-center': '消息中心'
   }
   return titles[route.path] || '简逸ERP'

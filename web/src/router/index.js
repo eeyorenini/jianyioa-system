@@ -12,6 +12,7 @@ const Contracts = () => import('../views/Contracts.vue')
 const ContractTemplates = () => import('../views/ContractTemplates.vue')
 const ContractTemplatesEditor = () => import('../views/ContractTemplatesEditor.vue')
 const OperationLogs = () => import('../views/OperationLogs.vue')
+const SystemLogs = () => import('../views/SystemLogs.vue')
 const Budgets = () => import('../views/Budgets.vue')
 const MaterialOrders = () => import('../views/MaterialOrders.vue')
 const Employees = () => import('../views/Employees.vue')
@@ -43,6 +44,7 @@ const routes = [
   { path: '/contract-templates', name: 'ContractTemplates', component: ContractTemplates },
   { path: '/contract-templates/:id/edit', name: 'ContractTemplatesEditor', component: ContractTemplatesEditor },
   { path: '/operation-logs', name: 'OperationLogs', component: OperationLogs },
+  { path: '/system-logs', name: 'SystemLogs', component: SystemLogs },
   { path: '/budgets', name: 'Budgets', component: Budgets },
   { path: '/finance', name: 'Finance', component: Finance },
   { path: '/projects', name: 'Projects', component: Projects },
