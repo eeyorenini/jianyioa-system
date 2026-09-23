@@ -175,11 +175,14 @@ const handleCustomerLogin = async () => {
       uni.setStorageSync('userInfo', data.customer);
       uni.setStorageSync('token', 'logged-in');
       uni.setStorageSync('userType', 'customer');
-      // 如果是家庭成员，额外保存主账户ID用于查项目
+      // 如果是家庭成员，额外保存主账户ID和手机号用于查项目和消息
       if (data.isFamilyMember && data.masterCustomerId) {
         uni.setStorageSync('masterCustomerId', data.masterCustomerId);
+        // 保存主账户手机号用于消息查询
+        uni.setStorageSync('masterPhone', data.masterCustomer?.phone || '');
       } else {
         uni.removeStorageSync('masterCustomerId');
+        uni.removeStorageSync('masterPhone');
       }
       // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
       uni.reLaunch({ url: '/pages/customer/home' });

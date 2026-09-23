@@ -4,7 +4,9 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">家庭成员</text>
-      <view class="nav-btn" @click="showAddModal">添加</view>
+      <!-- 只有主账户才能添加家庭成员 -->
+      <view class="nav-btn" v-if="isMasterAccount" @click="showAddModal">添加</view>
+      <view v-else class="nav-placeholder"></view>
     </view>
 
     <!-- 加载状态 -->
@@ -28,9 +30,11 @@
             <view class="member-header">
               <text class="member-name">{{ member.name }}</text>
               <view class="member-badges">
-                <!-- 主账户看时不显示"主账户"标签；副账户看时显示主账户标识 -->
+                <!-- 副账户看时：is_master=1显示"主账户"，is_master=0显示关系 -->
                 <view class="badge master" v-if="!isMaster && member.is_master === 1">主账户</view>
-                <view class="badge relation" v-if="member.relation && member.relation !== '本人'">{{ member.relation }}</view>
+                <view class="badge relation" v-if="!isMaster && member.is_master === 0 && member.relation">{{ member.relation }}</view>
+                <!-- 主账户看时：显示关系 -->
+                <view class="badge relation" v-if="isMaster && member.relation && member.relation !== '本人'">{{ member.relation }}</view>
               </view>
             </view>
             <text class="member-phone">{{ member.phone }}</text>
@@ -95,6 +99,8 @@ const customerId = ref(0);
 const currentPhone = ref('');
 // 当前登录者是否是主账户（用于控制是否显示"主账户"标签）
 const isMaster = ref(false);
+// 是否是主账户账号（用于控制添加按钮）
+const isMasterAccount = ref(false);
 
 // 表单数据
 const formData = ref({
@@ -132,21 +138,30 @@ const loadMembers = async () => {
   
   try {
     const userInfo = uni.getStorageSync('userInfo');
+    // 家庭成员用主账户ID查，主账户用自己的ID
+    const masterCustomerId = uni.getStorageSync('masterCustomerId');
+    const effectiveCustomerId = masterCustomerId || userInfo?.id;
+    
     if (userInfo?.id) {
       customerId.value = userInfo.id;
     }
     
+    // 判断是否是主账户（有masterCustomerId说明是副账户，没有则是主账户）
+    isMasterAccount.value = !masterCustomerId;
+    
     const res = await uni.request({
       url: '/api/family-members',
       header: {
-        'x-customer-id': customerId.value
+        'x-customer-id': effectiveCustomerId
       }
     });
     
     if (Array.isArray(res.data)) {
       members.value = res.data;
-      // 判断当前登录者是否是主账户
-      const currentMember = res.data.find(m => m.customer_id === customerId.value);
+      // 判断当前登录者是否是主账户（用于显示"主账户"标签）
+      // 用手机号匹配当前登录者，因为 customer_id 对于副账户来说是主账户的ID
+      const currentPhone = userInfo?.phone;
+      const currentMember = res.data.find(m => m.phone === currentPhone);
       isMaster.value = currentMember?.is_master === 1;
     } else {
       members.value = [];
@@ -156,6 +171,7 @@ const loadMembers = async () => {
     console.error('加载家庭成员失败:', e);
     members.value = [];
     isMaster.value = false;
+    isMasterAccount.value = false;
   } finally {
     loading.value = false;
   }
@@ -185,11 +201,16 @@ const submitAdd = async () => {
   uni.showLoading({ title: '添加中...' });
   
   try {
+    const userInfo = uni.getStorageSync('userInfo');
+    // 家庭成员用主账户ID添加
+    const masterCustomerId = uni.getStorageSync('masterCustomerId');
+    const effectiveCustomerId = masterCustomerId || userInfo?.id;
+    
     const res = await uni.request({
       url: '/api/family-members',
       method: 'POST',
       header: {
-        'x-customer-id': customerId.value,
+        'x-customer-id': effectiveCustomerId,
         'Content-Type': 'application/json'
       },
       data: {
@@ -232,11 +253,16 @@ const confirmDelete = async (member) => {
   uni.showLoading({ title: '删除中...' });
   
   try {
+    const userInfo = uni.getStorageSync('userInfo');
+    // 家庭成员用主账户ID删除
+    const masterCustomerId = uni.getStorageSync('masterCustomerId');
+    const effectiveCustomerId = masterCustomerId || userInfo?.id;
+    
     const res = await uni.request({
       url: `/api/family-members/${member.id}`,
       method: 'DELETE',
       header: {
-        'x-customer-id': customerId.value
+        'x-customer-id': effectiveCustomerId
       }
     });
     

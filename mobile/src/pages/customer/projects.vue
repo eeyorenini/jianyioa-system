@@ -81,7 +81,9 @@ const getProgressClass = (progress) => {
 };
 
 const goDetail = (p) => {
-  uni.navigateTo({ url: `/pages/projects/detail?id=${p.id}` });
+  // 跳转到客户项目详情页，同时保存当前项目信息
+  uni.setStorageSync('currentProject', p);
+  uni.navigateTo({ url: `/pages/customer/project-detail?id=${p.id}` });
 };
 
 const fetchList = async () => {

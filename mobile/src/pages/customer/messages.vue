@@ -57,7 +57,11 @@ const formatTime = (str) => {
 const fetchMessages = async () => {
   try {
     const userInfo = uni.getStorageSync('userInfo');
-    const phone = userInfo?.phone || '';
+    // 家庭成员用主账户手机号查消息
+    const masterPhone = uni.getStorageSync('masterPhone');
+    // 副账户用主账户手机号，主账户用自己的手机号
+    const phone = masterPhone || userInfo?.phone || '';
+    
     const res = await uni.request({
       url: `/api/notifications?phone=${phone}`,
     });

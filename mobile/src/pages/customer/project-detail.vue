@@ -66,10 +66,17 @@
         <!-- 项目成员信息 -->
         <view class="project-members" v-if="projectMembers.length > 0">
           <text class="members-title">项目成员</text>
-          <view class="members-list">
-            <view class="member-item" v-for="member in projectMembers" :key="member.id">
-              <text class="member-role">{{ member.role }}</text>
-              <text class="member-name">{{ member.name }}</text>
+          <view class="members-table">
+            <view class="member-row" v-for="member in projectMembers" :key="member.id">
+              <view class="member-td role">
+                <text class="member-role">{{ member.role }}</text>
+              </view>
+              <view class="member-td name">
+                <text class="member-name">{{ member.name }}</text>
+              </view>
+              <view class="member-td phone">
+                <text class="member-phone">{{ member.phone }}</text>
+              </view>
             </view>
           </view>
         </view>
@@ -281,22 +288,13 @@ const projectMembers = computed(() => {
 
   const members = [];
 
-  // 调试日志
-  console.log('项目数据:', {
-    designer_id: project.value.designer_id,
-    designer_name: project.value.designer_name,
-    manager_id: project.value.manager_id,
-    manager_name: project.value.manager_name,
-    supervisor_id: project.value.supervisor_id,
-    supervisor_name: project.value.supervisor_name
-  });
-
   // 设计师
   if (project.value.designer_name) {
     members.push({
       id: project.value.designer_id,
       role: '设计师',
-      name: project.value.designer_name
+      name: project.value.designer_name,
+      phone: project.value.designer_phone || ''
     });
   }
 
@@ -305,7 +303,8 @@ const projectMembers = computed(() => {
     members.push({
       id: project.value.manager_id,
       role: '项目经理',
-      name: project.value.manager_name
+      name: project.value.manager_name,
+      phone: project.value.manager_phone || ''
     });
   }
 
@@ -314,7 +313,8 @@ const projectMembers = computed(() => {
     members.push({
       id: project.value.supervisor_id,
       role: '监理',
-      name: project.value.supervisor_name
+      name: project.value.supervisor_name,
+      phone: project.value.supervisor_phone || ''
     });
   }
 
@@ -644,39 +644,67 @@ onMounted(() => {
   border-top: 1px solid #F0F0F0;
 }
 
-.members-title {
+.Members-title {
   font-size: 12px;
   color: #9CA3AF;
   display: block;
   margin-bottom: 8px;
 }
 
-.members-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.members-table {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
 }
 
-.member-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+.member-row {
+  display: table-row;
   background: #F5F7FA;
   border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.member-td {
+  display: table-cell;
+  vertical-align: middle;
+  padding: 8px 4px;
+}
+
+.member-td.role {
+  width: 80px;
+  text-align: left;
+}
+
+.member-td.name {
+  width: 80px;
+  padding-left: 8px;
+  text-align: left;
+}
+
+.member-td.phone {
+  text-align: left;
+  padding-right: 10px;
+  white-space: nowrap;
 }
 
 .member-role {
   font-size: 11px;
   color: #1E3A5F;
   background: #DBEAFE;
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: 4px;
 }
 
 .member-name {
-  font-size: 12px;
+  font-size: 13px;
   color: #374151;
+  font-weight: 500;
+}
+
+.member-phone {
+  font-size: 12px;
+  color: #6B7280;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Tab栏 */
