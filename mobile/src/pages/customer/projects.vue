@@ -87,7 +87,8 @@ const goDetail = (p) => {
 const fetchList = async () => {
   try {
     const userInfo = uni.getStorageSync('userInfo');
-    const customerId = userInfo?.id;
+    // 家庭成员用主账户ID查项目，主账户用自己的ID
+    const customerId = uni.getStorageSync('masterCustomerId') || userInfo?.id;
     // 客户通过 customer_id 参数查询项目
     const res = await uni.request({
       url: `/api/projects${customerId ? '?customer_id=' + customerId : ''}`,

@@ -50,6 +50,20 @@
       }
     },
     {
+      "path": "pages/customer/project-detail",
+      "style": {
+        "navigationBarTitleText": "项目信息",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/family",
+      "style": {
+        "navigationBarTitleText": "家庭成员",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/projects/list",
       "style": {
         "navigationBarTitleText": "项目管理",

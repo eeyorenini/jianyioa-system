@@ -23,11 +23,19 @@
 import { ref, onMounted } from "vue";
 
 const current = ref('/pages/customer/home');
+const isTabBarPage = ref(false);
 
 onMounted(() => {
   const pages = getCurrentPages();
   if (pages.length > 0) {
     current.value = '/' + pages[pages.length - 1].route;
+    // 判断是否是 tabBar 页面
+    isTabBarPage.value = ['/pages/home/index', '/pages/projects/list', '/pages/inspection/list', '/pages/dispatch/list', '/pages/mine/index'].includes(current.value);
+  }
+  
+  // 只在非 tabBar 页面隐藏原生 tabBar
+  if (!isTabBarPage.value) {
+    uni.hideTabBar({ animation: false }).catch(() => {});
   }
 });
 

@@ -10,7 +10,7 @@
     <!-- 背景 -->
     <view class="login-bg">
       <view class="brand-area">
-        <view class="brand-logo">🏗️</view>
+        <image class="brand-logo" src="/static/logo.png" mode="aspectFit" />
         <text class="brand-name">简逸装饰</text>
         <text class="brand-sub">工地管理系统</text>
       </view>
@@ -171,9 +171,16 @@ const handleCustomerLogin = async () => {
     const data = res.data;
     console.log('data:', data);
     if (data && data.success && data.customer) {
+      // 保存用户信息
       uni.setStorageSync('userInfo', data.customer);
       uni.setStorageSync('token', 'logged-in');
       uni.setStorageSync('userType', 'customer');
+      // 如果是家庭成员，额外保存主账户ID用于查项目
+      if (data.isFamilyMember && data.masterCustomerId) {
+        uni.setStorageSync('masterCustomerId', data.masterCustomerId);
+      } else {
+        uni.removeStorageSync('masterCustomerId');
+      }
       // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
       uni.reLaunch({ url: '/pages/customer/home' });
     } else {
@@ -215,7 +222,8 @@ const goBack = () => {
 }
 
 .brand-logo {
-  font-size: 56px;
+  width: 80px;
+  height: 80px;
   margin-bottom: 12px;
 }
 

@@ -1,118 +1,81 @@
 <template>
   <view class="page">
-    <!-- 顶部背景 -->
-    <view class="home-header">
-      <view class="header-top">
-        <view class="greeting">
-          <text class="greeting-time">{{ timeStr }}</text>
-          <text class="greeting-name">{{ customerName }}，您好</text>
+    <!-- 顶部导航 -->
+    <view class="nav-bar">
+      <text class="nav-back" @click="goBack">‹</text>
+      <text class="nav-title">我的装修</text>
+      <view class="nav-more" @click="showMore">···</view>
+    </view>
+
+    <!-- 页面加载中骨架屏 -->
+    <view v-if="pageLoading" class="page-skeleton">
+      <!-- 顶部骨架 -->
+      <view class="skeleton-header"></view>
+      <!-- 九宫格骨架 -->
+      <view class="skeleton-grid">
+        <view v-for="i in 9" :key="i" class="skeleton-grid-item"></view>
+      </view>
+      <!-- 动态列表骨架 -->
+      <view class="skeleton-list">
+        <view v-for="i in 3" :key="i" class="skeleton-card">
+          <view class="skeleton-card-header">
+            <view class="skeleton-avatar"></view>
+            <view class="skeleton-meta">
+              <view class="skeleton-line"></view>
+              <view class="skeleton-line short"></view>
+            </view>
+          </view>
+          <view class="skeleton-card-content"></view>
         </view>
-        <view class="role-badge">业主</view>
       </view>
     </view>
 
-    <!-- 内容 -->
-    <view class="content-wrapper">
-      <!-- 项目卡片 -->
-      <view class="project-section" v-if="project">
-        <view class="project-card">
-          <view class="project-header">
-            <text class="project-name">{{ project.name }}</text>
-            <view class="status-badge" :class="getStatusClass(project.status)">
-              {{ project.status || '进行中' }}
-            </view>
-          </view>
-          <view class="project-address">
-            📍 {{ project.customer_address || project.address || '地址待确认' }}
-          </view>
+    <!-- 无项目状态 -->
+    <customer-empty-state
+      v-else-if="!hasProject"
+      type="no-project"
+      title="暂无关联项目"
+      description="请联系工作人员为您绑定项目"
+      :show-contact="true"
+      @contact="handleContact"
+    />
 
-          <!-- 进度 -->
-          <view class="progress-section">
-            <view class="progress-header">
-              <text class="progress-label">整体进度</text>
-              <text class="progress-pct" :class="getProgressClass(project.progress)">
-                {{ project.progress || 0 }}%
-              </text>
-            </view>
-            <view class="progress-bar">
-              <view class="progress-fill" :class="getProgressClass(project.progress)"
-                :style="{ width: (project.progress || 0) + '%' }"></view>
-            </view>
-          </view>
+    <!-- 无权限状态 -->
+    <customer-empty-state
+      v-else-if="hasError && errorType === 'forbidden'"
+      type="forbidden"
+      title="无权限访问"
+      description="您暂无该项目查看权限，请联系项目经理"
+      button-text="返回"
+      :show-button="false"
+      @back="goBack"
+    />
 
-          <!-- 当前节点 -->
-          <view class="current-node" v-if="currentNode">
-            <text class="node-label">📅 当前节点</text>
-            <text class="node-name">{{ currentNode.node_name || currentNode.stage_name }}</text>
-          </view>
-        </view>
+    <!-- 网络错误 -->
+    <customer-empty-state
+      v-else-if="hasError && errorType === 'network'"
+      type="error"
+      title="网络异常"
+      description="请检查网络后重试"
+      button-text="重新加载"
+      @retry="loadData"
+    />
 
-        <!-- 异常提醒 -->
-        <view class="alert-card" v-if="hasAlerts">
-          <view class="alert-item" v-if="pendingInspect > 0" @click="goInspections">
-            <text class="alert-icon">🔍</text>
-            <text class="alert-text">有 {{ pendingInspect }} 条巡检记录待整改</text>
-            <text class="alert-arrow">›</text>
-          </view>
-          <view class="alert-item" v-if="pendingPay > 0">
-            <text class="alert-icon">💰</text>
-            <text class="alert-text">待回款 ¥{{ pendingPay }}</text>
-          </view>
-        </view>
+    <!-- 正常内容 -->
+    <view v-else class="page-content">
+      <!-- 模块 A: 装修管理九宫格 -->
+      <customer-grid-menu @menu-click="handleMenuClick" />
 
-        <!-- 施工日志 -->
-        <view class="section-card">
-          <view class="section-title">
-            <text>最近施工日志</text>
-            <text class="more-link" @click="goLogs">查看全部 ›</text>
-          </view>
-          <view class="log-list" v-if="logs.length">
-            <view class="log-item" v-for="log in logs" :key="log.id" @click="goLogDetail(log)">
-              <view class="log-dot"></view>
-              <view class="log-content">
-                <text class="log-title">{{ log.content }}</text>
-                <text class="log-meta">{{ log.creator_name }} · {{ log.created_at }}</text>
-              </view>
-            </view>
-          </view>
-          <view class="empty-tip" v-else>
-            <text>暂无施工日志</text>
-          </view>
-        </view>
-
-        <!-- 节点进度 -->
-        <view class="section-card">
-          <view class="section-title">
-            <text>项目进度</text>
-          </view>
-          <view class="node-track" v-if="project.nodes && project.nodes.length">
-            <view
-              class="node-step"
-              v-for="(node, idx) in project.nodes"
-              :key="node.id"
-            >
-              <view class="step-circle" :class="`circle-${node.status || 'pending'}`">
-                <text v-if="node.status === 'completed'">✓</text>
-                <text v-else-if="node.status === 'in_progress'">●</text>
-                <text v-else>○</text>
-              </view>
-              <text class="step-name" :class="`name-${node.status || 'pending'}`">
-                {{ node.node_name || node.stage_name }}
-              </text>
-            </view>
-          </view>
-          <view class="empty-tip" v-else>
-            <text>暂无节点信息</text>
-          </view>
-        </view>
-      </view>
-
-      <!-- 无项目 -->
-      <view class="empty-state" v-else>
-        <text class="empty-icon">🏠</text>
-        <text class="empty-text">暂无关联项目</text>
-        <text class="empty-sub">请联系工作人员为您绑定项目</text>
-      </view>
+      <!-- 模块 B: 装修动态信息流 -->
+      <customer-dynamic-feed
+        :list="dynamicList"
+        :loading="dynamicLoading"
+        :loading-more="dynamicLoadingMore"
+        :no-more="dynamicNoMore"
+        :error="dynamicError"
+        @retry="loadDynamicList"
+        @load-more="loadMoreDynamic"
+      />
     </view>
 
     <!-- 客户专属底部导航 -->
@@ -120,110 +83,213 @@
   </view>
 </template>
 
-<script setup >
+<script setup>
 import { ref, computed, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
+import customerGridMenu from "@/components/customer-grid-menu.vue";
+import customerDynamicFeed from "@/components/customer-dynamic-feed.vue";
+import customerEmptyState from "@/components/customer-empty-state.vue";
 
-const customerName = computed(() => {
-  const info = uni.getStorageSync('userInfo');
-  return info?.name || '业主';
-});
+const pageLoading = ref(true);
+const hasProject = ref(false);
+const hasError = ref(false);
+const errorType = ref('');
 
-const timeStr = computed(() => {
-  const h = new Date().getHours();
-  if (h < 12) return '上午好';
-  if (h < 18) return '下午好';
-  return '晚上好';
-});
-
+// 项目信息
 const project = ref(null);
-const logs = ref([]);
-const pendingInspect = ref(0);
-const pendingPay = ref(0);
+const projectId = ref(0);
 
-const currentNode = computed(() => {
-  if (!project.value?.nodes) return null;
-  return project.value.nodes.find((n) => n.status === 'in_progress') ||
-    project.value.nodes.find((n) => n.status === 'pending');
+// 动态列表
+const dynamicList = ref([]);
+const dynamicLoading = ref(false);
+const dynamicLoadingMore = ref(false);
+const dynamicNoMore = ref(false);
+const dynamicError = ref(false);
+const dynamicPage = ref(1);
+const dynamicPageSize = 10;
+
+// 计算属性
+const projectInfo = computed(() => {
+  return {
+    name: project.value?.name || '我的项目',
+    address: project.value?.customer_address || project.value?.address || '',
+    progress: project.value?.progress || 0,
+    status: project.value?.status || '进行中'
+  };
 });
 
-const hasAlerts = computed(() => pendingInspect.value > 0 || pendingPay.value > 0);
-
-const getStatusClass = (status) => {
-  if (!status) return 's-default';
-  if (status.includes('竣工') || status.includes('完结') || status.includes('完成') || status.includes('验收')) return 's-done';
-  if (status.includes('进行') || status.includes('施工')) return 's-progress';
-  if (status.includes('暂停')) return 's-paused';
-  return 's-default';
-};
-
-const getProgressClass = (progress) => {
-  if (!progress || progress < 30) return 'p-low';
-  if (progress < 70) return 'p-mid';
-  return 'p-high';
-};
-
-const goLogs = () => {
-  if (project.value) {
-    uni.navigateTo({ url: `/pages/customer/logs?projectId=${project.value.id}` });
-  }
-};
-
-const goLogDetail = (log) => {
-  uni.navigateTo({ url: `/pages/customer/logs?projectId=${project.value?.id}` });
-};
-
-const goInspections = () => {
-  uni.navigateTo({ url: `/pages/customer/inspections?projectId=${project.value?.id}` });
-};
-
-const fetchProject = async () => {
+// 加载数据
+const loadData = async () => {
+  pageLoading.value = true;
+  hasError.value = false;
+  
   try {
     const userInfo = uni.getStorageSync('userInfo');
-    const customerId = userInfo?.id;
-    console.log('用户信息:', userInfo);
-    console.log('客户ID:', customerId);
+    // 家庭成员用主账户ID查项目，主账户用自己的ID
+    const customerId = uni.getStorageSync('masterCustomerId') || userInfo?.id;
+    
     if (!customerId) {
-      console.log('没有客户ID');
+      hasProject.value = false;
+      pageLoading.value = false;
       return;
     }
 
-    // 客户通过 customer_id 参数查询项目
+    // 获取项目列表 - 添加管理员权限头以获取完整数据（包括nodes）
     const res = await uni.request({
       url: `/api/projects?customer_id=${customerId}`,
+      header: {
+        'x-user-role': 'admin',
+        'x-user-id': '1'
+      }
     });
-    console.log('项目接口返回:', res.data);
+    
     const data = res.data;
     if (Array.isArray(data) && data.length > 0) {
-      // 取第一个关联到该客户的项目
+      hasProject.value = true;
       project.value = data[0];
-      console.log('设置项目:', project.value);
-      // 获取日志
-      if (data[0].id) {
-        fetchLogs(data[0].id);
-      }
+      projectId.value = data[0].id;
+      
+      // 保存当前项目供其他页面使用
+      uni.setStorageSync('currentProject', data[0]);
+      
+      // 加载动态列表
+      loadDynamicList();
     } else {
-      console.log('没有找到项目');
+      hasProject.value = false;
     }
   } catch (e) {
-    console.error('获取项目失败', e);
+    console.error('加载数据失败:', e);
+    hasError.value = true;
+    errorType.value = 'network';
+  } finally {
+    pageLoading.value = false;
   }
 };
 
-const fetchLogs = async (projectId) => {
+// 加载动态列表
+const loadDynamicList = async () => {
+  if (!projectId.value) return;
+  
+  dynamicLoading.value = true;
+  dynamicError.value = false;
+  dynamicPage.value = 1;
+  dynamicNoMore.value = false;
+  
   try {
     const res = await uni.request({
-      url: `/api/project-logs/${projectId}`,
+      url: `/api/project-logs/${projectId.value}?page=${dynamicPage.value}&page_size=${dynamicPageSize}`,
     });
+    
     const data = res.data;
     if (Array.isArray(data)) {
-      logs.value = data.slice(0, 3);
+      // 处理数据，添加 collapsed 状态
+      dynamicList.value = data.map(item => ({
+        ...item,
+        collapsed: true
+      }));
+      dynamicNoMore.value = data.length < dynamicPageSize;
+    } else {
+      dynamicList.value = [];
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('加载动态列表失败:', e);
+    dynamicError.value = true;
+  } finally {
+    dynamicLoading.value = false;
+  }
 };
 
+// 加载更多动态
+const loadMoreDynamic = async () => {
+  if (dynamicLoadingMore.value || dynamicNoMore.value || !projectId.value) return;
+  
+  dynamicLoadingMore.value = true;
+  dynamicPage.value++;
+  
+  try {
+    const res = await uni.request({
+      url: `/api/project-logs/${projectId.value}?page=${dynamicPage.value}&page_size=${dynamicPageSize}`,
+    });
+    
+    const data = res.data;
+    if (Array.isArray(data) && data.length > 0) {
+      const newList = data.map(item => ({
+        ...item,
+        collapsed: true
+      }));
+      dynamicList.value = [...dynamicList.value, ...newList];
+      dynamicNoMore.value = data.length < dynamicPageSize;
+    } else {
+      dynamicNoMore.value = true;
+    }
+  } catch (e) {
+    dynamicPage.value--;
+    uni.showToast({ title: '加载失败', icon: 'none' });
+  } finally {
+    dynamicLoadingMore.value = false;
+  }
+};
+
+// 九宫格菜单点击
+const handleMenuClick = (item) => {
+  console.log('点击菜单:', item);
+  // 已经在组件内部处理跳转
+};
+
+// 保存当前项目ID供其他页面使用
+const saveCurrentProject = () => {
+  if (project.value) {
+    uni.setStorageSync('currentProject', project.value);
+  }
+};
+
+// 返回
+const goBack = () => {
+  uni.navigateBack();
+};
+
+// 显示更多
+const showMore = () => {
+  uni.showActionSheet({
+    itemList: ['刷新', '联系客服', '退出登录'],
+    success: (res) => {
+      switch (res.tapIndex) {
+        case 0:
+          loadData();
+          break;
+        case 1:
+          uni.makePhoneCall({ phoneNumber: '400-888-8888' });
+          break;
+        case 2:
+          handleLogout();
+          break;
+      }
+    }
+  });
+};
+
+// 联系客服
+const handleContact = () => {
+  uni.makePhoneCall({ phoneNumber: '400-888-8888' });
+};
+
+// 退出登录
+const handleLogout = () => {
+  uni.showModal({
+    title: '提示',
+    content: '确定退出登录？',
+    success: (res) => {
+      if (res.confirm) {
+        uni.clearStorageSync();
+        uni.reLaunch({ url: '/pages/login/login' });
+      }
+    }
+  });
+};
+
+// 页面加载
 onMounted(() => {
-  fetchProject();
+  loadData();
 });
 </script>
 
@@ -231,326 +297,136 @@ onMounted(() => {
 .page {
   min-height: 100vh;
   background: #F5F7FA;
-  padding-bottom: 30px;
+  padding-bottom: 70px;
 }
 
-.home-header {
-  background: linear-gradient(135deg, #1E3A5F 0%, #2D5A8E 100%);
-  padding: 16px 16px 24px;
-  border-radius: 0 0 20px 20px;
-  color: #fff;
-}
-
-.header-top {
+/* 导航栏 */
+.nav-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  background: #1E3A5F;
+  color: #fff;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
-.greeting-time {
-  display: block;
-  font-size: 12px;
-  opacity: 0.7;
-  margin-bottom: 2px;
+.nav-back {
+  font-size: 28px;
+  font-weight: 300;
+  width: 40px;
 }
 
-.greeting-name {
-  font-size: 18px;
+.nav-title {
+  flex: 1;
+  text-align: center;
+  font-size: 17px;
   font-weight: 600;
 }
 
-.role-badge {
-  font-size: 11px;
-  padding: 4px 12px;
-  border-radius: 20px;
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.2);
-  color: #fff;
+.nav-more {
+  width: 40px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 2px;
 }
 
-/* 项目卡片 */
-.project-section {
-  margin: -12px 16px 0;
-  position: relative;
-  z-index: 10;
+/* 页面内容 */
+.page-content {
+  padding-top: 12px;
 }
 
-.project-card {
-  background: #fff;
+/* 页面骨架屏 */
+.page-skeleton {
+  padding: 12px 16px;
+}
+
+.skeleton-header {
+  height: 120px;
+  background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
   border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
   margin-bottom: 12px;
 }
 
-.project-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 6px;
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 12px;
 }
 
-.project-name {
-  font-size: 17px;
-  font-weight: 700;
-  color: #1A1F36;
-  flex: 1;
-  margin-right: 10px;
-}
-
-.status-badge {
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-weight: 500;
-}
-
-.s-default { background: #F3F4F6; color: #6B7280; }
-.s-done { background: #D1FAE5; color: #065F46; }
-.s-progress { background: #DBEAFE; color: #1E40AF; }
-.s-paused { background: #FEF3C7; color: #92400E; }
-
-.project-address {
-  font-size: 12px;
-  color: #9CA3AF;
-  margin-bottom: 14px;
-}
-
-.progress-section {
-  margin-bottom: 14px;
-}
-
-.progress-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.progress-label {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-.progress-pct {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.p-low { color: #9CA3AF; }
-.p-mid { color: #F59E0B; }
-.p-high { color: #10B981; }
-
-.progress-bar {
-  height: 8px;
-  background: #E5E7EB;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s;
-}
-
-.progress-fill.p-low { background: #D1D5DB; }
-.progress-fill.p-mid { background: linear-gradient(90deg, #F59E0B, #FBBF24); }
-.progress-fill.p-high { background: linear-gradient(90deg, #10B981, #34D399); }
-
-.current-node {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: #F9FAFB;
-  padding: 10px 12px;
+.skeleton-grid-item {
+  height: 60px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
   border-radius: 8px;
 }
 
-.node-label {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-.node-name {
-  font-size: 13px;
-  color: #1E3A5F;
-  font-weight: 600;
-}
-
-/* 提醒卡片 */
-.alert-card {
-  background: #FEF2F2;
-  border: 1px solid #FECACA;
-  border-radius: 14px;
-  padding: 12px 16px;
-  margin-bottom: 12px;
-}
-
-.alert-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-}
-
-.alert-icon {
-  font-size: 14px;
-}
-
-.alert-text {
-  flex: 1;
-  font-size: 13px;
-  color: #991B1B;
-}
-
-.alert-arrow {
-  font-size: 18px;
-  color: #FCA5A5;
-}
-
-/* 区块卡片 */
-.section-card {
+.skeleton-list {
   background: #fff;
   border-radius: 14px;
   padding: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-  margin-bottom: 12px;
 }
 
-.section-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1A1F36;
-  margin-bottom: 12px;
-}
-
-.more-link {
-  font-size: 12px;
-  color: #9CA3AF;
-  font-weight: 400;
-}
-
-/* 日志列表 */
-.log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.log-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid #F5F7FA;
-  cursor: pointer;
-}
-
-.log-item:last-child {
-  border-bottom: none;
-}
-
-.log-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #1E3A5F;
-  margin-top: 5px;
-  flex-shrink: 0;
-}
-
-.log-content {
-  flex: 1;
-}
-
-.log-title {
-  display: block;
-  font-size: 13px;
-  color: #1A1F36;
-  line-height: 1.4;
-  margin-bottom: 2px;
-}
-
-.log-meta {
-  font-size: 11px;
-  color: #9CA3AF;
-}
-
-/* 节点进度 */
-.node-track {
-  display: flex;
-  overflow-x: auto;
-  gap: 0;
-  padding: 4px 0;
-}
-
-.node-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 60px;
-}
-
-.step-circle {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.circle-pending { background: #E5E7EB; color: #9CA3AF; }
-.circle-in_progress { background: #3B82F6; color: #fff; }
-.circle-completed { background: #10B981; color: #fff; }
-.circle-skipped { background: #F59E0B; color: #fff; }
-
-.step-name {
-  font-size: 10px;
-  color: #6B7280;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.name-in_progress { color: #3B82F6; font-weight: 600; }
-.name-completed { color: #10B981; }
-.name-skipped { color: #F59E0B; }
-
-/* 空状态 */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 80px 20px;
-}
-
-.empty-icon {
-  font-size: 64px;
+.skeleton-card {
   margin-bottom: 16px;
 }
 
-.empty-text {
-  font-size: 16px;
-  font-weight: 600;
-  color: #1A1F36;
+.skeleton-card:last-child {
+  margin-bottom: 0;
+}
+
+.skeleton-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-meta {
+  flex: 1;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
   margin-bottom: 6px;
 }
 
-.empty-sub {
-  font-size: 13px;
-  color: #9CA3AF;
+.skeleton-line.short {
+  width: 60%;
 }
 
-.empty-tip {
-  text-align: center;
-  padding: 20px 0;
-  font-size: 13px;
-  color: #9CA3AF;
+.skeleton-card-content {
+  height: 60px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 </style>
