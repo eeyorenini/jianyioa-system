@@ -92,7 +92,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.18</div>
+      <div class="sidebar-version">v 2.1.19</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -162,7 +162,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.18</div>
+      <div class="sidebar-version">v 2.1.19</div>
     </div>
     
     <!-- 主内容区 -->
