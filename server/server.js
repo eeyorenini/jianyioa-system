@@ -204,6 +204,234 @@ async function initDatabase() {
 // 初始化数据库（延迟执行，避免 Node 22 顶层 await 问题）
 setTimeout(() => { initDatabase(); }, 100);
 
+// ==================== 家庭成员管理 ====================
+// 确保家庭成员表存在
+setTimeout(async () => {
+  try {
+    // 创建家庭成员表（如果不存在）
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS family_members (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL COMMENT '主账户客户ID',
+        name VARCHAR(100) NOT NULL COMMENT '成员姓名',
+        phone VARCHAR(20) NOT NULL COMMENT '手机号（唯一标识）',
+        relation VARCHAR(50) COMMENT '与主账户关系：配偶/父母/子女/其他',
+        is_master TINYINT(1) DEFAULT 0 COMMENT '是否主账户：0-否，1-是',
+        status TINYINT(1) DEFAULT 1 COMMENT '状态：0-禁用，1-启用',
+        created_at DATETIME DEFAULT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_phone (phone),
+        INDEX idx_customer_id (customer_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='家庭成员表'
+    `);
+    console.log('✅ family_members 表已创建或已存在');
+  } catch (e) {
+    console.log('⚠️ family_members 建表失败:', e.message);
+  }
+}, 200);
+
+// GET /api/family-members - 获取当前客户的家庭成员列表
+app.get('/api/family-members', async (req, res) => {
+  try {
+    // 优先从请求头获取客户ID
+    const customerId = parseInt(req.headers['x-customer-id'] || req.query.customer_id || '0');
+
+    if (!customerId) {
+      return res.status(400).json({ error: '缺少客户ID' });
+    }
+
+    // 先查询该客户是否是某个家庭的主账户
+    const masterStmt = db.prepare(
+      'SELECT phone FROM family_members WHERE customer_id = ? AND is_master = 1 LIMIT 1'
+    );
+    const masterRecord = await masterStmt.get(customerId);
+    const masterPhone = masterRecord ? masterRecord.phone : null;
+
+    // 获取该客户及其家庭成员的所有记录
+    let members = [];
+    if (masterPhone) {
+      // 获取所有使用相同主账户手机号的成员
+      const membersStmt = db.prepare(
+        `SELECT id, customer_id, name, phone, relation, is_master, status, created_at
+         FROM family_members
+         WHERE phone = ?
+         ORDER BY is_master DESC, created_at ASC`
+      );
+      members = await membersStmt.all(masterPhone);
+    } else {
+      // 还没有家庭，可能是第一次使用，先查自己
+      const selfStmt = db.prepare(
+        'SELECT * FROM family_members WHERE customer_id = ?'
+      );
+      members = await selfStmt.all(customerId);
+    }
+
+    res.json(members || []);
+  } catch (err) {
+    console.error('获取家庭成员失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/family-members - 添加家庭成员
+app.post('/api/family-members', async (req, res) => {
+  try {
+    const customerId = parseInt(req.headers['x-customer-id'] || req.body.customer_id || '0');
+    const { name, phone, relation } = req.body;
+
+    if (!name || !phone) {
+      return res.status(400).json({ error: '姓名和手机号不能为空' });
+    }
+
+    if (!/^1[3-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({ error: '手机号格式不正确' });
+    }
+
+    // 检查手机号是否已被注册
+    const existingStmt = db.prepare('SELECT id, customer_id, name, is_master FROM family_members WHERE phone = ?');
+    const existingRecord = await existingStmt.get(phone);
+
+    if (existingRecord) {
+      // 如果该手机号已存在
+      // 检查是否属于同一家庭（通过主账户手机号判断）
+      const masterStmt = db.prepare(
+        'SELECT phone FROM family_members WHERE customer_id = ? AND is_master = 1 LIMIT 1'
+      );
+      const masterRecord = await masterStmt.get(customerId);
+      const masterPhone = masterRecord ? masterRecord.phone : null;
+
+      // 如果新添加的手机号就是主账户本人，设置is_master=1
+      if (masterPhone === phone) {
+        // 更新为is_master
+        const updateStmt = db.prepare(
+          'UPDATE family_members SET name = ?, relation = ?, is_master = 1 WHERE phone = ?'
+        );
+        await updateStmt.run(name, relation || '', phone);
+        return res.json({ success: true, id: existingRecord.id, message: '更新成功' });
+      }
+
+      // 如果该手机号属于其他家庭，不允许添加
+      if (masterPhone && masterPhone !== phone) {
+        return res.status(400).json({ error: '该手机号已被其他账户关联' });
+      }
+    }
+
+    // 获取当前客户的主账户手机号
+    const masterCheckStmt = db.prepare(
+      'SELECT phone FROM family_members WHERE customer_id = ? AND is_master = 1 LIMIT 1'
+    );
+    const masterCheck = await masterCheckStmt.get(customerId);
+    const isMaster = masterCheck ? (masterCheck.phone === phone ? 1 : 0) : 1;
+
+    // 如果已有记录，更新；否则新增
+    if (existingRecord) {
+      const updateStmt = db.prepare(
+        'UPDATE family_members SET name = ?, relation = ?, is_master = ? WHERE phone = ?'
+      );
+      await updateStmt.run(name, relation || '', isMaster, phone);
+      res.json({ success: true, id: existingRecord.id, message: '更新成功' });
+    } else {
+      const insertStmt = db.prepare(
+        'INSERT INTO family_members (customer_id, name, phone, relation, is_master) VALUES (?, ?, ?, ?, ?)'
+      );
+      const result = await insertStmt.run(customerId, name, phone, relation || '', isMaster);
+      res.json({ success: true, id: result.lastInsertRowid, message: '添加成功' });
+    }
+  } catch (err) {
+    console.error('添加家庭成员失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/family-members/:id - 删除家庭成员（仅主账户可删除自己添加的成员）
+app.delete('/api/family-members/:id', async (req, res) => {
+  try {
+    const customerId = parseInt(req.headers['x-customer-id'] || '0');
+    const memberId = parseInt(req.params.id);
+
+    if (!customerId || !memberId) {
+      return res.status(400).json({ error: '缺少必要参数' });
+    }
+
+    // 查询该成员信息
+    const memberStmt = db.prepare('SELECT * FROM family_members WHERE id = ?');
+    const member = await memberStmt.get(memberId);
+
+    if (!member) {
+      return res.status(404).json({ error: '成员不存在' });
+    }
+
+    // 验证权限：必须是同一家庭的成员才能删除
+    // 获取当前客户的主账户手机号
+    const masterStmt = db.prepare(
+      'SELECT phone FROM family_members WHERE customer_id = ? AND is_master = 1 LIMIT 1'
+    );
+    const masterRecord = await masterStmt.get(customerId);
+    const masterPhone = masterRecord ? masterRecord.phone : null;
+
+    // 同一家庭成员的判断：使用相同主账户手机号
+    const isSameFamily = masterPhone && masterPhone === member.phone;
+
+    if (!isSameFamily) {
+      return res.status(403).json({ error: '无权删除此成员' });
+    }
+
+    // 不能删除主账户自己
+    if (member.is_master === 1) {
+      return res.status(400).json({ error: '不能删除主账户' });
+    }
+
+    const deleteStmt = db.prepare('DELETE FROM family_members WHERE id = ?');
+    await deleteStmt.run(memberId);
+    res.json({ success: true, message: '删除成功' });
+  } catch (err) {
+    console.error('删除家庭成员失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/family-members/:id - 更新家庭成员信息
+app.put('/api/family-members/:id', async (req, res) => {
+  try {
+    const customerId = parseInt(req.headers['x-customer-id'] || '0');
+    const memberId = parseInt(req.params.id);
+    const { name, relation } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: '姓名不能为空' });
+    }
+
+    // 查询该成员信息
+    const memberStmt = db.prepare('SELECT * FROM family_members WHERE id = ?');
+    const member = await memberStmt.get(memberId);
+
+    if (!member) {
+      return res.status(404).json({ error: '成员不存在' });
+    }
+
+    // 验证权限：必须是同一家庭的成员才能修改
+    const masterStmt = db.prepare(
+      'SELECT phone FROM family_members WHERE customer_id = ? AND is_master = 1 LIMIT 1'
+    );
+    const masterRecord = await masterStmt.get(customerId);
+    const masterPhone = masterRecord ? masterRecord.phone : null;
+    const isSameFamily = masterPhone && masterPhone === member.phone;
+
+    if (!isSameFamily) {
+      return res.status(403).json({ error: '无权修改此成员信息' });
+    }
+
+    const updateStmt = db.prepare(
+      'UPDATE family_members SET name = ?, relation = ? WHERE id = ?'
+    );
+    await updateStmt.run(name, relation || '', memberId);
+    res.json({ success: true, message: '更新成功' });
+  } catch (err) {
+    console.error('更新家庭成员失败:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 const defaultPermissions = [
   { name: '数据看板', code: 'dashboard', path: '/dashboard', icon: 'DataAnalysis', sort_order: 1 },
@@ -1666,9 +1894,16 @@ app.get('/api/projects', async (req, res) => {
     const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
     const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'project');
 
-    let sql = `SELECT p.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+    let sql = `SELECT p.*, 
+               c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+               des.name as designer_name, des.phone as designer_phone,
+               sup.name as supervisor_name, sup.phone as supervisor_phone,
+               mgr.name as manager_name, mgr.phone as manager_phone
                FROM projects p
-               LEFT JOIN customers c ON p.customer_id = c.id`;
+               LEFT JOIN customers c ON p.customer_id = c.id
+               LEFT JOIN employees des ON p.designer_id = des.id
+               LEFT JOIN employees sup ON p.supervisor_id = sup.id
+               LEFT JOIN employees mgr ON p.manager_id = mgr.id`;
     const params = [];
     const conditions = [];
 
@@ -1706,6 +1941,13 @@ app.get('/api/projects', async (req, res) => {
       ORDER BY ps.sort_order ASC, ps.id ASC`);
     for (const p of projects) {
       p.nodes = await nodeStmt.all(p.id);
+      // 计算进度百分比
+      if (p.nodes && p.nodes.length > 0) {
+        const completedNodes = p.nodes.filter(n => n.status === 'completed').length;
+        p.progress = Math.round((completedNodes / p.nodes.length) * 100);
+      } else {
+        p.progress = 0;
+      }
     }
 
     res.json(projects);
@@ -2910,16 +3152,49 @@ app.post('/api/customers/login', async (req, res) => {
     return res.json({ success: false, message: '请输入手机号' });
   }
   try {
+    // 【优先】查家庭成员表（副账户可能有和主账户不同的手机号，也可能相同）
+    const familyStmt = db.prepare(`SELECT * FROM family_members WHERE phone = ? LIMIT 1`);
+    const familyMember = await familyStmt.get(phone);
+    
+    if (familyMember) {
+      // 是家庭成员，返回副账户自己的信息，但带上主账户ID用于查项目
+      const masterStmt = db.prepare(`SELECT * FROM customers WHERE id = ? LIMIT 1`);
+      const master = await masterStmt.get(familyMember.customer_id);
+      if (master) {
+        return res.json({ 
+          success: true, 
+          // 返回副账户自己的信息
+          customer: {
+            id: familyMember.id,           // 家庭成员ID
+            name: familyMember.name,        // 副账户姓名
+            phone: familyMember.phone,      // 副账户手机号
+            relation: familyMember.relation,
+            is_master: 0
+          },
+          // 主账户信息（用于借用权限查项目）
+          masterCustomer: master,
+          masterCustomerId: master.id,
+          isFamilyMember: true,
+          familyMemberId: familyMember.id,
+          relation: familyMember.relation
+        });
+      }
+    }
+    
+    // 不是家庭成员，查客户表（主账户）
     const stmt = db.prepare(`SELECT * FROM customers WHERE phone = ? LIMIT 1`);
     const customer = await stmt.get(phone);
-    if (!customer) {
-      return res.json({ success: false, message: '该手机号未注册' });
-    }
-    // 姓名可以不验证，作为可选的安全校验
-    if (name && customer.name !== name) {
+    
+    if (customer) {
+      // 姓名匹配则登录
+      if (!name || customer.name === name) {
+        return res.json({ success: true, customer });
+      }
       return res.json({ success: false, message: '姓名与手机号不匹配' });
     }
-    res.json({ success: true, customer });
+    
+    // 都不存在
+    return res.json({ success: false, message: '该手机号未注册' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

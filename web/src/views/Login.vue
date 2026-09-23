@@ -1,6 +1,9 @@
 <template>
   <div class="login-container">
     <div class="login-box">
+      <div class="login-logo">
+        <img src="/logo.png" alt="logo" />
+      </div>
       <h2>简逸ERP系统</h2>
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
         <el-form-item prop="username">
@@ -99,5 +102,13 @@ const handleLogin = async () => {
   text-align: center;
   margin-bottom: 30px;
   color: #333;
+}
+.login-logo {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.login-logo img {
+  width: 80px;
+  height: 80px;
 }
 </style>
