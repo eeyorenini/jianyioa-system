@@ -83,6 +83,9 @@
             <el-option v-for="t in smsTemplateList" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="nodeForm.note" type="textarea" :rows="2" placeholder="节点说明或施工标准" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showNodeDialog = false">取消</el-button>
@@ -120,7 +123,8 @@ const nodeForm = reactive({
   node_name: '',
   node_key: '',
   sort_order: 0,
-  default_sms_template_id: null
+  default_sms_template_id: null,
+  note: ''
 })
 
 // 加载模板列表
@@ -220,6 +224,7 @@ const openNodeDialog = (row = null) => {
     nodeForm.node_key = row.node_key
     nodeForm.sort_order = row.sort_order || 0
     nodeForm.default_sms_template_id = row.default_sms_template_id || null
+    nodeForm.note = row.note || ''
   } else {
     isEditNode.value = false
     nodeForm.id = null
@@ -228,6 +233,7 @@ const openNodeDialog = (row = null) => {
     nodeForm.node_key = ''
     nodeForm.sort_order = nodeList.value.length + 1
     nodeForm.default_sms_template_id = null
+    nodeForm.note = ''
   }
   showNodeDialog.value = true
 }

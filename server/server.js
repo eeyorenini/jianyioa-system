@@ -4733,10 +4733,10 @@ app.get('/api/progress-node-template-nodes/:templateId', async (req, res) => {
 // POST 新增节点到模板
 app.post('/api/progress-node-template-nodes', async (req, res) => {
   try {
-    const { template_id, node_name, node_key, sort_order, default_sms_template_id } = req.body;
+    const { template_id, node_name, node_key, sort_order, default_sms_template_id, note } = req.body;
     const result = await db.prepare(
-      'INSERT INTO progress_node_template_nodes (template_id, node_name, node_key, sort_order, default_sms_template_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())'
-    ).run([template_id, node_name, node_key, sort_order || 0, default_sms_template_id || null]);
+      'INSERT INTO progress_node_template_nodes (template_id, node_name, node_key, sort_order, default_sms_template_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())'
+    ).run([template_id, node_name, node_key, sort_order || 0, default_sms_template_id || null, note || null]);
     res.json({ id: result.lastInsertRowid, message: '节点添加成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4746,10 +4746,10 @@ app.post('/api/progress-node-template-nodes', async (req, res) => {
 // PUT 更新模板节点
 app.put('/api/progress-node-template-nodes/:id', async (req, res) => {
   try {
-    const { node_name, node_key, sort_order, default_sms_template_id } = req.body;
+    const { node_name, node_key, sort_order, default_sms_template_id, note } = req.body;
     await db.prepare(
-      'UPDATE progress_node_template_nodes SET node_name=?, node_key=?, sort_order=?, default_sms_template_id=? WHERE id=?'
-    ).run([node_name, node_key, sort_order || 0, default_sms_template_id || null, req.params.id]);
+      'UPDATE progress_node_template_nodes SET node_name=?, node_key=?, sort_order=?, default_sms_template_id=?, note=? WHERE id=?'
+    ).run([node_name, node_key, sort_order || 0, default_sms_template_id || null, note || null, req.params.id]);
     res.json({ message: '节点更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });

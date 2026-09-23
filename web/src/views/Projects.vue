@@ -256,6 +256,21 @@
                 <el-option v-for="t in smsTemplateList" :key="t.id" :label="t.name" :value="t.id" />
               </el-select>
             </div>
+            <!-- 第三行：备注 -->
+            <div class="node-item-row3">
+              <el-input
+                v-if="editingNoteNodeId === node.id"
+                v-model="editingNoteValue"
+                size="small"
+                placeholder="输入备注"
+                @blur="saveNodeNote(node)"
+                @keyup.enter="saveNodeNote(node)"
+              />
+              <div v-else class="node-note" @click="startEditNote(node)">
+                <span v-if="node.note" class="note-text">{{ node.note }}</span>
+                <span v-else class="note-placeholder">点击添加备注</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -515,6 +530,8 @@ const isEdit = ref(false)
 const currentProject = ref(null)
 const editingNodeId = ref(null)
 const editingNodeName = ref('')
+const editingNoteNodeId = ref(null)
+const editingNoteValue = ref('')
 const nodeNameInput = ref(null)
 const showAddNodeDialog = ref(false)
 const addNodeForm = reactive({ node_name: '', after_node_id: null, sms_template_id: null })
@@ -1219,6 +1236,27 @@ const cancelEditNode = () => {
   editingNodeName.value = ''
 }
 
+// 开始编辑备注
+const startEditNote = (node) => {
+  editingNoteNodeId.value = node.id
+  editingNoteValue.value = node.note || ''
+}
+
+// 保存备注
+const saveNodeNote = async (node) => {
+  try {
+    await axios.put(`/api/project-stages/${node.id}`, {
+      note: editingNoteValue.value
+    })
+    node.note = editingNoteValue.value
+    ElMessage.success('备注已保存')
+  } catch (error) {
+    ElMessage.error('保存失败')
+  }
+  editingNoteNodeId.value = null
+  editingNoteValue.value = ''
+}
+
 // 打开新增节点弹窗
 const openAddNodeDialog = () => {
   addNodeForm.node_name = ''
@@ -1871,6 +1909,33 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding-left: 40px; /* 对齐序号位置 */
+}
+
+.node-item-row3 {
+  padding-left: 40px;
+  padding-top: 6px;
+}
+
+.node-note {
+  font-size: 12px;
+  color: #909399;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #f4f4f5;
+  width: 100%;
+}
+
+.node-note:hover {
+  background: #e9e9eb;
+}
+
+.note-text {
+  color: #606266;
+}
+
+.note-placeholder {
+  font-style: italic;
 }
 
 .drag-handle {
