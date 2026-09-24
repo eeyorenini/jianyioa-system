@@ -31,6 +31,8 @@ const SmsTemplates = () => import('../views/SmsTemplates.vue')
 const ProgressNodeTemplates = () => import('../views/ProgressNodeTemplates.vue')
 const Login = () => import('../views/Login.vue')
 const MessageCenter = () => import('../views/MessageCenter.vue')
+const ProjectLogs = () => import('../views/ProjectLogs.vue')
+const InspectionLogs = () => import('../views/InspectionLogs.vue')
 
 const routes = [
   { path: '/login', name: 'Login', component: Login, meta: { requiresAuth: false } },
@@ -63,6 +65,8 @@ const routes = [
   { path: '/departments', name: 'Departments', component: Departments },
   { path: '/system-settings', name: 'SystemSettings', component: SystemSettings },
   { path: '/message-center', name: 'MessageCenter', component: MessageCenter },
+  { path: '/project-logs', name: 'ProjectLogs', component: ProjectLogs },
+  { path: '/inspection-logs', name: 'InspectionLogs', component: InspectionLogs },
 ]
 
 const router = createRouter({

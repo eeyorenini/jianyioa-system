@@ -20,8 +20,8 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // ================================================================
 // 全局系统日志中间件 — 记录所有数据交互（POST/PUT/DELETE）
@@ -144,6 +144,25 @@ async function initDatabase() {
         }
       }
 
+      // 字段迁移：project_logs.images 从 TEXT 扩大到 LONGTEXT（支持更大的图片base64）
+      try {
+        await pool.query(`ALTER TABLE project_logs MODIFY COLUMN images LONGTEXT`);
+        console.log('✅ 字段迁移：project_logs.images 已扩大为 LONGTEXT');
+      } catch (e) {
+        console.log('⚠️ project_logs.images 扩大失败:', e.message);
+      }
+
+      // 字段迁移：project_logs 添加更多字段
+      const projectLogMigrations = [
+        'ALTER TABLE project_logs ADD COLUMN worker_count VARCHAR(50) DEFAULT NULL',
+        'ALTER TABLE project_logs ADD COLUMN work_type VARCHAR(100) DEFAULT NULL',
+        'ALTER TABLE project_logs ADD COLUMN tomorrow_plan TEXT DEFAULT NULL',
+        'ALTER TABLE project_logs ADD COLUMN note TEXT DEFAULT NULL',
+      ];
+      for (const sql of projectLogMigrations) {
+        try { await pool.query(sql); console.log('✅ 迁移成功'); } catch (_) { /* 忽略 */ }
+      }
+
       // 字段迁移：确保 rectification_issues 表有新字段（兼容已有数据库）
       const riMigrations = [
         'ALTER TABLE rectification_issues ADD COLUMN title VARCHAR(255) DEFAULT NULL AFTER remark',
@@ -151,6 +170,7 @@ async function initDatabase() {
         'ALTER TABLE rectification_issues ADD COLUMN location VARCHAR(100) DEFAULT NULL AFTER category',
         'ALTER TABLE rectification_issues ADD COLUMN level VARCHAR(50) DEFAULT NULL AFTER location',
         'ALTER TABLE rectification_issues ADD COLUMN description TEXT DEFAULT NULL AFTER level',
+        'ALTER TABLE rectification_issues ADD COLUMN creator_id INT DEFAULT NULL AFTER description',
       ];
       for (const sql of riMigrations) {
         try { await pool.query(sql); console.log('✅ 迁移成功:', sql.slice(0, 60)); } catch (_) { /* 字段已存在 */ }
@@ -201,8 +221,19 @@ async function initDatabase() {
     console.error('❌ 数据库初始化失败:', e.message);
   }
 }
-// 初始化数据库（延迟执行，避免 Node 22 顶层 await 问题）
+// PM2 重启后初始化数据库
 setTimeout(() => { initDatabase(); }, 100);
+
+// 临时调试接口：添加 type 列
+app.post('/api/debug/add-type-column', async (req, res) => {
+  try {
+    const stmt = db.prepare('ALTER TABLE project_logs ADD COLUMN type VARCHAR(20) DEFAULT "construction" AFTER project_id');
+    await stmt.run();
+    res.json({ message: 'type 列已添加' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ==================== 家庭成员管理 ====================
 // 确保家庭成员表存在
@@ -1414,7 +1445,7 @@ const uploadDir = path.join(__dirname, 'uploads/');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-const upload = multer({ dest: uploadDir });
+const upload = multer({ dest: uploadDir, limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.post('/api/contracts/upload-word', upload.single('file'), async (req, res) => {
   try {
@@ -1442,7 +1473,12 @@ app.post('/api/contracts/upload-word', upload.single('file'), async (req, res) =
 });
 
 // ==================== 图片/PDF 上传接口 ====================
-// 图片上传接口
+// 图片上传接口（存文件，返回路径，删图片接口）
+const logsUploadDir = path.join(uploadDir, 'logs/');
+if (!fs.existsSync(logsUploadDir)) {
+  fs.mkdirSync(logsUploadDir, { recursive: true });
+}
+
 app.post('/api/upload-image', upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
@@ -1454,17 +1490,36 @@ app.post('/api/upload-image', upload.single('file'), (req, res) => {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: '仅支持图片格式：jpg/png/gif/webp' });
     }
-    const mimeTypes = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
-    const mime = mimeTypes[ext] || 'image/png';
-    const fileData = fs.readFileSync(req.file.path);
-    const base64 = fileData.toString('base64');
-    const dataUrl = `data:${mime};base64,${base64}`;
-    fs.unlinkSync(req.file.path);
-    console.log(`[上传] 图片: ${req.file.originalname} -> base64(${fileData.length} bytes)`);
-    res.json({ url: dataUrl, size: fileData.length });
+    // 重命名为唯一文件名，保留扩展名
+    const newName = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    const newPath = path.join(logsUploadDir, newName);
+    fs.renameSync(req.file.path, newPath);
+    const url = `/uploads/logs/${newName}`;
+    console.log(`[上传] 图片: ${req.file.originalname} -> ${url}`);
+    res.json({ url, size: fs.statSync(newPath).size });
   } catch (error) {
     console.error('图片上传错误:', error);
     res.status(500).json({ error: '图片上传失败' });
+  }
+});
+
+// 删除图片文件接口（根据路径数组删除）
+app.post('/api/delete-images', (req, res) => {
+  try {
+    const { paths } = req.body;
+    if (!Array.isArray(paths)) return res.status(400).json({ error: 'paths 必须是数组' });
+    for (const p of paths) {
+      if (typeof p !== 'string' || !p.startsWith('/uploads/')) continue;
+      const fullPath = path.join(__dirname, p);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        console.log(`[删除图片] ${p}`);
+      }
+    }
+    res.json({ message: '删除成功' });
+  } catch (error) {
+    console.error('删除图片错误:', error);
+    res.status(500).json({ error: '删除图片失败' });
   }
 });
 
@@ -2157,8 +2212,62 @@ app.delete('/api/project-stages/:id', async (req, res) => {
   }
 });
 
+// 通用施工/巡检日志列表（支持 type/page/project_id 过滤）
+app.get('/api/project-logs', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const userRole = req.headers['x-user-role'] || '';
+    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+
+    const { type, project_id, page = 1, page_size = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+
+    let where = [];
+    let params = [];
+
+    if (type && type !== 'all') {
+      where.push('l.type = ?');
+      params.push(type);
+    }
+    if (project_id) {
+      where.push('l.project_id = ?');
+      params.push(project_id);
+    }
+    // 非管理员只看自己的日志
+    if (!userIsAdmin && userId) {
+      where.push('l.creator_id = ?');
+      params.push(userId);
+    }
+
+    const whereSql = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+
+    const countStmt = db.prepare(`SELECT COUNT(*) as total FROM project_logs l ${whereSql}`);
+    const [{ total }] = await countStmt.all(...params);
+
+    const listStmt = db.prepare(`
+      SELECT l.*, p.name as project_name
+      FROM project_logs l
+      LEFT JOIN projects p ON l.project_id = p.id
+      ${whereSql}
+      ORDER BY l.created_at DESC
+      LIMIT ? OFFSET ?
+    `);
+    const list = await listStmt.all(...params, parseInt(page_size), offset);
+
+    res.json({ list, total, page: parseInt(page), page_size: parseInt(page_size) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/project-logs/:projectId', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM project_logs WHERE project_id = ? ORDER BY created_at DESC');
+  const stmt = db.prepare(`
+    SELECT l.*, p.name as project_name
+    FROM project_logs l
+    LEFT JOIN projects p ON l.project_id = p.id
+    WHERE l.project_id = ?
+    ORDER BY l.created_at DESC
+  `);
   res.json(await stmt.all(req.params.projectId));
 });
 
@@ -2166,9 +2275,9 @@ app.post('/api/project-logs', async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
-  const { project_id, content, operator, images } = req.body;
-  const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images, creator_id) VALUES (?, ?, ?, ?, ?)');
-  const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []), userId);
+  const { project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note } = req.body;
+  const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+  const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []), worker_count || null, work_type || null, tomorrow_plan || null, note || null, userId);
   const logId = result.lastInsertRowid;
 
   // ✅ 新增项目进展时，通知项目成员和客户
@@ -2182,6 +2291,86 @@ app.post('/api/project-logs', async (req, res) => {
   }
 
   res.json({ id: logId, message: '添加成功' });
+});
+
+// 删除日志（谁创建谁可以删除）
+app.delete('/api/project-logs/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const userRole = req.headers['x-user-role'] || '';
+  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+
+  const [log] = await db.prepare('SELECT * FROM project_logs WHERE id = ?').all(req.params.id);
+  if (!log) return res.status(404).json({ error: '日志不存在' });
+
+  // 检查权限：创建者本人或管理员可以删除
+  if (log.creator_id !== userId && !userIsAdmin) {
+    return res.status(403).json({ error: '无权删除他人的日志' });
+  }
+
+  // 删除日志关联的图片文件（兼容新旧数据：路径格式 vs base64格式）
+  try {
+    let paths = [];
+    if (log.images) {
+      let parsed = JSON.parse(log.images);
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      if (Array.isArray(parsed)) {
+        paths = parsed.filter(p => p && typeof p === 'string');
+      }
+    }
+    for (const p of paths) {
+      if (!p.startsWith('/uploads/')) continue;
+      const fullPath = path.join(__dirname, p);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        console.log(`[删除日志图片] ${p}`);
+      }
+    }
+  } catch (e) {
+    console.error('删除日志图片失败:', e);
+  }
+
+  await db.prepare('DELETE FROM project_logs WHERE id = ?').run(req.params.id);
+  res.json({ message: '删除成功' });
+});
+
+// 更新日志
+app.put('/api/project-logs/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const userRole = req.headers['x-user-role'] || '';
+  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+
+  const [log] = await db.prepare('SELECT * FROM project_logs WHERE id = ?').all(req.params.id);
+  if (!log) return res.status(404).json({ error: '日志不存在' });
+
+  // 检查权限：创建者本人或管理员可以编辑
+  if (log.creator_id !== userId && !userIsAdmin) {
+    return res.status(403).json({ error: '无权编辑他人的日志' });
+  }
+
+  const { content, operator, images } = req.body;
+  const stmt = db.prepare('UPDATE project_logs SET content = ?, operator = ?, images = ? WHERE id = ?');
+  await stmt.run(content, operator, JSON.stringify(images || []), req.params.id);
+  res.json({ message: '更新成功' });
+});
+
+// 获取单个日志详情
+app.get('/api/project-log/:id', async (req, res) => {
+  const [log] = await db.prepare('SELECT * FROM project_logs WHERE id = ?').all(req.params.id);
+  if (!log) return res.status(404).json({ error: '日志不存在' });
+  res.json(log);
+});
+
+// 获取我的日志（当前用户创建的所有日志）
+app.get('/api/my/logs', async (req, res) => {
+  const userId = getUserId(req);
+  const stmt = db.prepare(`
+    SELECT l.*, p.name as project_name 
+    FROM project_logs l 
+    LEFT JOIN projects p ON l.project_id = p.id 
+    WHERE l.creator_id = ? 
+    ORDER BY l.created_at DESC
+  `);
+  res.json(await stmt.all(userId));
 });
 
 app.get('/api/quotes', async (req, res) => {
@@ -3157,7 +3346,16 @@ app.post('/api/customers/login', async (req, res) => {
     const familyMember = await familyStmt.get(phone);
     
     if (familyMember) {
-      // 是家庭成员，返回副账户自己的信息，但带上主账户ID用于查项目
+      // 如果是主账户自己（is_master=1 或 relation='本人'），走主账户逻辑
+      if (familyMember.is_master === 1 || familyMember.relation === '本人') {
+        const masterStmt = db.prepare(`SELECT * FROM customers WHERE id = ? LIMIT 1`);
+        const master = await masterStmt.get(familyMember.customer_id);
+        if (master) {
+          return res.json({ success: true, customer: master });
+        }
+      }
+      
+      // 是家庭成员（副账户），返回副账户自己的信息，但带上主账户ID用于查项目
       const masterStmt = db.prepare(`SELECT * FROM customers WHERE id = ? LIMIT 1`);
       const master = await masterStmt.get(familyMember.customer_id);
       if (master) {
@@ -3644,8 +3842,15 @@ app.delete('/api/notices/:id', checkPermission('notice:delete'), async (req, res
 });
 
 app.get('/api/inspections', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM inspections ORDER BY created_at DESC');
-  res.json(await stmt.all());
+  const { project_id } = req.query;
+  let stmt;
+  if (project_id) {
+    stmt = db.prepare('SELECT * FROM inspections WHERE project_id = ? ORDER BY created_at DESC');
+    res.json(await stmt.all(project_id));
+  } else {
+    stmt = db.prepare('SELECT * FROM inspections ORDER BY created_at DESC');
+    res.json(await stmt.all());
+  }
 });
 
 app.post('/api/inspections', checkPermission('inspection:write'), async (req, res) => {
@@ -3653,7 +3858,7 @@ app.post('/api/inspections', checkPermission('inspection:write'), async (req, re
     
   const userId = getUserId(req);
   const { project_id, project_name, inspector_id, inspector_name, score, status, issues, images, result, rectify_status } = req.body;
-  const stmt = db.prepare('INSERT INTO inspections (project_id, project_name, inspector_id, inspector_name, score, status, issues, images, result, rectify_status, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const stmt = db.prepare('INSERT INTO inspections (project_id, project_name, inspector_id, inspector_name, score, status, issues, images, result, rectify_status, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
   const result2 = await stmt.run(project_id, project_name, inspector_id, inspector_name, score, status || '待整改', issues, JSON.stringify(images || []), result, rectify_status || '待整改', userId);
   await addLog(userId, '', '新增', '验房管理', result2.lastInsertRowid, project_name, `项目: ${project_name}`, req.ip);
 
@@ -3672,7 +3877,7 @@ app.post('/api/inspections', checkPermission('inspection:write'), async (req, re
 
 app.put('/api/inspections/:id', checkPermission('inspection:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
-    
+
   const userId = getUserId(req);
   const { score, status, issues, result, rectify_status } = req.body;
   // 权限检查
@@ -3684,6 +3889,42 @@ app.put('/api/inspections/:id', checkPermission('inspection:write'), async (req,
   await stmt.run(score, status, issues, result, rectify_status, req.params.id);
   await addLog(userId, '', '编辑', '验房管理', req.params.id, inspName, `更新验房: ${inspName}`, req.ip);
   res.json({ message: '更新成功' });
+});
+
+// 删除巡检（谁创建谁可以删除）
+app.delete('/api/inspections/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const userRole = req.headers['x-user-role'] || '';
+  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+
+  const [insp] = await db.prepare('SELECT * FROM inspections WHERE id = ?').all(req.params.id);
+  if (!insp) return res.status(404).json({ error: '巡检记录不存在' });
+
+  // 检查权限：创建者本人或管理员可以删除
+  if (insp.creator_id !== userId && !userIsAdmin) {
+    return res.status(403).json({ error: '无权删除他人的巡检' });
+  }
+
+  await db.prepare('DELETE FROM inspections WHERE id = ?').run(req.params.id);
+  res.json({ message: '删除成功' });
+});
+
+// 获取我的巡检（当前用户创建的所有整改问题）
+app.get('/api/my/inspections', async (req, res) => {
+  const userId = getUserId(req);
+  try {
+    const stmt = db.prepare(`
+      SELECT r.*, p.name as project_name 
+      FROM rectification_issues r 
+      LEFT JOIN projects p ON r.project_id = p.id 
+      WHERE r.creator_id = ? OR r.creator_id IS NULL
+      ORDER BY r.created_at DESC
+    `);
+    res.json(await stmt.all(userId));
+  } catch (e) {
+    console.error('查询巡检失败:', e.message);
+    res.json([]);
+  }
 });
 
 app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (req, res) => {
@@ -3701,8 +3942,15 @@ app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (
 });
 
 app.get('/api/acceptance', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM acceptance ORDER BY created_at DESC');
-  res.json(await stmt.all());
+  const { project_id } = req.query;
+  let stmt;
+  if (project_id) {
+    stmt = db.prepare('SELECT * FROM acceptance WHERE project_id = ? ORDER BY created_at DESC');
+    res.json(await stmt.all(project_id));
+  } else {
+    stmt = db.prepare('SELECT * FROM acceptance ORDER BY created_at DESC');
+    res.json(await stmt.all());
+  }
 });
 
 app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res) => {
@@ -4097,14 +4345,14 @@ app.post('/api/rectification-issues', async (req, res) => {
   const userId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id']) : null;
   const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description } = req.body;
   const stmt = db.prepare(`INSERT INTO rectification_issues
-    (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description, creator_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const result = await stmt.run(
     inspection_id, project_id, project_name,
     issue_desc || title || '', priority || '普通', status || '待处理',
     responsible_id, responsible_name, due_date,
     JSON.stringify(images || []), remark || description || '',
-    title || issue_desc || '', category || '', location || '', level || '', description || ''
+    title || issue_desc || '', category || '', location || '', level || '', description || '', userId
   );
   await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });

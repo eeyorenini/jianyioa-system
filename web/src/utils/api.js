@@ -175,3 +175,11 @@ export const channelApi = {
 export const logApi = {
   list: () => request.get('/operation-logs')
 }
+
+// ============ 施工日志/巡检日志 ============
+export const projectLogApi = {
+  list: (params) => request.get('/project-logs', { params }),
+  create: (data) => request.post('/project-logs', data),
+  update: (id, data) => request.put(`/project-logs/${id}`, data),
+  delete: (id) => request.delete(`/project-logs/${id}`)
+}

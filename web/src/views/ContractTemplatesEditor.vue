@@ -126,8 +126,8 @@
           <button type="button" @click="editor.chain().focus().setHorizontalRule().run()">— 分隔线</button>
           <div class="toolbar-divider"></div>
 
-          <button type="button" @click="triggerImageUpload">📷 图片</button>
-          <button type="button" @click="triggerPdfUpload">📄 PDF</button>
+          <button type="button" @click="triggerImageUpload">📷</button>
+          <button type="button" @click="triggerPdfUpload">📄</button>
           <input ref="imageUploadRef" type="file" accept="image/*" style="display:none" @change="handleImageUpload" />
           <input ref="pdfUploadRef" type="file" accept="application/pdf" style="display:none" @change="handlePdfUpload" />
         </div>
@@ -612,6 +612,35 @@ const triggerPdfUpload = () => {
   pdfUploadRef.value?.click()
 }
 
+// 压缩图片：最大边 1920px，质量 0.8
+const compressImage = (file) => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const MAX = 1920
+      let { width, height } = img
+      if (width > MAX || height > MAX) {
+        if (width > height) {
+          height = Math.round((height * MAX) / width)
+          width = MAX
+        } else {
+          width = Math.round((width * MAX) / height)
+          height = MAX
+        }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+      canvas.toBlob((blob) => {
+        resolve(blob || file)
+      }, file.type, 0.8)
+    }
+    img.onerror = () => resolve(file)
+    img.src = URL.createObjectURL(file)
+  })
+}
+
 // 处理图片上传
 const handleImageUpload = async (e) => {
   const file = e.target.files?.[0]
@@ -619,8 +648,10 @@ const handleImageUpload = async (e) => {
   uploadLoading.value = true
   uploadLoadingText.value = '正在导入图片...'
   try {
+    // 压缩图片：限制最大边 1920px，质量 0.8
+    const compressedFile = await compressImage(file)
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('file', compressedFile)
     const { data } = await axios.post('/api/upload-image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })

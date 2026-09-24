@@ -88,8 +88,13 @@
             </el-button>
           </template>
         </el-table-column>
-        <el-table-column prop="start_date" label="开始日期" width="120" />
-        <el-table-column prop="end_date" label="结束日期" width="120" />
+        <el-table-column label="详情" width="100" fixed="right">
+          <template #default="scope">
+            <el-button size="small" type="primary" link @click="openProjectDetail(scope.row)">
+              <el-icon><InfoFilled /></el-icon> 详情
+            </el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="scope">
             <el-button size="small" type="primary" link @click="handleEdit(scope.row)">编辑</el-button>
@@ -488,6 +493,66 @@
       </template>
     </el-dialog>
 
+    <!-- 项目详情弹窗 -->
+    <el-dialog v-model="showProjectDetail" :title="`项目详情：${detailProject?.name || ''}`" width="900px">
+      <el-tabs v-model="detailTab">
+        <el-tab-pane label="日志" name="logs">
+          <!-- 施工日志列表（只展示当前项目） -->
+          <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
+            <span style="font-size:12px;color:#909399">
+              共 {{ detailLogs.length }} 条
+            </span>
+          </div>
+          <el-table :data="detailLogs" size="small" border max-height="400">
+            <el-table-column prop="created_at" label="日期" width="160">
+              <template #default="{ row }">
+                {{ row.created_at ? row.created_at.slice(0, 16) : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="operator" label="施工人" width="120" />
+            <el-table-column prop="work_type" label="工种" width="100" />
+            <el-table-column prop="worker_count" label="人数" width="60" />
+            <el-table-column prop="content" label="施工内容" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="tomorrow_plan" label="明日计划" min-width="150" show-overflow-tooltip />
+          </el-table>
+          <div v-if="detailLogs.length === 0" style="text-align:center;color:#909399;padding:30px">
+            暂无施工日志
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="巡检" name="inspections">
+          <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
+            <span style="font-size:12px;color:#909399">共 {{ detailInspections.length }} 条</span>
+          </div>
+          <el-table :data="detailInspections" size="small" border max-height="400">
+            <el-table-column prop="created_at" label="日期" width="160">
+              <template #default="{ row }">
+                {{ row.created_at ? row.created_at.slice(0, 16) : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="operator" label="巡检人" width="120" />
+            <el-table-column prop="content" label="巡检内容" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="note" label="备注" min-width="150" show-overflow-tooltip />
+          </el-table>
+          <div v-if="detailInspections.length === 0" style="text-align:center;color:#909399;padding:30px">
+            暂无巡检记录
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="验收" name="acceptance">
+          <div style="text-align:center;color:#909399;padding:40px">
+            验收功能开发中
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="主材" name="materials">
+          <div style="text-align:center;color:#909399;padding:40px">
+            主材功能开发中
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </el-dialog>
+
     <!-- 员工选择抽屉 -->
     <el-drawer v-model="showEmployeeDrawer" :title="`选择${employeeDrawerTypeLabel}`" size="500px">
       <div class="employee-drawer-content">
@@ -516,7 +581,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank, Histogram } from '@element-plus/icons-vue'
@@ -550,6 +615,50 @@ const editingNodeForDate = ref(null)
 const nodeDateForm = reactive({ plan_date: '', plan_end_date: '' })
 const showProjectDateDialog = ref(false)
 const projectDateForm = reactive({ start_date: '', end_date: '' })
+
+// 项目详情弹窗
+const showProjectDetail = ref(false)
+const detailProject = ref(null)
+const detailTab = ref('logs')
+const detailLogs = ref([])
+const detailInspections = ref([])
+
+const openProjectDetail = async (project) => {
+  detailProject.value = project
+  detailTab.value = 'logs'
+  detailLogs.value = []
+  detailInspections.value = []
+  showProjectDetail.value = true
+  await loadDetailLogs()
+}
+
+const loadDetailLogs = async () => {
+  try {
+    const res = await axios.get('/api/project-logs', {
+      params: { project_id: detailProject.value?.id, type: 'construction', page: 1, page_size: 100 }
+    })
+    detailLogs.value = res.data?.list || res.list || []
+  } catch (e) {
+    detailLogs.value = []
+  }
+}
+
+const loadDetailInspections = async () => {
+  try {
+    const res = await axios.get('/api/project-logs', {
+      params: { project_id: detailProject.value?.id, type: 'inspection', page: 1, page_size: 100 }
+    })
+    detailInspections.value = res.data?.list || res.list || []
+  } catch (e) {
+    detailInspections.value = []
+  }
+}
+
+// 监听 tab 切换
+watch(detailTab, (val) => {
+  if (val === 'logs' && detailLogs.value.length === 0) loadDetailLogs()
+  if (val === 'inspections' && detailInspections.value.length === 0) loadDetailInspections()
+})
 
 // 甘特图拖拽选择模式
 const ganttSelecting = ref(false)       // 是否正在选择

@@ -59,6 +59,8 @@
         <el-sub-menu index="project-group">
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
+          <el-menu-item index="/project-logs">施工日志</el-menu-item>
+          <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
           <el-menu-item index="/acceptance">验收管理</el-menu-item>
           <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>
@@ -129,6 +131,8 @@
         <el-sub-menu index="project-group">
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
+          <el-menu-item index="/project-logs">施工日志</el-menu-item>
+          <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
           <el-menu-item index="/acceptance">验收管理</el-menu-item>
           <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>

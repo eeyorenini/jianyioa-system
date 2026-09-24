@@ -1,6 +1,6 @@
 {
   "name": "jianyioa-system",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "建亿OA系统 v1.0.1 (MySQL版)",
   "main": "server/server.js",
   "scripts": {
