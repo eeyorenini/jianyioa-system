@@ -3,33 +3,28 @@
     <!-- 标题栏 -->
     <view class="feed-header">
       <text class="feed-title">装修动态</text>
-      <text class="feed-count" v-if="list.length > 0">{{ list.length }}条</text>
+      <text class="feed-count" v-if="list.length > 0">{{ list.length }}条更新</text>
     </view>
 
     <!-- 加载中骨架屏 -->
     <view v-if="loading && list.length === 0" class="skeleton-list">
       <view v-for="i in 3" :key="i" class="skeleton-card">
-        <view class="skeleton-header">
+        <view class="skeleton-left">
           <view class="skeleton-avatar"></view>
-          <view class="skeleton-meta">
-            <view class="skeleton-line short"></view>
-            <view class="skeleton-line tiny"></view>
-          </view>
         </view>
-        <view class="skeleton-content"></view>
-        <view class="skeleton-images">
-          <view class="skeleton-img"></view>
-          <view class="skeleton-img"></view>
-          <view class="skeleton-img"></view>
+        <view class="skeleton-right">
+          <view class="skeleton-line" style="width:80px"></view>
+          <view class="skeleton-line" style="height:50px;margin-top:8px"></view>
+          <view class="skeleton-line" style="width:60%;margin-top:8px"></view>
         </view>
       </view>
     </view>
 
     <!-- 空状态 -->
     <view v-else-if="!loading && list.length === 0" class="empty-state">
-      <text class="empty-icon">📝</text>
+      <text class="empty-icon">🏠</text>
       <text class="empty-text">暂无施工动态</text>
-      <text class="empty-hint">工长正在工地施工，敬请期待</text>
+      <text class="empty-hint">施工进度将第一时间更新</text>
     </view>
 
     <!-- 错误状态 -->
@@ -39,64 +34,66 @@
       <view class="retry-btn" @click="handleRetry">点击重试</view>
     </view>
 
-    <!-- 动态列表 -->
+    <!-- 动态列表 - 卡片流 -->
     <view v-else class="feed-list">
       <view
         v-for="(item, index) in list"
         :key="item.id || index"
         class="dynamic-card"
+        :class="{ 'has-image': getMediaList(item).length > 0 }"
       >
-        <!-- 卡片头部 -->
-        <view class="card-header">
-          <view class="user-info">
-            <view class="avatar">{{ getAvatarText(item) }}</view>
-            <view class="user-meta">
-              <view class="user-row">
-                <text class="user-name">{{ item.operator || item.creator_name || '未知' }}</text>
-                <view class="role-tag" v-if="item.role_name || item.role">
-                  {{ item.role_name || item.role }}
-                </view>
-              </view>
-              <text class="post-time">{{ formatTime(item.created_at) }}</text>
+        <!-- 左侧类型指示条 -->
+        <view class="card-type-bar" :style="{ background: item.typeColor || '#3B82F6' }"></view>
+        
+        <!-- 主要内容区 -->
+        <view class="card-main">
+          <!-- 头部：类型标签 + 时间 -->
+          <view class="card-header">
+            <view class="type-badge" :style="{ 
+              background: (item.typeColor || '#3B82F6') + '18',
+              color: item.typeColor || '#3B82F6'
+            }">
+              <text class="type-icon">{{ item.typeIcon }}</text>
+              <text class="type-label">{{ item.typeText }}</text>
             </view>
-          </view>
-        </view>
-
-        <!-- 卡片内容 -->
-        <view class="card-body">
-          <!-- 文字内容 -->
-          <view class="content-text" :class="{ collapsed: item.collapsed && isLongContent(item) }">
-            {{ item.content || item.description || '暂无内容' }}
-          </view>
-          <view class="expand-btn" v-if="isLongContent(item)" @click="toggleExpand(item)">
-            {{ item.collapsed ? '展开' : '收起' }}
+            <text class="post-time">{{ formatDate(item.created_at) }}</text>
           </view>
 
-          <!-- 媒体素材区 -->
+          <!-- 内容区域 -->
+          <view class="card-content">
+            <text class="content-text" :class="{ 'empty-content': !getContentText(item) }">
+              {{ getContentText(item) || '暂无详细描述' }}
+            </text>
+          </view>
+
+          <!-- 图片区域 -->
           <view class="media-section" v-if="getMediaList(item).length > 0">
-            <!-- 图片网格 -->
             <view class="media-grid" :class="'grid-' + Math.min(getMediaList(item).length, 3)">
               <view
-                v-for="(media, mediaIdx) in getMediaList(item)"
+                v-for="(media, mediaIdx) in getMediaList(item).slice(0, 3)"
                 :key="mediaIdx"
                 class="media-item"
-                @click="previewMedia(getMediaList(item), mediaIdx)"
+                @click.stop="previewMedia(getMediaList(item), mediaIdx)"
               >
                 <image
                   class="media-img"
                   :src="media.thumbnailUrl || media.url"
                   mode="aspectFill"
-                  @error="onMediaError($event, item, mediaIdx)"
                 />
-                <!-- 视频标记 -->
                 <view class="video-play" v-if="media.type === 'video'">
                   <text class="play-icon">▶</text>
                 </view>
-                <!-- 加载失败占位 -->
-                <view class="media-error" v-if="item.mediaError?.[mediaIdx]">
-                  <text>素材加载失败</text>
-                </view>
               </view>
+            </view>
+          </view>
+
+          <!-- 底部信息 -->
+          <view class="card-footer">
+            <view class="operator-info">
+              <text class="operator-name">{{ item.operator || item.creator_name || '系统' }}</text>
+            </view>
+            <view class="card-actions">
+              <text class="action-tag">{{ getSourceText(item) }}</text>
             </view>
           </view>
         </view>
@@ -107,56 +104,37 @@
         <text>加载中...</text>
       </view>
       <view v-else-if="noMore && list.length > 0" class="load-more no-more">
-        <text>没有更多了</text>
-      </view>
-      <view v-else-if="!noMore && list.length > 0" class="load-more" @click="loadMoreData">
-        <text>加载更多</text>
+        <text>— 已加载全部 —</text>
       </view>
     </view>
   </view>
 </template>
 
 <script setup>
-import { ref, watch } from "vue";
+import { ref } from "vue";
 
 const props = defineProps({
-  // 动态列表数据
-  list: {
-    type: Array,
-    default: () => []
-  },
-  // 加载状态
-  loading: {
-    type: Boolean,
-    default: false
-  },
-  // 加载更多状态
-  loadingMore: {
-    type: Boolean,
-    default: false
-  },
-  // 是否没有更多数据
-  noMore: {
-    type: Boolean,
-    default: false
-  },
-  // 错误状态
-  error: {
-    type: Boolean,
-    default: false
-  }
+  list: { type: Array, default: () => [] },
+  loading: { type: Boolean, default: false },
+  loadingMore: { type: Boolean, default: false },
+  noMore: { type: Boolean, default: false },
+  error: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['retry', 'load-more', 'media-click']);
 
-// 获取头像文字
-const getAvatarText = (item) => {
-  const name = item.operator || item.creator_name || '未知';
-  return name.substring(0, 1);
+// 获取内容文本
+const getContentText = (item) => {
+  if (item.content) return item.content;
+  if (item.description) return item.description;
+  if (item.result) return item.result;
+  if (item.note) return item.note;
+  if (item.issues) return item.issues;
+  return '';
 };
 
-// 格式化时间
-const formatTime = (dateStr) => {
+// 格式化日期
+const formatDate = (dateStr) => {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   const now = new Date();
@@ -170,73 +148,49 @@ const formatTime = (dateStr) => {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 };
 
-// 判断是否为长内容
-const isLongContent = (item) => {
-  const content = item.content || item.description || '';
-  return content.length > 100;
-};
-
-// 展开/收起
-const toggleExpand = (item) => {
-  item.collapsed = !item.collapsed;
+// 获取来源
+const getSourceText = (item) => {
+  if (item.source) return item.source;
+  if (item.type === 'log') return '施工日志';
+  if (item.type === 'inspection') return '巡检记录';
+  if (item.type === 'acceptance') return '验收记录';
+  if (item.type === 'node') return '节点进度';
+  if (item.category) return item.category;
+  return '动态';
 };
 
 // 获取媒体列表
 const getMediaList = (item) => {
-  if (item.mediaList && Array.isArray(item.mediaList)) {
-    return item.mediaList;
-  }
-  if (item.images) {
+  const parseJson = (str) => {
+    if (!str) return [];
     try {
-      const images = typeof item.images === 'string' ? JSON.parse(item.images) : item.images;
-      if (Array.isArray(images)) {
-        return images.map(url => ({ url, type: 'image' }));
-      }
-    } catch (e) {
-      // 如果是逗号分隔的字符串
-      if (typeof item.images === 'string') {
-        return item.images.split(',').filter(Boolean).map(url => ({ url, type: 'image' }));
-      }
-    }
+      const parsed = JSON.parse(str);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  };
+  
+  if (item.mediaList) return item.mediaList;
+  if (item.images) {
+    const imgs = parseJson(item.images);
+    return imgs.length ? imgs.map(url => ({ url, type: 'image' })) : [];
   }
   if (item.photos) {
-    try {
-      const photos = typeof item.photos === 'string' ? JSON.parse(item.photos) : item.photos;
-      if (Array.isArray(photos)) {
-        return photos.map(url => ({ url, type: 'image' }));
-      }
-    } catch (e) {}
+    const photos = parseJson(item.photos);
+    return photos.length ? photos.map(url => ({ url, type: 'image' })) : [];
   }
   return [];
 };
 
-// 预览媒体
+// 预览图片
 const previewMedia = (mediaList, index) => {
   const urls = mediaList.map(m => m.url || m.thumbnailUrl);
-  uni.previewImage({
-    urls,
-    current: index
-  });
+  uni.previewImage({ urls, current: index });
   emit('media-click', { mediaList, index });
 };
 
-// 媒体加载失败
-const onMediaError = (e, item, index) => {
-  if (!item.mediaError) {
-    item.mediaError = {};
-  }
-  item.mediaError[index] = true;
-};
-
 // 重试
-const handleRetry = () => {
-  emit('retry');
-};
-
-// 加载更多
-const loadMoreData = () => {
-  emit('load-more');
-};
+const handleRetry = () => emit('retry');
+const loadMoreData = () => emit('load-more');
 </script>
 
 <style scoped>
@@ -249,11 +203,11 @@ const loadMoreData = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 0 12px;
+  padding: 16px 0 14px;
 }
 
 .feed-title {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   color: #1A1F36;
 }
@@ -268,21 +222,22 @@ const loadMoreData = () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 40px 20px;
+  padding: 50px 20px;
   background: #fff;
-  border-radius: 14px;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
 
 .empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 56px;
+  margin-bottom: 16px;
 }
 
 .empty-text {
-  font-size: 15px;
+  font-size: 16px;
   color: #374151;
   font-weight: 500;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .empty-hint {
@@ -297,93 +252,52 @@ const loadMoreData = () => {
   align-items: center;
   padding: 40px 20px;
   background: #fff;
-  border-radius: 14px;
+  border-radius: 16px;
 }
 
-.error-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
-}
-
-.error-text {
-  font-size: 14px;
-  color: #EF4444;
-  margin-bottom: 12px;
-}
+.error-icon { font-size: 40px; margin-bottom: 12px; }
+.error-text { font-size: 14px; color: #EF4444; margin-bottom: 14px; }
 
 .retry-btn {
   font-size: 14px;
-  color: #1E3A5F;
-  padding: 8px 24px;
-  border: 1px solid #1E3A5F;
+  color: #fff;
+  background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
+  padding: 10px 28px;
   border-radius: 20px;
 }
 
 /* 骨架屏 */
 .skeleton-list {
   background: #fff;
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
 
 .skeleton-card {
-  margin-bottom: 16px;
-}
-
-.skeleton-card:last-child {
-  margin-bottom: 0;
-}
-
-.skeleton-header {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 20px;
 }
+
+.skeleton-card:last-child { margin-bottom: 0; }
+
+.skeleton-left { flex-shrink: 0; }
 
 .skeleton-avatar {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
 
-.skeleton-meta {
-  flex: 1;
-}
+.skeleton-right { flex: 1; }
 
 .skeleton-line {
-  height: 12px;
-  border-radius: 6px;
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  margin-bottom: 6px;
-}
-
-.skeleton-line.short { width: 60%; }
-.skeleton-line.tiny { width: 40%; height: 10px; }
-
-.skeleton-content {
-  height: 40px;
-  border-radius: 8px;
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  margin-bottom: 12px;
-}
-
-.skeleton-images {
-  display: flex;
-  gap: 8px;
-}
-
-.skeleton-img {
-  width: 80px;
-  height: 80px;
-  border-radius: 8px;
+  height: 14px;
+  border-radius: 7px;
   background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
@@ -394,111 +308,85 @@ const loadMoreData = () => {
   100% { background-position: 200% 0; }
 }
 
-/* 动态卡片列表 */
+/* 动态卡片 */
 .feed-list {
-  background: #fff;
-  border-radius: 14px;
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .dynamic-card {
-  margin-bottom: 16px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #F5F7FA;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+  overflow: hidden;
+  display: flex;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.dynamic-card:last-child {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  border-bottom: none;
+.dynamic-card:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
 }
 
-/* 卡片头部 */
+/* 左侧类型色条 */
+.card-type-bar {
+  width: 4px;
+  flex-shrink: 0;
+}
+
+/* 主要内容 */
+.card-main {
+  flex: 1;
+  padding: 14px 16px;
+}
+
+/* 头部 */
 .card-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   margin-bottom: 10px;
 }
 
-.user-info {
-  display: flex;
+.type-badge {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #1E3A5F, #3B82F6);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.user-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.user-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.user-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1A1F36;
-}
-
-.role-tag {
-  font-size: 10px;
-  padding: 2px 6px;
-  background: #DBEAFE;
-  color: #1E40AF;
-  border-radius: 10px;
-}
+.type-icon { font-size: 13px; }
+.type-label { font-size: 12px; }
 
 .post-time {
   font-size: 12px;
   color: #9CA3AF;
 }
 
-/* 卡片内容 */
-.card-body {
-  padding-left: 50px;
+/* 内容 */
+.card-content {
+  margin-bottom: 10px;
 }
 
 .content-text {
-  font-size: 14px;
+  font-size: 15px;
   color: #374151;
   line-height: 1.6;
   word-break: break-all;
 }
 
-.content-text.collapsed {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.content-text.empty-content {
+  color: #9CA3AF;
+  font-style: italic;
 }
 
-.expand-btn {
-  font-size: 13px;
-  color: #1E3A5F;
-  margin-top: 4px;
-}
-
-/* 媒体区 */
+/* 图片区 */
 .media-section {
-  margin-top: 10px;
+  margin-bottom: 12px;
 }
 
 .media-grid {
@@ -506,16 +394,16 @@ const loadMoreData = () => {
   gap: 6px;
 }
 
-.media-grid.grid-1 { grid-template-columns: 1fr; }
+.media-grid.grid-1 { grid-template-columns: 1fr; max-width: 200px; }
 .media-grid.grid-2 { grid-template-columns: repeat(2, 1fr); }
 .media-grid.grid-3 { grid-template-columns: repeat(3, 1fr); }
 
 .media-item {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
-  background: #F5F7FA;
+  background: #F3F4F6;
 }
 
 .media-img {
@@ -529,10 +417,10 @@ const loadMoreData = () => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0,0,0,0.5);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -540,33 +428,53 @@ const loadMoreData = () => {
 
 .play-icon {
   color: #fff;
-  font-size: 14px;
+  font-size: 12px;
   margin-left: 2px;
 }
 
-.media-error {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: #E5E7EB;
+/* 底部 */
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid #F5F7FA;
+}
+
+.operator-info {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 11px;
+  gap: 6px;
+}
+
+.operator-name {
+  font-size: 13px;
   color: #6B7280;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.action-tag {
+  font-size: 11px;
+  color: #9CA3AF;
+  background: #F5F7FA;
+  padding: 3px 8px;
+  border-radius: 8px;
 }
 
 /* 加载更多 */
 .load-more {
   text-align: center;
-  padding: 16px 0 4px;
+  padding: 16px 0 8px;
   font-size: 13px;
-  color: #1E3A5F;
+  color: #9CA3AF;
 }
 
 .load-more.no-more {
-  color: #9CA3AF;
+  color: #D1D5DB;
 }
 </style>

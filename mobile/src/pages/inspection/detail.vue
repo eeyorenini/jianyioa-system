@@ -39,30 +39,30 @@
         </view>
         <view class="info-row">
           <text class="info-label">严重程度</text>
-          <text class="severity-tag" :class="'severity-' + detail.severity">{{ severityText }}</text>
+          <text class="severity-tag" :class="'severity-' + detail.level">{{ severityText }}</text>
         </view>
         <view class="info-row">
           <text class="info-label">负责人</text>
-          <text class="info-value">{{ detail.assign_name || '-' }}</text>
+          <text class="info-value">{{ detail.responsible_name || '-' }}</text>
         </view>
         <view class="info-row">
           <text class="info-label">整改期限</text>
-          <text class="info-value" :class="{ 'text-red': isOverdue }">{{ detail.deadline || '-' }}</text>
+          <text class="info-value" :class="{ 'text-red': isOverdue }">{{ detail.due_date || '-' }}</text>
         </view>
       </view>
 
       <!-- 问题描述 -->
       <view class="card">
         <view class="card-title">问题描述</view>
-        <text class="problem-desc">{{ detail.description || '无' }}</text>
+        <text class="problem-desc">{{ detail.issue_desc || '无' }}</text>
       </view>
 
       <!-- 照片 -->
-      <view v-if="detail.photos && detail.photos.length > 0" class="card">
+      <view v-if="getPhotos(detail).length > 0" class="card">
         <view class="card-title">现场照片</view>
         <view class="photo-grid">
           <image
-            v-for="(photo, idx) in detail.photos"
+            v-for="(photo, idx) in getPhotos(detail)"
             :key="idx"
             class="photo-item"
             :src="photo"
@@ -116,16 +116,28 @@ onMounted(() => {
   const pages = getCurrentPages()
   const currentPage = pages[pages.length - 1]
   const id = currentPage?.options?.id
-  if (id) fetchDetail(id)
-  else loading.value = false
+  // 优先从列表页传递的数据获取，避免额外请求
+  if (currentPage?.$inspectionData) {
+    detail.value = currentPage.$inspectionData
+    loading.value = false
+  } else if (id) {
+    fetchDetail(id)
+  } else {
+    loading.value = false
+  }
 })
 
 function fetchDetail(id) {
   uni.request({
-    url: `/api/inspection/detail?id=${id}`,
+    url: `/api/rectification-issues?id=${id}`,
     success: (res) => {
-      if (res.data.code === 0) detail.value = res.data.data
-      else detail.value = null
+      if (res.data && Array.isArray(res.data) && res.data[0]) {
+        detail.value = res.data[0];
+      } else if (res.data?.data) {
+        detail.value = res.data.data;
+      } else {
+        detail.value = null;
+      }
     },
     fail: () => { detail.value = null },
     complete: () => { loading.value = false }
@@ -133,33 +145,53 @@ function fetchDetail(id) {
 }
 
 const statusClass = computed(() => {
-  const map = { pending: 'status-pending', fixed: 'status-fixed', overdue: 'status-overdue' }
-  return map[detail.value?.status] || ''
+  const s = String(detail.value?.rectify_status || detail.value?.status || '').toLowerCase()
+  if (s.includes('待整改') || s === 'pending') return 'status-pending'
+  if (s.includes('已完成') || s === 'completed') return 'status-fixed'
+  if (s.includes('已验收') || s === 'verified') return 'status-fixed'
+  return ''
 })
 
 const statusText = computed(() => {
-  const map = { pending: '待整改', fixed: '已整改', overdue: '已逾期' }
-  return map[detail.value?.status] || '未知'
+  const s = String(detail.value?.rectify_status || detail.value?.status || '').toLowerCase()
+  if (s.includes('待整改') || s === 'pending') return '待整改'
+  if (s.includes('已完成') || s === 'completed') return '已完成'
+  if (s.includes('已验收') || s === 'verified') return '已验收'
+  if (s.includes('整改中') || s === 'fixing') return '整改中'
+  return '待整改'
 })
 
 const severityText = computed(() => {
-  const map = { low: '轻微', medium: '中等', high: '严重' }
-  return map[detail.value?.severity] || '未知'
+  const map = { low: '轻微', medium: '中等', high: '严重', serious: '严重', stop: '停工', normal: '一般' }
+  return map[detail.value?.level] || '一般'
 })
 
 const isOverdue = computed(() => {
-  if (!detail.value?.deadline) return false
-  return new Date(detail.value.deadline) < new Date() && detail.value.status !== 'fixed'
+  if (!detail.value?.due_date) return false
+  const s = String(detail.value?.rectify_status || detail.value?.status || '').toLowerCase()
+  return new Date(detail.value.due_date) < new Date() && !s.includes('完成') && !s.includes('已完成')
 })
 
 function formatDate(str) {
   if (!str) return ''
-  const d = new Date(str)
+  const d = new Date(str.replace(/-/g, '/'))
   return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
 }
 
+function getPhotos(item) {
+  if (!item?.images) return []
+  try {
+    let s = item.images
+    let p = JSON.parse(s)
+    if (typeof p === 'string') p = JSON.parse(p)
+    if (Array.isArray(p)) return p.filter(x => x && x.trim())
+    return []
+  } catch { return [] }
+}
+
 function previewImage(index) {
-  uni.previewImage({ urls: detail.value.photos, current: index })
+  const photos = getPhotos(detail.value)
+  uni.previewImage({ urls: photos, current: photos[index] })
 }
 
 function submitFix() {
@@ -167,17 +199,23 @@ function submitFix() {
     uni.showToast({ title: '请填写整改内容', icon: 'none' })
     return
   }
+  // 调用真实存在的 API: PUT /api/inspections/:id
   uni.request({
-    url: '/api/inspection/fix',
-    method: 'POST',
-    data: { id: detail.value.id, fix_record: fixContent.value },
+    url: `/api/inspections/${detail.value.id}`,
+    method: 'PUT',
+    data: {
+      rectify_status: '整改中',
+      remark: fixContent.value
+    },
     success: (res) => {
-      if (res.data.code === 0) {
+      if (res.data.code === 0 || res.statusCode === 200) {
         uni.showToast({ title: '提交成功', icon: 'success' })
         showFixDialog.value = false
-        fetchDetail(detail.value.id)
+        // 更新本地数据
+        detail.value.rectify_status = '整改中'
+        detail.value.remark = fixContent.value
       } else {
-        uni.showToast({ title: res.data.msg || '提交失败', icon: 'none' })
+        uni.showToast({ title: res.data?.msg || '提交失败', icon: 'none' })
       }
     }
   })

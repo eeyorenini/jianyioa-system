@@ -1,26 +1,60 @@
 <template>
   <view class="page">
-    <view class="page-title-bar">
-      <text class="page-title">消息通知</text>
-    </view>
-
-    <view class="msg-list" v-if="messages.length">
-      <view class="msg-item" v-for="m in messages" :key="m.id" :class="`msg-${m.type || 'default'}`">
-        <view class="msg-icon">{{ getMsgIcon(m.type) }}</view>
-        <view class="msg-body">
-          <view class="msg-header">
-            <text class="msg-title">{{ m.title }}</text>
-            <text class="msg-time">{{ formatTime(m.created_at) }}</text>
-          </view>
-          <text class="msg-content">{{ m.content }}</text>
-        </view>
+    <!-- 顶部导航 -->
+    <view class="nav-bar">
+      <text class="nav-title">消息通知</text>
+      <view class="nav-right" v-if="list.length > 0" @click="markAllRead">
+        <text class="mark-all-btn">全部已读</text>
       </view>
     </view>
 
-    <view class="empty-state" v-else>
-      <text class="empty-icon">🔔</text>
-      <text class="empty-text">暂无消息通知</text>
-    </view>
+    <!-- 消息列表 -->
+    <scroll-view
+      class="message-list"
+      scroll-y
+      :refresher-enabled="true"
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+      @scrolltolower="loadMore"
+    >
+      <view v-if="loading && list.length === 0" class="loading-state">
+        <text class="loading-text">加载中...</text>
+      </view>
+
+      <view v-else-if="list.length === 0" class="empty-state">
+        <text class="empty-icon">🔔</text>
+        <text class="empty-text">暂无消息通知</text>
+      </view>
+
+      <view
+        v-else
+        class="message-card"
+        :class="{ unread: !item.is_read }"
+        v-for="item in list"
+        :key="item.id"
+        @click="openMessage(item)"
+      >
+        <view class="card-left">
+          <view class="type-icon">{{ getTypeIcon(item.type) }}</view>
+          <view class="unread-dot" v-if="!item.is_read"></view>
+        </view>
+        <view class="card-body">
+          <view class="card-title-row">
+            <text class="card-title">{{ item.title }}</text>
+            <text class="card-time">{{ formatTime(item.created_at) }}</text>
+          </view>
+          <text class="card-content">{{ item.content }}</text>
+          <text class="card-project" v-if="item.related_type === 'project' || item.source_type === 'project'">点击查看项目详情</text>
+        </view>
+      </view>
+
+      <view v-if="loadingMore" class="loading-more">
+        <text class="loading-more-text">加载更多...</text>
+      </view>
+      <view v-if="noMore && list.length > 0" class="no-more">
+        <text class="no-more-text">没有更多了</text>
+      </view>
+    </scroll-view>
 
     <!-- 客户专属底部导航 -->
     <customer-tabbar />
@@ -31,150 +65,312 @@
 import { ref, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
 
-const messages = ref([]);
+const list = ref([]);
+const loading = ref(false);
+const loadingMore = ref(false);
+const refreshing = ref(false);
+const page = ref(1);
+const pageSize = 20;
+const noMore = ref(false);
+const phone = ref('');
 
-const getMsgIcon = (type) => {
-  const map = {
-    node_completed: '📋',
-    project_progress: '📝',
-    inspection_submit: '🔍',
-    system: '📢',
-  };
-  return map[type] || '📢';
+// 获取当前客户手机号
+const getPhone = () => {
+  try {
+    const userInfo = uni.getStorageSync('userInfo');
+    if (userInfo) {
+      const info = typeof userInfo === 'string' ? JSON.parse(userInfo) : userInfo;
+      return info.phone || '';
+    }
+  } catch {}
+  return '';
 };
 
-const formatTime = (str) => {
-  if (!str) return '';
-  const d = new Date(str);
+// 格式化时间
+const formatTime = (timeStr) => {
+  if (!timeStr) return '';
+  const d = new Date(timeStr);
   const now = new Date();
   const diff = now - d;
   if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
-  if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+  if (diff < 604800000) return `${Math.floor(diff / 86400000)}天前`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
-const fetchMessages = async () => {
+// 获取类型图标
+const getTypeIcon = (type) => {
+  const iconMap = {
+    'inspection_submit': '🔍',
+    'inspection_complete': '✅',
+    'log_submit': '📋',
+    'node_update': '📌',
+    'node_completed': '✅',
+    'node_in_progress': '🔄',
+    'node_pending': '⏳',
+    'node_skipped': '⏭️',
+    'project_progress': '📝',
+    'approval': '📝',
+    'system': '⚙️',
+  };
+  return iconMap[type] || '🔔';
+};
+
+// 加载消息列表
+const fetchList = async (reset = false) => {
+  if (reset) {
+    page.value = 1;
+    noMore.value = false;
+  }
+  const p = phone.value || getPhone();
+  if (!p) return;
+
+  const url = `/api/notifications?phone=${encodeURIComponent(p)}&page=${page.value}&pageSize=${pageSize}`;
   try {
-    const userInfo = uni.getStorageSync('userInfo');
-    // 家庭成员用主账户手机号查消息
-    const masterPhone = uni.getStorageSync('masterPhone');
-    // 副账户用主账户手机号，主账户用自己的手机号
-    const phone = masterPhone || userInfo?.phone || '';
-    
-    const res = await uni.request({
-      url: `/api/notifications?phone=${phone}`,
-    });
-    const data = res.data;
-    if (data && data.list) {
-      messages.value = data.list || [];
-    } else if (Array.isArray(data)) {
-      messages.value = data;
-    } else {
-      messages.value = [];
+    const res = await uni.request({ url });
+    if (res.data && res.data.list) {
+      if (reset) {
+        list.value = res.data.list;
+      } else {
+        list.value.push(...res.data.list);
+      }
+      if (res.data.list.length < pageSize) {
+        noMore.value = true;
+      }
     }
   } catch (e) {
-    messages.value = [];
+    console.error('加载消息失败', e);
+  }
+};
+
+// 刷新
+const onRefresh = async () => {
+  refreshing.value = true;
+  await fetchList(true);
+  refreshing.value = false;
+};
+
+// 加载更多
+const loadMore = async () => {
+  if (loadingMore.value || noMore.value) return;
+  loadingMore.value = true;
+  page.value++;
+  await fetchList();
+  loadingMore.value = false;
+};
+
+// 标记全部已读
+const markAllRead = async () => {
+  const p = phone.value || getPhone();
+  if (!p) return;
+  try {
+    await uni.request({
+      url: `/api/notifications/read-all?phone=${encodeURIComponent(p)}`,
+      method: 'PUT',
+    });
+    list.value.forEach(item => item.is_read = 1);
+  } catch (e) {
+    console.error('标记已读失败', e);
+  }
+};
+
+// 打开消息
+const openMessage = async (item) => {
+  // 标记已读
+  if (!item.is_read) {
+    try {
+      await uni.request({
+        url: `/api/notifications/${item.id}/read`,
+        method: 'PUT',
+      });
+      item.is_read = 1;
+    } catch (e) {}
+  }
+
+  // 跳转到项目详情（所有通知最终都跳到项目详情）
+  if (item.source_type === 'project_log') {
+    // 施工日志：查日志拿到 project_id
+    try {
+      const res = await uni.request({ url: `/api/project-logs/${item.source_id}` });
+      if (res.data && res.data.project_id) {
+        uni.navigateTo({ url: `/pages/customer/project-detail?id=${res.data.project_id}` });
+      }
+    } catch (e) {}
+  } else if (item.source_type === 'node') {
+    // 节点变更：跳项目详情（由详情页查节点状态）
+    if (item.source_id) {
+      uni.navigateTo({ url: `/pages/customer/project-detail?id=${item.source_id}` });
+    }
+  } else if (item.source_type === 'rectification_issue') {
+    // 巡检问题：查 issue 拿到 project_id
+    if (item.source_id) {
+      uni.navigateTo({ url: `/pages/customer/project-detail?id=${item.source_id}` });
+    }
+  } else if (item.source_type === 'approval') {
+    uni.navigateTo({ url: `/pages/approval/detail?id=${item.source_id}` });
   }
 };
 
 onMounted(() => {
-  fetchMessages();
+  phone.value = getPhone();
+  loading.value = true;
+  fetchList(true).finally(() => { loading.value = false; });
 });
 </script>
 
 <style scoped>
 .page {
   min-height: 100vh;
-  background: #F5F7FA;
-  padding-bottom: 20px;
-}
-
-.page-title-bar {
-  background: #fff;
-  padding: 16px;
-  border-bottom: 1px solid #F3F4F6;
-}
-
-.page-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: #1A1F36;
-}
-
-.msg-list {
-  padding: 12px 16px;
-}
-
-.msg-item {
+  background: #f5f6f8;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  background: #fff;
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  flex-direction: column;
 }
 
-.msg-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: #F3F4F6;
+.nav-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
-  flex-shrink: 0;
+  padding: 0 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  z-index: 100;
 }
 
-.msg-inspection_submit .msg-icon { background: #FEE2E2; }
-.msg-node_completed .msg-icon { background: #FEF3C7; }
-.msg-project_progress .msg-icon { background: #DBEAFE; }
-
-.msg-body {
-  flex: 1;
-}
-
-.msg-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.msg-title {
-  font-size: 14px;
+.nav-title {
+  font-size: 17px;
   font-weight: 600;
-  color: #1A1F36;
+  color: #1a1a1a;
 }
 
-.msg-time {
-  font-size: 11px;
-  color: #9CA3AF;
+.nav-right {
+  position: absolute;
+  right: 16px;
 }
 
-.msg-content {
-  font-size: 13px;
-  color: #6B7280;
-  line-height: 1.5;
+.mark-all-btn {
+  font-size: 14px;
+  color: #1890ff;
 }
 
+.message-list {
+  flex: 1;
+  padding: 60px 12px 70px;
+}
+
+.loading-state,
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 80px 20px;
+  padding-top: 80px;
+}
+
+.loading-text,
+.empty-text {
+  font-size: 14px;
+  color: #8E9BBA;
+  margin-top: 12px;
 }
 
 .empty-icon {
   font-size: 48px;
-  margin-bottom: 12px;
 }
 
-.empty-text {
+.message-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+
+.message-card.unread {
+  background: #e8f4ff;
+}
+
+.card-left {
+  position: relative;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.type-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.unread-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: #ff4d4f;
+  border-radius: 50%;
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-time {
+  font-size: 12px;
+  color: #8E9BBA;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.card-content {
   font-size: 14px;
-  color: #9CA3AF;
+  color: #555;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-project {
+  font-size: 12px;
+  color: #1890ff;
+  margin-top: 6px;
+}
+
+.loading-more,
+.no-more {
+  text-align: center;
+  padding: 12px 0;
+}
+
+.loading-more-text,
+.no-more-text {
+  font-size: 13px;
+  color: #8E9BBA;
 }
 </style>

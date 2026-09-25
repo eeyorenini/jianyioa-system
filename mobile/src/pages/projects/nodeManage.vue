@@ -166,6 +166,7 @@
 
 <script setup>
 import { ref, onMounted, nextTick } from "vue";
+import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 
 defineOptions({ inheritAttrs: false });
@@ -173,6 +174,7 @@ const props = defineProps(['id']);
 
 const projectId = ref(0);
 const projectName = ref('');
+const userStore = useUserStore();
 const nodes = ref([]);
 const templateList = ref([]);
 const templateIndex = ref(-1);
@@ -249,9 +251,15 @@ const onDragEnd = (e, index) => {
 const fetchNodes = async () => {
   try {
     const token = uni.getStorageSync("token");
+    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
       url: "/api/projects",
-      header: { Authorization: token },
+      header: { 
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+
+      },
     });
     const data = res.data || [];
     if (Array.isArray(data)) {

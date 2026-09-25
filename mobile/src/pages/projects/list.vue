@@ -127,9 +127,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 
 const keyword = ref('');
 const curStatus = ref('');
+const userStore = useUserStore();
 const list = ref([]);
 const loading = ref(false);
 
@@ -154,11 +156,11 @@ const filteredList = computed(() => {
   }));
 });
 
-// 计算项目进度：已完成+已跳过 / 总节点数
+// 计算项目进度：已完成节点 / 总节点数（不含跳过）
 const computeProgress = (project) => {
   if (!project.nodes || project.nodes.length === 0) return 0;
   const done = project.nodes.filter(n =>
-    n.status === 'completed' || n.status === 'skipped'
+    n.status === 'completed' || n.status === '已完成'
   ).length;
   return Math.round((done / project.nodes.length) * 100);
 };
@@ -195,9 +197,14 @@ const fetchList = async () => {
   loading.value = true;
   try {
     const token = uni.getStorageSync("token");
+    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
       url: "/api/projects",
-      header: { Authorization: token },
+      header: { 
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+      },
     }).catch((err) => {
       console.error("请求异常", err);
       return { data: [] };

@@ -30,13 +30,45 @@
       </view>
 
       <view class="form-item">
-        <view class="form-label">到场人数</view>
-        <input class="form-input" v-model="form.worker_count" type="number" placeholder="如：3人" />
-      </view>
-
-      <view class="form-item">
         <view class="form-label">施工工种</view>
         <input class="form-input" v-model="form.work_type" placeholder="如：水电工、泥瓦工" />
+        <view class="work-type-tags">
+          <text
+            class="work-type-tag"
+            v-for="t in workTypeOptions"
+            :key="t"
+            @click="selectWorkType(t)"
+          >{{ t }}</text>
+        </view>
+      </view>
+
+      <!-- 到场人数 -->
+      <view class="form-item">
+        <view class="form-label">到场人数</view>
+        <view class="worker-count-picker" @click="showWorkerPicker = true">
+          <text class="picker-value">{{ form.worker_count || '请选择' }}</text>
+          <text class="picker-arrow">▼</text>
+        </view>
+      </view>
+
+      <!-- 人数滚轮弹窗 -->
+      <view class="picker-mask" v-if="showWorkerPicker" @click="showWorkerPicker = false">
+        <view class="picker-sheet" @click.stop>
+          <view class="picker-header">
+            <text class="picker-cancel" @click="showWorkerPicker = false">取消</text>
+            <text class="picker-title">选择人数</text>
+            <text class="picker-confirm" @click="confirmWorker">确定</text>
+          </view>
+          <picker-view
+            class="picker-view"
+            :value="workerPickerIndex"
+            @change="onWorkerChange"
+          >
+            <picker-view-column>
+              <view class="picker-item" v-for="n in 10" :key="n"><text>{{ n }}</text></view>
+            </picker-view-column>
+          </picker-view>
+        </view>
       </view>
 
       <view class="form-item">
@@ -67,18 +99,33 @@
         <view class="photo-item" v-for="(img, idx) in photos" :key="idx">
           <image class="photo-img" :src="img" mode="aspectFill" @click="previewImg(idx)"></image>
           <view class="photo-del" @click="delPhoto(idx)">✕</view>
+          <view class="photo-uploading" v-if="uploadingPhotoIdx === idx">
+            <view class="photo-uploading-icon">⟳</view>
+          </view>
         </view>
-        <view class="photo-add" @click="choosePhoto">
+        <button class="photo-add" type="button" @click.stop="choosePhoto($event)" :disabled="choosingPhoto">
           <text class="photo-add-icon">📷</text>
           <text class="photo-add-text">添加照片</text>
+        </button>
+      </view>
+    </view>
+
+    <!-- 上传遮罩层 -->
+    <view class="upload-overlay" v-if="uploadProgress.visible">
+      <view class="upload-overlay-content">
+        <view class="upload-overlay-spinner">⟳</view>
+        <text class="upload-overlay-text">{{ uploadProgress.text }}</text>
+        <view class="upload-overlay-bar-wrap">
+          <view class="upload-overlay-bar" :style="{ width: uploadProgress.percent + '%' }"></view>
         </view>
+        <text class="upload-overlay-percent">{{ uploadProgress.percent }}%</text>
       </view>
     </view>
 
     <!-- 提交 -->
     <view class="submit-bar">
       <view class="btn btn-primary btn-block" :class="{ loading: submitting }" @click="submit">
-        <text v-if="!submitting">提交日志</text>
+        <text v-if="!submitting">提交</text>
         <text v-else>提交中...</text>
       </view>
     </view>
@@ -87,12 +134,53 @@
 
 <script setup >
 import { ref, reactive, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 import VoiceInput from "@/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
+const userStore = useUserStore();
 const photos = ref([]);
 const submitting = ref(false);
+const showWorkerPicker = ref(false);
+const workerPickerIndex = ref([0]);
+const choosingPhoto = ref(false);
+const uploadingPhotoIdx = ref(-1); // 哪个图片正在上传中（显示转圈）
+
+// 上传进度遮罩状态
+const uploadProgress = reactive({
+  visible: false,
+  text: '正在上传...',
+  total: 0,
+  done: 0,
+  percent: 0,
+});
+
+const workTypeOptions = ['水电工', '泥瓦工', '木工', '油漆工', '钢筋工', '杂工'];
+
+// 选择施工工种（追加到输入框）
+const selectWorkType = (t) => {
+  if (form.work_type) {
+    // 已有时去重再追加
+    const existing = form.work_type.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+    if (!existing.includes(t)) {
+      form.work_type = [...existing, t].join('、');
+    }
+  } else {
+    form.work_type = t;
+  }
+};
+
+// 人数滚轮变化
+const onWorkerChange = (e) => {
+  workerPickerIndex.value = e.detail.value;
+};
+
+// 确认人数
+const confirmWorker = () => {
+  form.worker_count = workerPickerIndex.value[0] + 1;
+  showWorkerPicker.value = false;
+};
 
 // AI整理语音输入的文字（目前H5端直接使用原始文字，APP端可扩展）
 const handleAiOrganize = (text, field) => {
@@ -110,19 +198,85 @@ const form = reactive({
   note: '',
 });
 
-const choosePhoto = () => {
+const choosePhoto = (e) => {
+  e?.preventDefault?.();
+  if (choosingPhoto.value) return;
+  const remain = 9 - photos.value.length;
+  if (remain <= 0) {
+    uni.showToast({ title: '最多9张', icon: 'none' });
+    return;
+  }
+  choosingPhoto.value = true;
   uni.chooseImage({
-    count: 9 - photos.value.length,
+    count: Number(remain),
     sizeType: ['compressed'],
     sourceType: ['album', 'camera'],
-    success: (res) => {
-      photos.value.push(...res.tempFilePaths.map(f => f));
+    success: async (res) => {
+      const paths = res.tempFilePaths;
+      if (!paths.length) { choosingPhoto.value = false; return; }
+
+      // 显示遮罩
+      uploadProgress.visible = true;
+      uploadProgress.total = paths.length;
+      uploadProgress.done = 0;
+      uploadProgress.percent = 0;
+      uploadProgress.text = '正在上传 0/' + paths.length;
+
+      // 并行上传所有图片
+      const uploadTasks = paths.map((path, i) => asyncUploadPhoto(path, i, paths.length));
+      await Promise.all(uploadTasks);
+
+      // 隐藏遮罩
+      uploadProgress.visible = false;
+      choosingPhoto.value = false;
+    },
+    fail: () => {
+      choosingPhoto.value = false;
     },
   });
 };
 
+// 上传单张照片（带进度更新）
+const asyncUploadPhoto = (filePath, index, total) => {
+  return new Promise((resolve) => {
+    uploadingPhotoIdx.value = photos.value.length + index;
+    uni.uploadFile({
+      url: '/api/upload-image',
+      filePath,
+      name: 'file',
+      success: (res) => {
+        try {
+          const data = JSON.parse(res.data);
+          if (data.url) {
+            photos.value.push(data.url);
+          }
+        } catch (e) {}
+        uploadProgress.done++;
+        uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
+        uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total;
+        resolve(true);
+      },
+      fail: (err) => {
+        console.error('上传失败:', err);
+        uni.showToast({ title: '有图片上传失败，已跳过', icon: 'none', duration: 1500 });
+        uploadProgress.done++;
+        uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
+        uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total;
+        resolve(false);
+      },
+      complete: () => {
+        uploadingPhotoIdx.value = -1;
+      },
+    });
+  });
+};
+
 const previewImg = (idx) => {
-  uni.previewImage({ urls: photos.value, current: idx });
+  const urls = photos.value.map(p => {
+    if (p.startsWith('/uploads/') || p.startsWith('http')) return p;
+    return p;
+  });
+  uni.previewImage({ urls, current: idx });
 };
 
 const delPhoto = (idx) => {
@@ -142,24 +296,8 @@ const submit = async () => {
     console.log('提交日志 - content:', form.content);
     console.log('提交日志 - photos:', photos.value);
 
-    const photoUrls = [];
-    // 先上传照片
-    for (const path of photos.value) {
-      console.log('上传图片:', path);
-      try {
-        const uploadRes = await uni.uploadFile({
-          url: '/api/upload',
-          filePath: path,
-          name: 'file',
-        });
-        console.log('上传结果:', uploadRes);
-        const data = JSON.parse(uploadRes.data);
-        if (data.url) photoUrls.push(data.url);
-      } catch (uploadErr) {
-        console.error('上传失败:', uploadErr);
-      }
-    }
-
+    // photos.value 里已经是上传后的服务器URL，无需再上传
+    console.log('上传完成，photoUrls:', photos.value);
     console.log('准备提交到 /api/project-logs');
     const res = await uni.request({
       url: "/api/project-logs",
@@ -168,7 +306,11 @@ const submit = async () => {
         project_id: projectId.value,
         content: form.content,
         operator: userInfo?.name || userInfo?.username || '未知',
-        images: JSON.stringify(photoUrls),
+        images: JSON.stringify(photos.value),
+        worker_count: form.worker_count,
+        work_type: form.work_type,
+        tomorrow_plan: form.tomorrow_plan,
+        note: form.note,
       },
     });
     console.log('提交结果:', res);
@@ -193,9 +335,15 @@ onMounted(async () => {
   if (projectId.value) {
     try {
       const token = uni.getStorageSync("token");
+      const userInfo = uni.getStorageSync('userInfo');
       const res = await uni.request({
         url: "/api/projects",
-        header: { Authorization: token },
+        header: { 
+          Authorization: token,
+          'x-user-role': userStore.state.role_name,
+          'x-user-id': String(userStore.state.id),
+
+        },
       });
       const data = res.data;
       if (Array.isArray(data)) {
@@ -293,6 +441,86 @@ const goBack = () => {
   border-color: #1E3A5F;
 }
 
+/* 施工工种标签 */
+.work-type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.work-type-tag {
+  font-size: 12px;
+  color: #1E3A5F;
+  background: #E8F4FF;
+  padding: 4px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+/* 到场人数选择器 */
+.worker-count-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #1A1F36;
+  cursor: pointer;
+}
+
+.worker-count-picker:focus {
+  border-color: #1E3A5F;
+  outline: none;
+}
+
+.picker-value { color: #1A1F36; }
+.picker-arrow { color: #9CA3AF; font-size: 10px; }
+
+/* 人数滚轮弹窗 */
+.picker-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 999;
+  display: flex;
+  align-items: flex-end;
+}
+
+.picker-sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+.picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.picker-cancel { font-size: 14px; color: #9CA3AF; }
+.picker-title { font-size: 15px; font-weight: 600; color: #1A1F36; }
+.picker-confirm { font-size: 14px; color: #1E3A5F; font-weight: 600; }
+
+.picker-view {
+  height: 200px;
+  text-align: center;
+}
+
+.picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #1A1F36;
+}
+
 .char-count {
   font-size: 11px;
   color: #9CA3AF;
@@ -336,6 +564,79 @@ const goBack = () => {
   cursor: pointer;
 }
 
+/* 照片上传中状态 */
+.photo-uploading {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.7);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-uploading-icon {
+  font-size: 22px;
+  color: #1E3A5F;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 上传遮罩层 */
+.upload-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,255,0.92);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 200px;
+}
+
+.upload-overlay-spinner {
+  font-size: 48px;
+  color: #1E3A5F;
+  animation: spin 0.8s linear infinite;
+}
+
+.upload-overlay-text {
+  font-size: 14px;
+  color: #374151;
+}
+
+.upload-overlay-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: #E5E7EB;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.upload-overlay-bar {
+  height: 100%;
+  background: #1E3A5F;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.upload-overlay-percent {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1E3A5F;
+}
+
 .photo-add {
   aspect-ratio: 1;
   border: 1.5px dashed #D1D5DB;
@@ -345,6 +646,9 @@ const goBack = () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  background: transparent;
+  padding: 0;
+  margin: 0;
 }
 
 .photo-add-icon { font-size: 24px; margin-bottom: 4px; }
@@ -359,6 +663,8 @@ const goBack = () => {
   background: #fff;
   box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
   z-index: 100;
+  display: flex;
+  justify-content: center;
 }
 
 .btn.loading {

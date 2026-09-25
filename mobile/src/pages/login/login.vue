@@ -102,6 +102,7 @@
 
 <script setup >
 import { ref, reactive } from "vue";
+import { useUserStore } from "@/stores/user";
 
 const loginType = ref('employee');
 const loading = ref(false);
@@ -134,6 +135,8 @@ const handleEmployeeLogin = async () => {
     });
     const data = res.data;
     if (data.success && data.user) {
+      const userStore = useUserStore();
+      userStore.setUser({ ...data.user, token: 'logged-in' });
       uni.setStorageSync('userInfo', data.user);
       uni.setStorageSync('token', 'logged-in');
       uni.setStorageSync('userType', 'employee');

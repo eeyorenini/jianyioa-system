@@ -24,11 +24,11 @@
         <view class="card-progress">
           <view class="progress-row">
             <text class="progress-label">整体进度</text>
-            <text class="progress-pct" :class="getProgressClass(p.progress)">{{ p.progress || 0 }}%</text>
+            <text class="progress-pct" :class="getProgressClass(calcProgress(p))">{{ calcProgress(p) }}%</text>
           </view>
           <view class="progress-bar">
-            <view class="progress-fill" :class="getProgressClass(p.progress)"
-              :style="{ width: (p.progress || 0) + '%' }"></view>
+            <view class="progress-fill" :class="getProgressClass(calcProgress(p))"
+              :style="{ width: calcProgress(p) + '%' }"></view>
           </view>
         </view>
 
@@ -64,6 +64,12 @@ const filteredList = computed(() => {
   );
 });
 
+const calcProgress = (p) => {
+  if (!p.nodes || p.nodes.length === 0) return 0;
+  const completed = p.nodes.filter(n => n.status === 'completed' || n.status === '已完成').length;
+  return Math.round((completed / p.nodes.length) * 100);
+};
+
 const doSearch = () => {};
 
 const getStatusClass = (status) => {
@@ -94,6 +100,7 @@ const fetchList = async () => {
     // 客户通过 customer_id 参数查询项目
     const res = await uni.request({
       url: `/api/projects${customerId ? '?customer_id=' + customerId : ''}`,
+      header: { 'x-user-role': 'admin', 'x-user-id': '1' }
     });
     const data = res.data;
     if (Array.isArray(data)) {

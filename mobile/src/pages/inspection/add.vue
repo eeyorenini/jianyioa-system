@@ -61,7 +61,6 @@
         <view class="textarea-wrapper">
           <textarea class="form-textarea" v-model="form.description" placeholder="详细描述问题..."></textarea>
           <view class="textarea-toolbar">
-            <VoiceInput v-model="form.description" @ai-organize="handleAiOrganize" />
           </view>
         </view>
       </view>
@@ -78,16 +77,27 @@
     <view class="form-card">
       <view class="form-label">问题照片/视频</view>
       <view class="photo-grid">
-        <!-- 照片 -->
         <view class="photo-item" v-for="(img, idx) in photos" :key="'photo_' + idx">
-          <video v-if="isVideo(img)" class="photo-img" :src="img" mode="aspectFill"></video>
-          <image v-else class="photo-img" :src="img" mode="aspectFill"></image>
-          <view class="photo-del" @click="removeMedia(idx)">✕</view>
+          <image class="photo-img" :src="img" mode="aspectFill" @click="previewImg(idx)"></image>
+          <view class="photo-del" @click="delPhoto(idx)">✕</view>
+          <view class="photo-uploading" v-if="uploadingPhotoIdx === idx">
+            <view class="photo-uploading-icon">⟳</view>
+          </view>
         </view>
         <!-- 添加按钮 -->
-        <view class="photo-add" @click="showMediaOptions">
+        <button class="photo-add" type="button" @click.stop="choosePhoto($event)" :disabled="choosingPhoto">
           <text class="photo-add-icon">📷</text>
-          <text class="photo-add-text">拍照/录像</text>
+          <text class="photo-add-text">添加照片</text>
+        </button>
+      </view>
+      <view class="upload-overlay" v-if="uploadProgress.visible">
+        <view class="upload-overlay-content">
+          <view class="upload-overlay-spinner">⟳</view>
+          <text class="upload-overlay-text">{{ uploadProgress.text }}</text>
+          <view class="upload-overlay-bar-wrap">
+            <view class="upload-overlay-bar" :style="{ width: uploadProgress.percent + '%' }"></view>
+          </view>
+          <text class="upload-overlay-percent">{{ uploadProgress.percent }}%</text>
         </view>
       </view>
     </view>
@@ -107,14 +117,22 @@
   </view>
 </template>
 
-<script setup >
+<script setup>
 import { ref, reactive, watch, onMounted } from "vue";
-import VoiceInput from "@/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
 const photos = ref([]);
 const submitting = ref(false);
+const choosingPhoto = ref(false);
+const uploadingPhotoIdx = ref(-1);
+const uploadProgress = reactive({
+  visible: false,
+  total: 0,
+  done: 0,
+  percent: 0,
+  text: '',
+});
 
 const categories = ['水电问题', '防水问题', '泥瓦问题', '木工问题', '油漆问题', '安全隐患', '卫生问题'];
 const locations = ['客厅', '卧室', '厨房', '卫生间', '阳台', '全屋'];
@@ -133,21 +151,15 @@ const form = reactive({
   deadline: '',
 });
 
-// 自动生成标题：项目名 + 问题分类 + 日期
+// 选择问题分类时自动填入标题
 const generateTitle = () => {
-  const today = new Date().toISOString().split('T')[0];
-  const catPrefix = form.category ? `[${form.category}] ` : '';
-  form.title = `${projectName.value || '未知项目'} ${catPrefix}${today}`;
+  if (form.category && !form.title) {
+    form.title = form.category;
+  }
 };
 
 // 监听分类变化，重新生成标题
 watch(() => form.category, generateTitle);
-
-// AI整理语音输入的文字
-const handleAiOrganize = (text) => {
-  if (!text) return;
-  uni.showToast({ title: '已识别', icon: 'success', duration: 1000 });
-};
 
 // 日期选择
 const onDeadlineChange = (e) => {
@@ -155,164 +167,152 @@ const onDeadlineChange = (e) => {
 };
 
 // 判断是否是视频
-const isVideo = (url) => url && (url.startsWith('blob:') || url.startsWith('http') && (url.includes('.mp4') || url.includes('.mov') || url.includes('.3gp') || url.includes('wxfile')));
-
-// 判断是否是视频
-const showMediaOptions = () => {
-  uni.showActionSheet({
-    itemList: ['📷 拍照', '🎬 录像', '🖼 从相册选择'],
-    success: (res) => {
-      if (res.tapIndex === 0) {
-        // 拍照
-        addPhoto();
-      } else if (res.tapIndex === 1) {
-        // 录像
-        addVideo();
-      } else {
-        // 相册
-        addFromAlbum();
-      }
-    }
-  });
-};
-
-// 拍照
-const addPhoto = () => {
-  uni.chooseImage({ count: 1, sourceType: ['camera'], success: (r) => {
-    compressAndAdd(r.tempFilePaths[0], 'image');
-  }});
-};
-
-// 录像
-const addVideo = () => {
-  uni.chooseVideo({
-    sourceType: ['camera'],
-    maxDuration: 60,
-    success: (r) => {
-      if (r.tempFilePath) {
-        compressAndAdd(r.tempFilePath, 'video');
-      }
-    }
-  });
-};
-
-// 从相册选择（照片+视频混合）
-const addFromAlbum = () => {
-  // 先选照片
+// 选择照片（统一入口，与日志提交页一致）
+const choosePhoto = (e) => {
+  e?.preventDefault?.();
+  if (choosingPhoto.value) return;
+  const remain = 9 - photos.value.length;
+  if (remain <= 0) {
+    uni.showToast({ title: '最多9张', icon: 'none' });
+    return;
+  }
+  choosingPhoto.value = true;
   uni.chooseImage({
-    count: 9,
-    sourceType: ['album'],
-    success: (r) => {
-      r.tempFilePaths.forEach(p => compressAndAdd(p, 'image'));
-    }
+    count: Number(remain),
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: async (res) => {
+      const paths = res.tempFilePaths;
+      if (!paths.length) { choosingPhoto.value = false; return; }
+
+      // 显示遮罩
+      uploadProgress.visible = true;
+      uploadProgress.total = paths.length;
+      uploadProgress.done = 0;
+      uploadProgress.percent = 0;
+      uploadProgress.text = '正在上传 0/' + paths.length;
+
+      // 并行上传所有图片
+      const uploadTasks = paths.map((path, i) => asyncUploadPhoto(path, i, paths.length));
+      await Promise.all(uploadTasks);
+
+      // 隐藏遮罩
+      uploadProgress.visible = false;
+      choosingPhoto.value = false;
+    },
+    fail: () => {
+      choosingPhoto.value = false;
+    },
   });
 };
 
-// 删除媒体
-const removeMedia = (idx) => {
+// 上传单张照片（带进度更新）
+const asyncUploadPhoto = (filePath, index, total) => {
+  return new Promise((resolve) => {
+    uploadingPhotoIdx.value = photos.value.length + index;
+    uni.uploadFile({
+      url: '/api/upload-image',
+      filePath,
+      name: 'file',
+      success: (res) => {
+        try {
+          const data = JSON.parse(res.data);
+          if (data.url) {
+            photos.value.push(data.url);
+          }
+        } catch (e) {}
+        uploadProgress.done++;
+        uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
+        uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total;
+        resolve(true);
+      },
+      fail: (err) => {
+        console.error('上传失败:', err);
+        uni.showToast({ title: '有图片上传失败，已跳过', icon: 'none', duration: 1500 });
+        uploadProgress.done++;
+        uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
+        uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total;
+        resolve(false);
+      },
+      complete: () => {
+        uploadingPhotoIdx.value = -1;
+      },
+    });
+  });
+};
+
+// 删除照片
+const delPhoto = (idx) => {
   photos.value.splice(idx, 1);
 };
 
-// 压缩并添加（图片压缩，视频暂不压缩）
-const compressAndAdd = (filePath, type) => {
-  if (type === 'image') {
-    // 图片压缩
-    uni.compressImage({
-      src: filePath,
-      quality: 80,
-      success: (res) => {
-        photos.value.push(res.tempFilePath);
-      },
-      fail: () => {
-        // 压缩失败，直接添加原图
-        photos.value.push(filePath);
-      }
-    });
-  } else {
-    // 视频暂不压缩（uni-app H5 不支持直接压缩），直接添加
-    photos.value.push(filePath);
-  }
+// 预览照片
+const previewImg = (idx) => {
+  const urls = photos.value.map(p => {
+    if (p.startsWith('/uploads/') || p.startsWith('http')) return p;
+    return p;
+  });
+  uni.previewImage({ urls, current: idx });
 };
 
 // 提交
-const submit = async () => {
-  if (!form.title.trim()) {
-    uni.showToast({ title: '请填写问题标题', icon: 'none' }); return;
-  }
+const submit = () => {
   if (submitting.value) return;
   submitting.value = true;
-  try {
-    const token = uni.getStorageSync("token");
-
-    // 处理图片/视频文件上传
-    const imageUrls = [];
-    for (const filePath of photos.value) {
-      const isVid = isVideo(filePath);
-      const ext = isVid ? 'mp4' : 'jpg';
-      const mime = isVid ? 'video/mp4' : 'image/jpeg';
-      try {
-        await new Promise((resolve, reject) => {
-          uni.uploadFile({
-            url: '/api/upload',
-            filePath,
-            name: 'file',
-            header: { Authorization: token },
-            formData: { type: isVid ? 'video' : 'image' },
-            timeout: 30000,
-            success: (res) => {
-              try {
-                const data = JSON.parse(res.data);
-                if (data.url) imageUrls.push(data.url);
-                else if (data.path) imageUrls.push(data.path);
-                resolve();
-              } catch { resolve(); }
-            },
-            fail: () => reject(new Error('上传失败')),
-          });
-        });
-      } catch (e) {
-        // 单个文件上传失败不影响整体
-      }
-    }
-
-    // 提交数据
-    await new Promise((resolve, reject) => {
-      uni.request({
-        url: "/api/rectification-issues",
-        method: "POST",
-        header: { Authorization: token },
-        data: {
-          project_id: projectId.value,
-          project_name: projectName.value,
-          title: form.title,
-          category: form.category,
-          location: form.location,
-          level: form.level,
-          description: form.description,
-          issue_desc: form.description,
-          due_date: form.deadline,
-          images: imageUrls,
-        },
-        timeout: 15000,
-        success: (res) => {
-          if (res.statusCode === 200 || res.statusCode === 201) resolve();
-          else reject(new Error('提交失败'));
-        },
-        fail: () => reject(new Error('请求失败')),
-      });
-    });
-
-    uni.showToast({ title: '提交成功', icon: 'success', duration: 1200 });
-    setTimeout(() => { uni.navigateBack(); }, 1200);
-  } catch (e) {
-    uni.showToast({ title: '提交失败', icon: 'none' });
-  } finally {
+  if (!form.title.trim()) {
+    uni.showToast({ title: '请填写问题标题', icon: 'none' });
     submitting.value = false;
+    return;
   }
+  const token = uni.getStorageSync("token");
+  const userInfo = uni.getStorageSync('userInfo');
+
+  const imageUrls = photos.value.map(p => {
+    if (p.startsWith('/uploads/') || p.startsWith('http')) return p;
+    return p;
+  });
+
+  uni.request({
+    url: "/api/rectification-issues",
+    method: "POST",
+    header: {
+      Authorization: token,
+      'x-user-id': String(userInfo?.id || 1),
+    },
+    data: {
+      user_id: userInfo?.id || 1,
+      project_id: projectId.value,
+      project_name: projectName.value,
+      title: form.title,
+      category: form.category,
+      location: form.location,
+      level: form.level,
+      description: form.description,
+      issue_desc: form.description,
+      due_date: form.deadline,
+      images: JSON.stringify(imageUrls),
+    },
+    timeout: 15000,
+  }).then((res) => {
+    if (res.statusCode === 200 || res.statusCode === 201) {
+      uni.showToast({ title: '提交成功', icon: 'success', duration: 1500 });
+      setTimeout(() => {
+        uni.navigateBack({ fail: () => {
+          location.assign('/pages/inspection/list');
+        }});
+      }, 1500);
+    } else {
+      uni.showToast({ title: '提交失败', icon: 'none' });
+    }
+  }).catch((err) => {
+    uni.showToast({ title: '提交失败', icon: 'none' });
+    console.error('提交失败', err);
+  }).finally(() => {
+    submitting.value = false;
+  });
 };
 
 onMounted(async () => {
-  generateTitle();
   const pages = getCurrentPages();
   const current = pages[pages.length - 1];
   const options = (current).options || {};
@@ -328,7 +328,6 @@ onMounted(async () => {
       if (p) projectName.value = p.name;
     } catch (e) {}
   }
-  generateTitle();
 });
 
 const goBack = () => {
@@ -500,10 +499,82 @@ const goBack = () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  background: transparent;
+  padding: 0;
+  margin: 0;
 }
 
 .photo-add-icon { font-size: 22px; margin-bottom: 2px; }
 .photo-add-text { font-size: 11px; color: #9CA3AF; }
+
+/* 照片上传中状态 */
+.photo-uploading {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.7);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.photo-uploading-icon {
+  font-size: 22px;
+  color: #1E3A5F;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 上传进度遮罩 */
+.upload-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.upload-overlay-content {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 220px;
+}
+.upload-overlay-spinner {
+  font-size: 36px;
+  color: #1E3A5F;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 12px;
+}
+.upload-overlay-text {
+  font-size: 14px;
+  color: #374151;
+  margin-bottom: 12px;
+}
+.upload-overlay-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: #E5E7EB;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.upload-overlay-bar {
+  height: 100%;
+  background: #1E3A5F;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.upload-overlay-percent {
+  font-size: 12px;
+  color: #9CA3AF;
+}
 
 .submit-bar {
   position: fixed;
@@ -514,21 +585,15 @@ const goBack = () => {
   background: #fff;
   box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
   z-index: 100;
+  display: flex;
+  justify-content: center;
 }
-
-.btn-primary {
-  background: #1E3A5F;
-  color: #fff;
-  border-radius: 24px;
-  font-size: 16px;
-  height: 48px;
-  line-height: 48px;
-  text-align: center;
-  border: none;
-  width: 100%;
+.submit-bar .btn {
+  display: flex;
 }
-.btn-primary[disabled] { background: #9CA3AF; }
-.btn-loading { opacity: 0.8; }
+.btn.loading {
+  opacity: 0.7;
+}
 
 /* 加载遮罩 */
 .loading-overlay {

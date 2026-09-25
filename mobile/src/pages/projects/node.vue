@@ -117,10 +117,12 @@
 
 <script setup >
 import { ref, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 import { formatNodeDateRange } from "../../utils/format";
 
 const projectId = ref(0);
 const nodeId = ref(0);
+const userStore = useUserStore();
 const node = ref({});
 const allNodes = ref([]);
 const logs = ref([]);
@@ -208,9 +210,15 @@ const goNodeManage = () => {
 const fetchData = async () => {
   try {
     const token = uni.getStorageSync("token");
+    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
       url: "/api/projects",
-      header: { Authorization: token },
+      header: { 
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+
+      },
     });
     const data = res.data;
     if (Array.isArray(data)) {

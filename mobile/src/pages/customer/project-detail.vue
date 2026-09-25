@@ -92,6 +92,7 @@
           @click="curTab = tab.key"
         >
           <text>{{ tab.label }}</text>
+          <view class="tab-dot" v-if="tab.badge">{{ tab.badge }}</view>
         </view>
       </view>
 
@@ -162,20 +163,60 @@
           <view class="loading-state" v-if="logsLoading">
             <text>加载中...</text>
           </view>
-          
           <view class="log-list" v-else-if="logs.length">
             <view class="log-item" v-for="log in logs" :key="log.id">
-              <view class="log-date-tag">{{ formatDate(log.created_at) }}</view>
-              <view class="log-content">
-                <text class="log-title">{{ log.content || log.description || '暂无内容' }}</text>
-                <view class="log-meta">
-                  <text>👷 {{ log.operator || log.creator_name || '未知' }}</text>
-                  <text v-if="log.images">📷 查看附件</text>
+              <!-- 第一行：日期卡片 + 提交人/时间 + 工种人数 -->
+              <view class="log-row-first">
+                <view class="log-date-bar">
+                  <text class="log-date-day">{{ formatDay(log.created_at) }}</text>
+                  <text class="log-date-month">{{ formatMonth(log.created_at) }}</text>
+                </view>
+                <view class="log-user-info">
+                  <view class="log-user-line">
+                    <text class="log-operator">👷 {{ log.operator || '未知' }}</text>
+                    <text class="log-time">{{ formatFullTime(log.created_at) }}</text>
+                  </view>
+                  <view class="log-tags-row" v-if="log.work_type || log.worker_count">
+                    <text class="log-tag-icon" v-if="log.work_type">🔧 {{ log.work_type }}</text>
+                    <text class="log-tag-icon" v-if="log.worker_count">👷 {{ log.worker_count }}人</text>
+                  </view>
+                </view>
+              </view>
+
+              <!-- 内容区域 -->
+              <view class="log-content-area">
+                <!-- 施工内容 -->
+                <view class="log-content-row" v-if="log.content">
+                  <view class="log-tag-box">施工内容</view>
+                  <view class="log-content-text">{{ log.content }}</view>
+                </view>
+
+                <!-- 明日计划 -->
+                <view class="log-content-row" v-if="log.tomorrow_plan">
+                  <view class="log-tag-box">明日计划</view>
+                  <view class="log-content-text">{{ log.tomorrow_plan }}</view>
+                </view>
+
+                <!-- 备注 -->
+                <view class="log-content-row" v-if="log.note">
+                  <view class="log-tag-box">描述</view>
+                  <view class="log-content-text">{{ log.note }}</view>
+                </view>
+
+                <!-- 图片 -->
+                <view class="log-photos" v-if="getLogPhotos(log).length">
+                  <view
+                    class="log-photo"
+                    v-for="(photo, idx) in getLogPhotos(log)"
+                    :key="idx"
+                    @click="previewLogPhoto(log, idx)"
+                  >
+                    <image class="log-photo-img" :src="photo" mode="aspectFill" />
+                  </view>
                 </view>
               </view>
             </view>
           </view>
-          
           <view class="empty-state" v-else>
             <text class="empty-icon">📝</text>
             <text class="empty-text">暂无施工日志</text>
@@ -185,7 +226,7 @@
         <!-- 巡检问题 - 只读 -->
         <view v-if="curTab === 'inspect'" class="tab-panel">
           <view class="panel-toolbar">
-            <text class="panel-title">质量问题</text>
+            <text class="panel-title">巡检记录</text>
             <text class="tool-btn muted">仅可查看</text>
           </view>
 
@@ -193,29 +234,68 @@
             <text>加载中...</text>
           </view>
 
-          <view class="issue-list" v-else-if="issues.length">
-            <view class="issue-item" v-for="issue in issues" :key="issue.id">
-              <view class="issue-header">
-                <view class="issue-level" :class="`level-${issue.level}`">
-                  {{ issue.level === 'serious' ? '严重' : issue.level === 'stop' ? '停工' : '一般' }}
+          <!-- 巡检列表：完整样式 -->
+          <view class="inspect-list" v-else-if="issues.length">
+            <view class="inspect-item" v-for="issue in issues" :key="issue.id">
+              <!-- 第一行：日期卡片 + 提交人/时间 + 状态 -->
+              <view class="log-row-first">
+                <view class="log-date-bar">
+                  <text class="log-date-day">{{ formatDay(issue.created_at) }}</text>
+                  <text class="log-date-month">{{ formatMonth(issue.created_at) }}</text>
                 </view>
-                <text class="issue-title">{{ issue.title || issue.description || '质量问题' }}</text>
-              </view>
-              <view class="issue-meta">
-                <text class="issue-location">📍 {{ issue.location || '未指定位置' }}</text>
-                <view class="issue-status" :class="`status-${issue.status}`">
-                  {{ getIssueStatusText(issue.status) }}
+                <view class="log-user-info">
+                  <view class="log-user-line">
+                    <text class="log-operator">🔍 {{ issue.responsible_name || issue.creator_name || '员工' }}</text>
+                    <text class="log-time">{{ formatFullTime(issue.created_at) }}</text>
+                  </view>
+                  <view class="log-tags-row">
+                    <text class="log-tag-icon">等级：{{ getLevelText(issue.level) }}</text>
+                    <text class="log-tag-icon">状态：{{ getIssueStatusText(issue.status) }}</text>
+                  </view>
                 </view>
               </view>
-              <view class="issue-desc" v-if="issue.description">
-                {{ issue.description }}
+
+              <!-- 问题描述（issue_desc） -->
+              <view class="log-content-area" v-if="issue.issue_desc">
+                <view class="log-content-row">
+                  <view class="log-tag-box">问题</view>
+                  <view class="log-content-text">{{ issue.issue_desc }}</view>
+                </view>
+              </view>
+
+              <!-- 详细描述（description） -->
+              <view class="log-content-area" v-if="issue.description && issue.description !== issue.issue_desc">
+                <view class="log-content-row">
+                  <view class="log-tag-box">描述</view>
+                  <view class="log-content-text">{{ issue.description }}</view>
+                </view>
+              </view>
+
+              <!-- 整改备注（remark） -->
+              <view class="log-content-area" v-if="issue.remark">
+                <view class="log-content-row">
+                  <view class="log-tag-box">描述</view>
+                  <view class="log-content-text">{{ issue.remark }}</view>
+                </view>
+              </view>
+
+              <!-- 图片网格 -->
+              <view class="log-photos" v-if="getIssuePhotos(issue).length">
+                <view
+                  class="log-photo"
+                  v-for="(photo, idx) in getIssuePhotos(issue)"
+                  :key="idx"
+                  @click="previewIssuePhoto(issue, idx)"
+                >
+                  <image class="log-photo-img" :src="photo" mode="aspectFill" />
+                </view>
               </view>
             </view>
           </view>
-          
+
           <view class="empty-state" v-else>
             <text class="empty-icon">🔍</text>
-            <text class="empty-text">暂无质量问题</text>
+            <text class="empty-text">暂无巡检记录</text>
           </view>
         </view>
 
@@ -246,12 +326,12 @@ const project = ref(null);
 const projectId = ref(0);
 const curTab = ref('nodes');
 
-// 客户版Tab
-const customerTabs = [
+// 客户版Tab（badge用computed保证响应式）
+const customerTabs = computed(() => [
   { key: 'nodes', label: '节点' },
-  { key: 'logs', label: '日志' },
-  { key: 'inspect', label: '巡检' },
-];
+  { key: 'logs', label: '日志', badge: logs.value.length || null },
+  { key: 'inspect', label: '巡检', badge: issues.value.length || null },
+]);
 
 // 数据
 const logs = ref([]);
@@ -263,16 +343,10 @@ const inspectLoading = ref(false);
 const actualProgress = computed(() => {
   if (!project.value) return 0;
 
-  // 如果项目有 progress 字段且大于0，使用项目本身的进度
-  if (project.value.progress && project.value.progress > 0) {
-    return project.value.progress;
-  }
-
-  // 否则根据节点计算进度
+  // 根据节点计算进度：完成数 / 总数
   const nodes = project.value.nodes;
   if (!nodes || nodes.length === 0) return 0;
 
-  // 统计已完成节点数量
   const completedCount = nodes.filter(node =>
     node.status === 'completed' || node.status === '已完成'
   ).length;
@@ -397,7 +471,7 @@ const loadProject = async () => {
   }
 };
 
-// 加载日志
+// 加载日志（只显示有内容的）
 const loadLogs = async () => {
   if (!projectId.value) return;
   logsLoading.value = true;
@@ -407,7 +481,8 @@ const loadLogs = async () => {
       url: `/api/project-logs/${projectId.value}`,
     });
     if (Array.isArray(res.data)) {
-      logs.value = res.data;
+      // 过滤掉无内容的日志
+      logs.value = res.data.filter(log => log.content);
     }
   } catch (e) {
     console.error('加载日志失败:', e);
@@ -422,19 +497,18 @@ const loadInspections = async () => {
   inspectLoading.value = true;
   
   try {
-    // 后端API不支持按项目过滤，需要获取全部然后前端过滤
+    // 员工提交到 rectification_issues 表，所以客户也要从这表读
+    console.log('[巡检] 请求 project_id:', projectId.value, '类型:', typeof projectId.value);
     const res = await uni.request({
-      url: '/api/inspections',
+      url: `/api/rectification-issues?project_id=${projectId.value}`,
     });
+    console.log('[巡检] 返回数据:', JSON.stringify(res.data).slice(0, 200));
     if (Array.isArray(res.data)) {
-      // 过滤出当前项目的巡检记录
-      issues.value = res.data.filter(item => 
-        String(item.project_id) === String(projectId.value)
-      );
+      issues.value = res.data;
     } else if (res.data && Array.isArray(res.data.list)) {
-      issues.value = res.data.list.filter(item => 
-        String(item.project_id) === String(projectId.value)
-      );
+      issues.value = res.data.list;
+    } else if (res.data && Array.isArray(res.data.data)) {
+      issues.value = res.data.data;
     }
   } catch (e) {
     console.error('加载巡检失败:', e);
@@ -443,12 +517,75 @@ const loadInspections = async () => {
   }
 };
 
-// 格式化日期
-const formatDate = (dateStr) => {
+// 施工日志日期格式化 - 日
+function formatDay(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
-};
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return String(d.getDate()).padStart(2, '0');
+}
+
+// 施工日志日期格式化 - 月
+function formatMonth(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  return months[d.getMonth()];
+}
+
+// 施工日志完整时间
+function formatFullTime(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+// 获取日志图片（处理双重编码的JSON字符串）
+function getLogPhotos(log) {
+  if (!log.images) return [];
+  try {
+    let photosStr = log.images;
+    let parsed = JSON.parse(photosStr);
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+    if (Array.isArray(parsed)) {
+      return parsed.filter(p => p && p.trim());
+    }
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 预览日志图片
+function previewLogPhoto(log, idx) {
+  const photos = getLogPhotos(log);
+  uni.previewImage({ urls: photos, current: photos[idx] });
+}
+
+// 获取巡检图片（处理双重编码的JSON字符串）
+function getIssuePhotos(issue) {
+  if (!issue.images) return [];
+  try {
+    let photosStr = issue.images;
+    let parsed = JSON.parse(photosStr);
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+    if (Array.isArray(parsed)) {
+      return parsed.filter(p => p && p.trim());
+    }
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 预览巡检图片
+function previewIssuePhoto(issue, idx) {
+  const photos = getIssuePhotos(issue);
+  uni.previewImage({ urls: photos, current: photos[idx] });
+}
 
 // 获取状态样式
 const getStatusClass = (status) => {
@@ -477,11 +614,20 @@ const getNodeStatusText = (status) => {
 
 // 获取巡检状态文字
 const getIssueStatusText = (status) => {
-  if (status === 'pending' || status === '待整改') return '待整改';
-  if (status === 'completed' || status === '已完成') return '已完成';
-  if (status === 'verified' || status === '已验收') return '已验收';
+  if (!status) return '待处理';
+  const s = String(status).toLowerCase();
+  if (s.includes('待整改') || s === 'pending' || s === '待处理') return '待整改';
+  if (s.includes('已完成') || s === 'completed') return '已完成';
+  if (s.includes('已验收') || s === 'verified') return '已验收';
+  if (s.includes('整改中') || s === 'fixing') return '整改中';
   return status || '待处理';
 };
+
+// 获取等级文字
+function getLevelText(level) {
+  const map = { serious: '严重', stop: '停工', normal: '一般', low: '轻微', medium: '中等', high: '高' };
+  return map[level] || level || '一般';
+}
 
 // 返回
 const goBack = () => {
@@ -707,7 +853,19 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
-/* Tab栏 */
+/* Tab栏红色徽标 */
+.tab-dot {
+  background: #EF4444;
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-weight: 600;
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 .tab-bar {
   display: flex;
   background: #fff;
@@ -893,44 +1051,146 @@ onMounted(() => {
 }
 
 .log-item {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.log-row-first {
   display: flex;
-  gap: 12px;
-  padding: 12px;
-  background: #F9FAFB;
-  border-radius: 10px;
+  align-items: flex-start;
+  margin-bottom: 10px;
 }
 
-.log-date-tag {
-  font-size: 12px;
-  color: #1E3A5F;
-  font-weight: 600;
-  min-width: 50px;
-}
-
-.log-content {
+.log-user-info {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.log-title {
-  display: block;
-  font-size: 14px;
-  color: #374151;
-  line-height: 1.5;
-  margin-bottom: 6px;
+.log-user-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.log-meta {
+.log-tags-row {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.log-tag-icon {
+  font-size: 13px;
+  color: #1E3A5F;
+  background: #E8F4FF;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.log-date-bar {
+  width: 56px;
+  height: 56px;
+  background: #1E3A5F;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.log-date-day {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.log-date-month {
+  font-size: 10px;
+  color: rgba(255,255,255,0.8);
+  margin-top: 2px;
+}
+
+.log-operator {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1E3A5F;
+}
+
+.log-time {
   font-size: 12px;
   color: #9CA3AF;
 }
 
+.log-content-area {
+  /* 标签从最左边（日期卡片列）开始 */
+}
+
+.log-content-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+  gap: 0;
+}
+
+.log-content-text {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+  word-break: break-all;
+  text-align: left;
+  padding-left: 12px;
+}
+
+.log-tag-box {
+  background: rgba(217, 246, 0, 0.11);
+  color: #1E3A5F;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  min-width: 52px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* 图片网格：每排5个正方形 */
+.log-photos {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.log-photo {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.log-photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 /* 巡检列表 */
-.issue-list {
+.inspect-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.inspect-item {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 
 .issue-item {

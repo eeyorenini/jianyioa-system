@@ -201,7 +201,7 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); });
+onShow(() => { loadUnread(); loadRecentProjects(); });
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
@@ -235,11 +235,39 @@ const warnings = ref([
   { id: 5, name: '撒打算', node: '项目完成', days: 3 },
 ]);
 
-const recentProjects = ref([
-  { id: 11, name: '十六局西区2-3-201', customer: '周福晋', statusText: '进行中', progress: 62 },
-  { id: 10, name: '新农村3301', customer: '张先生', statusText: '进行中', progress: 45 },
-  { id: 5, name: '撒打算', customer: '郭大大', statusText: '即将竣工', progress: 88 },
-]);
+const recentProjects = ref([]);
+
+// 计算基于节点的进度百分比
+const calcProgress = (project) => {
+  if (!project.nodes || project.nodes.length === 0) return 0;
+  const completed = project.nodes.filter(n => n.status === 'completed' || n.status === '已完成').length;
+  return Math.round((completed / project.nodes.length) * 100);
+};
+
+// 从API加载真实项目数据
+const loadRecentProjects = async () => {
+  try {
+    const res = await uni.request({
+      url: '/api/projects',
+      header: {
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+      }
+    });
+    if (Array.isArray(res.data) && res.data.length) {
+      // 取最新的3个项目
+      recentProjects.value = res.data.slice(0, 3).map(p => ({
+        id: p.id,
+        name: p.name,
+        customer: p.customer_name || p.customer || '',
+        statusText: p.status || '进行中',
+        progress: calcProgress(p),
+      }));
+    }
+  } catch (e) {
+    console.error('加载最近项目失败', e);
+  }
+};
 
 // ====== 底部弹窗状态 ======
 // 通用项目选择弹窗

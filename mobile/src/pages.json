@@ -120,6 +120,13 @@
       }
     },
     {
+      "path": "pages/projects/log-detail",
+      "style": {
+        "navigationBarTitleText": "日志详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/inspection/list",
       "style": {
         "navigationBarTitleText": "质量巡检",
@@ -263,6 +270,20 @@
       "path": "pages/mine/index",
       "style": {
         "navigationBarTitleText": "我的",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/mine/my-logs",
+      "style": {
+        "navigationBarTitleText": "我的日志",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/mine/my-inspections",
+      "style": {
+        "navigationBarTitleText": "我的巡检",
         "navigationStyle": "custom"
       }
     },
