@@ -17,6 +17,49 @@
         </div>
       </template>
 
+      <!-- API路径对照说明 -->
+      <div class="api-hint">
+        <span class="hint-title">接口路径说明：</span>
+        <span class="hint-item"><code>/api/customers</code> 客户管理</span>
+        <span class="hint-item"><code>/api/contracts</code> 合同</span>
+        <span class="hint-item"><code>/api/projects</code> 项目</span>
+        <span class="hint-item"><code>/api/project-logs</code> 项目进展</span>
+        <span class="hint-item"><code>/api/budgets</code> 预算报价</span>
+        <span class="hint-item"><code>/api/finance</code> 收支记录</span>
+        <span class="hint-item"><code>/api/employees</code> 员工管理</span>
+        <span class="hint-item"><code>/api/approvals</code> 审批</span>
+        <span class="hint-item"><code>/api/attendance</code> 考勤</span>
+        <span class="hint-item"><code>/api/inspections</code> 巡检</span>
+        <span class="hint-item"><code>/api/acceptance</code> 验收</span>
+        <span class="hint-item"><code>/api/rectification-issues</code> 整改问题</span>
+        <span class="hint-item"><code>/api/dispatches</code> 派工</span>
+        <span class="hint-item"><code>/api/materials</code> 材料库存</span>
+        <span class="hint-item"><code>/api/main-materials</code> 主材</span>
+        <span class="hint-item"><code>/api/material-orders</code> 材料订单</span>
+        <span class="hint-item"><code>/api/invoices</code> 发票</span>
+        <span class="hint-item"><code>/api/warranties</code> 保修</span>
+        <span class="hint-item"><code>/api/channels</code> 渠道</span>
+        <span class="hint-item"><code>/api/suppliers</code> 供应商</span>
+        <span class="hint-item"><code>/api/purchases</code> 采购</span>
+        <span class="hint-item"><code>/api/cost-records</code> 成本记录</span>
+        <span class="hint-item"><code>/api/design-measurements</code> 设计测量</span>
+        <span class="hint-item"><code>/api/messages</code> 消息</span>
+        <span class="hint-item"><code>/api/notifications</code> 通知</span>
+        <span class="hint-item"><code>/api/reports</code> 报表</span>
+        <span class="hint-item"><code>/api/boss-dashboard</code> 老板看板</span>
+        <span class="hint-item"><code>/api/progress-nodes</code> 进度节点</span>
+        <span class="hint-item"><code>/api/progress-node-templates</code> 节点模板</span>
+        <span class="hint-item"><code>/api/sms-*</code> 短信相关</span>
+        <span class="hint-item"><code>/api/wechat/*</code> 微信相关</span>
+        <span class="hint-item"><code>/api/system-settings</code> 系统设置</span>
+        <span class="hint-item"><code>/api/contract-variables</code> 合同变量</span>
+        <span class="hint-item"><code>/api/roles</code> 角色权限</span>
+        <span class="hint-item"><code>/api/departments</code> 部门</span>
+        <span class="hint-item"><code>/api/ai/*</code> AI功能</span>
+        <span class="hint-item"><code>/api/export-pdf</code> PDF导出</span>
+        <span class="hint-item"><code>/api/upload-*</code> 上传文件</span>
+      </div>
+
       <!-- 筛选条件 -->
       <div class="filter-bar">
         <el-input v-model="filters.path" placeholder="接口路径" style="width: 200px" clearable @clear="loadData" />
@@ -224,4 +267,34 @@ onMounted(() => { loadData() })
   margin: 0;
 }
 .pagination-wrapper { display: flex; justify-content: flex-end; margin-top: 16px; }
+.api-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  line-height: 1.8;
+}
+.hint-title {
+  font-size: 12px;
+  color: #909399;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.hint-item {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+}
+.hint-item code {
+  font-family: monospace;
+  font-size: 11px;
+  color: #606266;
+  background: #e8eaed;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
 </style>

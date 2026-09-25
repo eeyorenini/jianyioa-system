@@ -25,13 +25,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="operator" label="提交人" width="100" />
-        <el-table-column prop="inspection_date" label="巡检日期" width="120" />
         <el-table-column prop="location" label="巡检地点" width="150" show-overflow-tooltip />
         <el-table-column prop="result" label="巡检结果" min-width="200" show-overflow-tooltip />
         <el-table-column prop="images" label="图片" width="80">
           <template #default="scope">
             <span v-if="getImageCount(scope.row.images) > 0" style="color:#409eff;cursor:pointer" @click="previewImages(scope.row)">
-              {{ getImageCount(scope.row.images) }} 张
+              {{ getImageCount(scope.row.images) }}
             </span>
             <span v-else>-</span>
           </template>
@@ -203,7 +202,12 @@ const uploadProgress = reactive({
 const getImageUrl = (item) => {
   // 优先用本地预览URL（还没上传完时），上传完成后用服务器URL
   if (!item) return ''
-  if (item.serverUrl) return `/api${item.serverUrl}`
+  if (typeof item === 'string') {
+    // 存储的图片路径如 /uploads/logs/xxx.png，直接返回（静态文件 mount 在 /uploads）
+    if (item.startsWith('data:') || item.startsWith('http')) return item
+    return item
+  }
+  if (item.serverUrl) return item.serverUrl
   if (item.localUrl) return item.localUrl
   return ''
 }
@@ -340,7 +344,7 @@ const getViewImages = (imagesField) => {
   if (!imagesField) return []
   try {
     let val = typeof imagesField === 'string' ? JSON.parse(imagesField) : imagesField
-    if (typeof val === 'string') return JSON.parse(val)
+    if (typeof val === 'string') val = JSON.parse(val)
     return Array.isArray(val) ? val : []
   } catch { return [] }
 }

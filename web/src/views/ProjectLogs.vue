@@ -27,11 +27,10 @@
         <el-table-column prop="operator" label="提交人" width="100" />
         <el-table-column prop="content" label="施工内容" min-width="200" show-overflow-tooltip />
         <el-table-column prop="work_type" label="工种" width="100" />
-        <el-table-column prop="work_date" label="施工日期" width="120" />
         <el-table-column prop="images" label="图片" width="80">
           <template #default="scope">
             <span v-if="getImageCount(scope.row.images) > 0" style="color:#409eff;cursor:pointer" @click="previewImages(scope.row)">
-              {{ getImageCount(scope.row.images) }} 张
+              {{ getImageCount(scope.row.images) }}
             </span>
             <span v-else>-</span>
           </template>
@@ -225,6 +224,7 @@ const getImageCount = (imagesField) => {
   try {
     let val = imagesField
     if (typeof val === 'string') val = JSON.parse(val)
+    if (typeof val === 'string') val = JSON.parse(val)
     if (Array.isArray(val)) return val.length
     return 0
   } catch {
@@ -237,9 +237,11 @@ const getViewImages = (imagesField) => {
   try {
     let val = imagesField
     if (typeof val === 'string') {
-      const parsed = JSON.parse(val)
-      if (typeof parsed === 'string') return JSON.parse(parsed)
-      return parsed
+      val = JSON.parse(val)
+    }
+    if (typeof val === 'string') {
+      // 双重JSON编码情况
+      val = JSON.parse(val)
     }
     return Array.isArray(val) ? val : []
   } catch {
@@ -253,7 +255,8 @@ const getImageUrl = (item) => {
   if (typeof item === 'string') {
     // 旧格式字符串
     if (item.startsWith('data:') || item.startsWith('http')) return item
-    return `/api${item}`
+    // 存储的图片路径如 /uploads/logs/xxx.png，直接返回（静态文件 mount 在 /uploads）
+    return item
   }
   // 新格式对象
   if (item.serverUrl) return `/api${item.serverUrl}`
