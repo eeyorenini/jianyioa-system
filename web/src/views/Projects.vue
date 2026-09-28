@@ -550,6 +550,31 @@
             主材功能开发中
           </div>
         </el-tab-pane>
+
+        <el-tab-pane label="采购" name="purchases">
+          <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12px;color:#909399">共 {{ detailPurchases.length }} 条</span>
+            <el-button type="primary" size="small" @click="goToPurchaseRequest">发起采购申请</el-button>
+          </div>
+          <el-table :data="detailPurchases" size="small" border max-height="400">
+            <el-table-column prop="request_no" label="单号" width="130" />
+            <el-table-column prop="status_name" label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="getPurchaseStatusType(row.status)" size="small">{{ row.status_name }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="total_amount" label="申请金额" width="100" />
+            <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="created_at" label="申请时间" width="130">
+              <template #default="{ row }">
+                {{ row.created_at ? row.created_at.slice(0, 16) : '-' }}
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-if="detailPurchases.length === 0" style="text-align:center;color:#909399;padding:30px">
+            暂无采购记录
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-dialog>
 
@@ -622,6 +647,7 @@ const detailProject = ref(null)
 const detailTab = ref('logs')
 const detailLogs = ref([])
 const detailInspections = ref([])
+const detailPurchases = ref([])
 
 const openProjectDetail = async (project) => {
   detailProject.value = project
@@ -654,10 +680,32 @@ const loadDetailInspections = async () => {
   }
 }
 
+const loadDetailPurchases = async () => {
+  if (!detailProject.value?.id) return
+  try {
+    const res = await axios.get('/api/purchase-requests', {
+      params: { project_id: detailProject.value.id, page: 1, page_size: 100 }
+    })
+    detailPurchases.value = res.data?.list || res.list || []
+  } catch (e) {
+    detailPurchases.value = []
+  }
+}
+
+const getPurchaseStatusType = (status) => {
+  const map = { pending: 'warning', approved: 'success', rejected: 'danger', reimbursed: 'primary', finance_confirmed: 'info' }
+  return map[status] || ''
+}
+
+const goToPurchaseRequest = () => {
+  window.location.href = '/purchase-requests'
+}
+
 // 监听 tab 切换
 watch(detailTab, (val) => {
   if (val === 'logs' && detailLogs.value.length === 0) loadDetailLogs()
   if (val === 'inspections' && detailInspections.value.length === 0) loadDetailInspections()
+  if (val === 'purchases' && detailPurchases.value.length === 0) loadDetailPurchases()
 })
 
 // 甘特图拖拽选择模式

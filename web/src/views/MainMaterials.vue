@@ -83,6 +83,11 @@
           <el-col :span="8"><el-form-item label="名称"><el-input v-model="form.name" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="类别"><el-input v-model="form.category" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="品牌"><el-input v-model="form.brand" /></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="供应商">
+            <el-select v-model="form.supplier_id" placeholder="选择供应商" clearable style="width: 100%">
+              <el-option v-for="s in supplierOptions" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </el-form-item></el-col>
           <el-col :span="8"><el-form-item label="规格"><el-input v-model="form.specification" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="型号"><el-input v-model="form.model" /></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="颜色"><el-input v-model="form.color" /></el-form-item></el-col>
@@ -200,6 +205,7 @@ const defaultColumns = [
   { key: 'model_alternative', title: '型号备选', width: 100, visible: false, fixed: false },
   { key: 'color_alternative', title: '颜色备选', width: 100, visible: false, fixed: false },
   { key: 'brand', title: '品牌', width: 120, visible: true, fixed: false },
+  { key: 'supplier_name', title: '供应商', width: 120, visible: true, fixed: false },
   { key: 'sort_order', title: '排序', width: 80, visible: true, fixed: false },
   { key: 'remark', title: '备注说明', width: 200, visible: true, fixed: false },
   { key: 'acceptance_remark', title: '验收说明', width: 200, visible: true, fixed: false },
@@ -241,6 +247,8 @@ const form = reactive({
   model_alternative: '',
   color_alternative: '',
   brand: '',
+  supplier_id: null,
+  supplier_name: '',
   sort_order: 0,
   remark: '',
   acceptance_remark: '',
@@ -260,6 +268,7 @@ const form = reactive({
 
 const visibleColumns = computed(() => columnSettings.value.filter(c => c.visible))
 const categoryOptions = ref([])
+const supplierOptions = ref([])
 const pagination = reactive({ page: 1, limit: 20, total: 0 })
 
 const formatMoney = (value) => Number(value || 0).toFixed(2)
@@ -277,6 +286,7 @@ const resetForm = () => {
     id: null, code: '', name: '', original_price: 0, cost_price: 0, cost_price2: 0, quote_price: 0, contract_price: 0,
     quote_unit: '片', exchange_rate: 1, purchase_unit: '', loss_rate: 0, loss_amount: 0, warranty_period: '', stock_period: '',
     specification: '', model: '', color: '', spec_alternative: '', model_alternative: '', color_alternative: '', brand: '',
+    supplier_id: null, supplier_name: '',
     sort_order: 0, remark: '', acceptance_remark: '', contract_remark: '', other_remark: '', position: '', package_name: '',
     upgrade_profit_rate: 0, internal_control_price: 0, combo: '', limit_formula: '', quote_formula: '', category: '',
     is_visible: 1, is_fixed: 0
@@ -389,6 +399,8 @@ onMounted(async () => {
   loadData()
   const res = await axios.get('/api/main-materials/categories')
   categoryOptions.value = res.data || []
+  const sRes = await axios.get('/api/suppliers')
+  supplierOptions.value = sRes.data || []
 })
 </script>
 
