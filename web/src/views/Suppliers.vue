@@ -86,8 +86,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import request from '../utils/request'
+
+const userPermissions = ref([])
+
+const canWriteSupplier = computed(() => {
+  if (!userPermissions.value.length) return false
+  return userPermissions.value.includes('supplier:write') || userPermissions.value.includes('*')
+})
 
 const tableData = ref([])
 const searchForm = ref({ name: '', type: '' })
@@ -97,12 +105,17 @@ const form = ref({ id: null, name: '', type: '', contact_person: '', contact_pho
 
 const loadData = async () => {
   try {
-    const res = await fetch('/api/suppliers')
-    let data = await res.json()
+    console.log('[Suppliers] 开始加载数据')
+    const data = await request.get('/suppliers')
+    console.log('[Suppliers] 原始数据:', data)
     if (searchForm.value.name) data = data.filter(d => d.name.includes(searchForm.value.name))
     if (searchForm.value.type) data = data.filter(d => d.type === searchForm.value.type)
+    console.log('[Suppliers] 过滤后数据:', data)
     tableData.value = data
-  } catch (error) { ElMessage.error('加载失败') }
+  } catch (error) {
+    console.error('[Suppliers] 加载失败:', error)
+    ElMessage.error('加载失败')
+  }
 }
 
 const handleAdd = () => { isEdit.value = false; form.value = { id: null, name: '', type: '', contact_person: '', contact_phone: '', address: '', bank_account: '', tax_number: '', status: '合作中', remark: '' }; dialogVisible.value = true }
@@ -110,9 +123,11 @@ const handleEdit = (row) => { isEdit.value = true; form.value = { ...row }; dial
 
 const handleSave = async () => {
   try {
-    const method = isEdit.value ? 'PUT' : 'POST'
-    const url = isEdit.value ? `/api/suppliers/${form.value.id}` : '/api/suppliers'
-    await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.value) })
+    if (isEdit.value) {
+      await request.put(`/suppliers/${form.value.id}`, form.value)
+    } else {
+      await request.post('/suppliers', form.value)
+    }
     ElMessage.success('保存成功'); dialogVisible.value = false; loadData()
   } catch (error) { ElMessage.error('保存失败') }
 }
@@ -120,12 +135,14 @@ const handleSave = async () => {
 const handleDelete = async (id) => {
   try {
     await ElMessageBox.confirm('确定要删除吗?', '提示', { type: 'warning' })
-    await fetch(`/api/suppliers/${id}`, { method: 'DELETE' })
+    await request.delete(`/suppliers/${id}`)
     ElMessage.success('删除成功'); loadData()
   } catch (error) { if (error !== 'cancel') ElMessage.error('删除失败') }
 }
 
-onMounted(loadData)
+onMounted(async () => {
+  loadData()
+})
 </script>
 
 <style scoped>.suppliers { padding: 20px; }</style>

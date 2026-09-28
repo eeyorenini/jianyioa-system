@@ -33,6 +33,8 @@ const Login = () => import('../views/Login.vue')
 const MessageCenter = () => import('../views/MessageCenter.vue')
 const ProjectLogs = () => import('../views/ProjectLogs.vue')
 const InspectionLogs = () => import('../views/InspectionLogs.vue')
+const Suppliers = () => import('../views/Suppliers.vue')
+const PurchaseRequests = () => import('../views/PurchaseRequests.vue')
 
 const routes = [
   { path: '/login', name: 'Login', component: Login, meta: { requiresAuth: false } },
@@ -53,6 +55,8 @@ const routes = [
   { path: '/warehouse', name: 'Warehouse', component: Warehouse },
   { path: '/main-materials', name: 'MainMaterials', component: MainMaterials },
   { path: '/material-orders', name: 'MaterialOrders', component: MaterialOrders },
+  { path: '/suppliers', name: 'Suppliers', component: Suppliers },
+  { path: '/purchase-requests', name: 'PurchaseRequests', component: PurchaseRequests },
   { path: '/approvals', name: 'Approvals', component: Approvals },
   { path: '/reports', name: 'Reports', component: Reports },
   { path: '/notices', name: 'Notices', component: Notices },

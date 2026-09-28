@@ -1,4 +1,5 @@
 // MySQL async 适配层 — 替代 deasync 版本，Node 22 兼容
+require('dotenv').config({ path: __dirname + '/.env' });
 const mysql = require('mysql2/promise');
 
 const DB_CONFIG = {
