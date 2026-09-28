@@ -79,10 +79,18 @@ onMounted(() => {
     }
   }
   uni.request({
-    url: '/api/projects/list',
+    url: '/api/projects',
     data: { page_size: 100 },
     success: (res) => {
-      if (res.data.code === 0) {
+      if (Array.isArray(res.data)) {
+        projects.value = res.data
+        if (options.projectId && options.projectName) {
+          const name = decodeURIComponent(options.projectName)
+          const idx = projects.value.findIndex((p) => String(p.id) === String(options.projectId))
+          if (idx >= 0) projectIndex.value = idx
+          selectedProject.value = { id: options.projectId, name }
+        }
+      } else if (res.data.code === 0) {
         projects.value = res.data.data?.list || []
         if (options.projectId && options.projectName) {
           const name = decodeURIComponent(options.projectName)

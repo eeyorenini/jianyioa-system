@@ -108,12 +108,19 @@ const dynamicError = ref(false);
 const dynamicPage = ref(1);
 const dynamicPageSize = 10;
 
+// 计算项目进度：已完成节点 / 总节点数
+const calcProgress = (p) => {
+  if (!p?.nodes || p.nodes.length === 0) return 0;
+  const done = p.nodes.filter(n => n.status === 'completed' || n.status === '已完成').length;
+  return Math.round((done / p.nodes.length) * 100);
+};
+
 // 计算属性
 const projectInfo = computed(() => {
   return {
     name: project.value?.name || '我的项目',
     address: project.value?.customer_address || project.value?.address || '',
-    progress: project.value?.progress || 0,
+    progress: calcProgress(project.value),
     status: project.value?.status || '进行中'
   };
 });
@@ -176,21 +183,100 @@ const loadDynamicList = async () => {
   dynamicNoMore.value = false;
   
   try {
-    const res = await uni.request({
-      url: `/api/project-logs/${projectId.value}?page=${dynamicPage.value}&page_size=${dynamicPageSize}`,
+    const allDynamics = [];
+    
+    // 1. 获取施工日志
+    try {
+      const logRes = await uni.request({
+        url: `/api/project-logs/${projectId.value}?page=1&page_size=20`,
+      });
+      if (Array.isArray(logRes.data)) {
+        logRes.data.forEach(item => {
+          // 过滤掉没有实际内容的日志
+          if (item.content || item.description || item.note) {
+            allDynamics.push({
+              ...item,
+              type: 'log',
+              typeText: '施工日志',
+              typeIcon: '📝',
+              typeColor: '#3B82F6',
+              content: item.content || item.description || item.note
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.log('日志加载失败', e);
+    }
+    
+    // 2. 获取巡检记录
+    try {
+      const inspectRes = await uni.request({
+        url: `/api/inspections?project_id=${projectId.value}`,
+      });
+      if (Array.isArray(inspectRes.data)) {
+        inspectRes.data.forEach(item => {
+          allDynamics.push({
+            ...item,
+            type: 'inspection',
+            typeText: '巡检记录',
+            typeIcon: '🔍',
+            typeColor: '#10B981',
+            content: item.description || item.content || item.result || '巡检完成'
+          });
+        });
+      }
+    } catch (e) {
+      console.log('巡检加载失败', e);
+    }
+    
+    // 3. 获取验收记录
+    try {
+      const acceptRes = await uni.request({
+        url: `/api/acceptance?project_id=${projectId.value}`,
+      });
+      if (Array.isArray(acceptRes.data)) {
+        acceptRes.data.forEach(item => {
+          allDynamics.push({
+            ...item,
+            type: 'acceptance',
+            typeText: '验收记录',
+            typeIcon: '✅',
+            typeColor: '#F59E0B',
+            content: item.description || item.content || item.result || '验收完成'
+          });
+        });
+      }
+    } catch (e) {
+      console.log('验收加载失败', e);
+    }
+    
+    // 4. 获取节点状态变更（从项目节点中提取已完成的节点作为动态）
+    if (project.value?.nodes && project.value.nodes.length > 0) {
+      project.value.nodes.filter(n => n.status === 'completed' && n.actual_date).forEach(node => {
+        allDynamics.push({
+          id: 'node-' + node.id,
+          type: 'node',
+          typeText: '节点完成',
+          typeIcon: '🏁',
+          typeColor: '#8B5CF6',
+          content: `「${node.node_name}」已完成验收`,
+          created_at: node.actual_date,
+          images: null
+        });
+      });
+    }
+    
+    // 按ID倒序排序（最新的在前，数据库ID越大越新）
+    allDynamics.sort((a, b) => {
+      return (b.id || 0) - (a.id || 0);
     });
     
-    const data = res.data;
-    if (Array.isArray(data)) {
-      // 处理数据，添加 collapsed 状态
-      dynamicList.value = data.map(item => ({
-        ...item,
-        collapsed: true
-      }));
-      dynamicNoMore.value = data.length < dynamicPageSize;
-    } else {
-      dynamicList.value = [];
-    }
+    dynamicList.value = allDynamics.slice(0, dynamicPageSize).map(item => ({
+      ...item,
+      collapsed: true
+    }));
+    dynamicNoMore.value = allDynamics.length <= dynamicPageSize;
   } catch (e) {
     console.error('加载动态列表失败:', e);
     dynamicError.value = true;

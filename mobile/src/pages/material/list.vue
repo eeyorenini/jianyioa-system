@@ -3,11 +3,14 @@
     <!-- 顶部导航 -->
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
-      <text class="nav-title">材料列表</text>
+      <text class="nav-title">材料台账</text>
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">材料台账</view>
+    <!-- 项目名称横幅 -->
+    <view class="project-banner" v-if="projectName">
+      📁 {{ projectName }}
+    </view>
 
     <!-- 统计卡片 -->
     <view class="stats-row">
@@ -17,41 +20,48 @@
       </view>
       <view class="stat-divider"></view>
       <view class="stat-item">
-        <text class="stat-num accent">¥{{ summary.cost }}</text>
-        <text class="stat-label">总成本</text>
+        <text class="stat-num accent">{{ summary.used }}</text>
+        <text class="stat-label">已用项</text>
       </view>
     </view>
 
     <!-- 分类 -->
     <view class="cat-tabs">
-      <view class="cat-tab" :class="{ active: curCat === '全部' }" @click="curCat = '全部'">全部</view>
-      <view class="cat-tab" :class="{ active: curCat === '主材' }" @click="curCat = '主材'">主材</view>
-      <view class="cat-tab" :class="{ active: curCat === '辅材' }" @click="curCat = '辅材'">辅材</view>
+      <view class="cat-tab" :class="{ active: curCat === '' }" @click="curCat = ''">全部</view>
+      <view class="cat-tab" :class="{ active: curCat === '瓷砖' }" @click="curCat = '瓷砖'">瓷砖</view>
+      <view class="cat-tab" :class="{ active: curCat === '地板' }" @click="curCat = '地板'">地板</view>
+      <view class="cat-tab" :class="{ active: curCat === '门' }" @click="curCat = '门'">门</view>
+      <view class="cat-tab" :class="{ active: curCat === '橱柜' }" @click="curCat = '橱柜'">橱柜</view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="loading-state" v-if="loading">
+      <text>加载中...</text>
     </view>
 
     <!-- 材料列表 -->
-    <view class="material-list" v-if="filteredList.length">
+    <view class="material-list" v-else-if="filteredList.length">
       <view class="material-card" v-for="item in filteredList" :key="item.id">
         <view class="material-info">
           <text class="material-name">{{ item.name }}</text>
-          <text class="material-spec">{{ item.spec }}</text>
+          <text class="material-spec">{{ item.spec || item.model || '-' }}</text>
         </view>
         <view class="material-stats">
           <view class="m-stat">
-            <text class="m-label">数量</text>
+            <text class="m-label">库存</text>
             <text class="m-val">{{ item.quantity }}{{ item.unit }}</text>
           </view>
           <view class="m-stat">
             <text class="m-label">已用</text>
-            <text class="m-val used">{{ item.used }}{{ item.unit }}</text>
+            <text class="m-val used">{{ item.used || 0 }}{{ item.unit }}</text>
           </view>
           <view class="m-stat">
             <text class="m-label">剩余</text>
-            <text class="m-val left">{{ item.left }}{{ item.unit }}</text>
+            <text class="m-val left">{{ item.left || item.quantity }}{{ item.unit }}</text>
           </view>
           <view class="m-stat">
-            <text class="m-label">成本</text>
-            <text class="m-val cost">¥{{ item.cost }}</text>
+            <text class="m-label">单价</text>
+            <text class="m-val cost">¥{{ item.price || item.unit_price || '-' }}</text>
           </view>
         </view>
       </view>
@@ -59,7 +69,7 @@
 
     <view class="empty-state" v-else>
       <text class="empty-icon">🧱</text>
-      <text class="empty-text">暂无材料记录</text>
+      <text class="empty-text">暂无主材记录</text>
     </view>
 
     <!-- 快捷入口 -->
@@ -77,31 +87,72 @@
   </view>
 </template>
 
-<script setup >
-import { ref, computed } from "vue";
+<script setup>
+import { ref, computed, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 
-const curCat = ref('全部');
+const userStore = useUserStore();
+const projectId = ref('');
+const projectName = ref('');
+const curCat = ref('');
+const loading = ref(false);
+const list = ref([]);
 
-const summary = ref({ total: 12, cost: '32,100' });
-
-const list = ref([
-  { id: 1, name: '水泥', spec: '32.5R 普通硅酸盐', quantity: 20, used: 12, left: 8, unit: '吨', cost: '8,000', type: '辅材' },
-  { id: 2, name: '沙子', spec: '中砂', quantity: 30, used: 20, left: 10, unit: '方', cost: '4,500', type: '辅材' },
-  { id: 3, name: '瓷砖', spec: '800x800 全抛釉', quantity: 200, used: 150, left: 50, unit: '片', cost: '12,000', type: '主材' },
-  { id: 4, name: '木工板', spec: 'E0级 18mm', quantity: 50, used: 30, left: 20, unit: '张', cost: '7,600', type: '主材' },
-]);
-
-const filteredList = computed(() => {
-  if (curCat.value === '全部') return list.value;
-  return list.value.filter(i => i.type === curCat.value);
+const summary = computed(() => {
+  const total = list.value.length;
+  const used = list.value.filter(i => Number(i.used) > 0).length;
+  return { total, used };
 });
 
-const goPage = (url) => uni.navigateTo({ url });
+const filteredList = computed(() => {
+  if (!curCat.value) return list.value;
+  return list.value.filter(i => i.category === curCat.value);
+});
 
+const fetchList = async () => {
+  loading.value = true;
+  try {
+    const token = uni.getStorageSync("token");
+    const params = new URLSearchParams();
+    if (projectId.value) params.set('project_id', projectId.value);
+    if (curCat.value) params.set('category', curCat.value);
+
+    const res = await uni.request({
+      url: `/api/main-materials?${params.toString()}`,
+      header: { Authorization: token },
+    });
+    if (res.data && Array.isArray(res.data.list)) {
+      list.value = res.data.list;
+    } else if (Array.isArray(res.data)) {
+      list.value = res.data;
+    }
+  } catch (e) {
+    console.error('加载主材列表失败:', e);
+    uni.showToast({ title: '加载失败', icon: 'none' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+const goPage = (url) => {
+  if (projectId.value) {
+    url += (url.includes('?') ? '&' : '?') + `projectId=${projectId.value}&projectName=${encodeURIComponent(projectName.value)}`;
+  }
+  uni.navigateTo({ url });
+};
 
 const goBack = () => {
   uni.navigateBack();
 };
+
+onMounted(() => {
+  const pages = getCurrentPages();
+  const current = pages[pages.length - 1];
+  const options = (current).options || {};
+  projectId.value = options.projectId || '';
+  projectName.value = options.projectName ? decodeURIComponent(options.projectName) : '';
+  fetchList();
+});
 </script>
 
 <style scoped>
@@ -110,6 +161,15 @@ const goBack = () => {
   background: #F5F7FA;
   padding: 16px;
   padding-bottom: 80px;
+}
+
+.project-banner {
+  background: #E8F4FF;
+  color: #1E3A5F;
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
 }
 
 .page-title {
@@ -158,6 +218,7 @@ const goBack = () => {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+  overflow-x: auto;
 }
 
 .cat-tab {
@@ -167,11 +228,18 @@ const goBack = () => {
   background: #fff;
   color: #6B7280;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .cat-tab.active {
   background: #1E3A5F;
   color: #fff;
+}
+
+.loading-state {
+  text-align: center;
+  padding: 40px;
+  color: #9CA3AF;
 }
 
 .material-list { display: flex; flex-direction: column; gap: 12px; }
@@ -248,6 +316,7 @@ const goBack = () => {
   font-size: 20px;
   margin-bottom: 4px;
 }
+
 /* 导航栏 */
 .nav-bar {
   display: flex;
@@ -279,4 +348,10 @@ const goBack = () => {
   width: 40px;
 }
 
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+}
+.empty-icon { display: block; font-size: 48px; margin-bottom: 12px; }
+.empty-text { font-size: 14px; color: #9CA3AF; }
 </style>

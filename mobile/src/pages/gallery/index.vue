@@ -57,10 +57,14 @@ const loading = ref(false)
 
 onMounted(() => {
   uni.request({
-    url: '/api/projects/list',
+    url: '/api/projects',
     data: { page_size: 100 },
     success: (res) => {
-      if (res.data.code === 0) projects.value = res.data.data?.list || []
+      if (Array.isArray(res.data)) {
+        projects.value = res.data
+      } else if (res.data.code === 0) {
+        projects.value = res.data.data?.list || []
+      }
     }
   })
   fetchGallery()

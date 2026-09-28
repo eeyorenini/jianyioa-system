@@ -134,14 +134,61 @@
           <text class="tool-btn" @click="goLogAdd">+ 新建日志</text>
         </view>
 
-        <view class="log-list" v-if="logs.length">
+        <view class="loading-state" v-if="logsLoading">
+          <text>加载中...</text>
+        </view>
+        <view class="log-list" v-else-if="logs.length">
           <view class="log-item" v-for="log in logs" :key="log.id">
-            <view class="log-date-tag">{{ log.date }}</view>
-            <view class="log-content">
-              <text class="log-title">{{ log.content || '暂无内容' }}</text>
-              <view class="log-meta">
-                <text>👷 {{ log.worker || '未知' }}</text>
-                <text v-if="log.photos">📷 {{ log.photos }}张</text>
+            <!-- 第一行：日期卡片 + 提交人/时间 + 工种人数（转行） -->
+            <view class="log-row log-row-first">
+              <view class="log-date-bar">
+                <text class="log-date-day">{{ formatDay(log.created_at) }}</text>
+                <text class="log-date-month">{{ formatMonth(log.created_at) }}</text>
+              </view>
+              <view class="log-user-info">
+                <!-- 第一行：提交人 + 时间 -->
+                <view class="log-user-line">
+                  <text class="log-operator">👷 {{ log.operator || '未知' }}</text>
+                  <text class="log-time">{{ formatFullTime(log.created_at) }}</text>
+                </view>
+                <!-- 第二行：工种和人数 -->
+                <view class="log-tags-row" v-if="log.work_type || log.worker_count">
+                  <text class="log-tag-icon" v-if="log.work_type">🔧 {{ log.work_type }}</text>
+                  <text class="log-tag-icon" v-if="log.worker_count">👷 {{ log.worker_count }}人</text>
+                </view>
+              </view>
+            </view>
+
+            <!-- 内容区域 -->
+            <view class="log-content-area">
+              <!-- 施工内容 -->
+              <view class="log-content-row" v-if="log.content">
+                <view class="log-tag-box">施工内容</view>
+                <view class="log-content-text" style="text-align: left;">{{ log.content }}</view>
+              </view>
+
+              <!-- 明日计划 -->
+              <view class="log-content-row" v-if="log.tomorrow_plan">
+                <view class="log-tag-box">明日计划</view>
+                <view class="log-content-text" style="text-align: left;">{{ log.tomorrow_plan }}</view>
+              </view>
+
+              <!-- 备注 -->
+              <view class="log-content-row" v-if="log.note">
+                <view class="log-tag-box">描述</view>
+                <view class="log-content-text" style="text-align: left;">{{ log.note }}</view>
+              </view>
+
+              <!-- 图片 -->
+              <view class="log-photos" v-if="getLogPhotos(log).length">
+                <view
+                  class="log-photo"
+                  v-for="(photo, idx) in getLogPhotos(log)"
+                  :key="idx"
+                  @click="previewLogPhoto(log, idx)"
+                >
+                  <image class="log-photo-img" :src="photo" mode="aspectFill" />
+                </view>
               </view>
             </view>
           </view>
@@ -152,30 +199,79 @@
         </view>
       </view>
 
-      <!-- 巡检问题 -->
+      <!-- 巡检记录 -->
       <view v-if="curTab === 'inspect'" class="tab-panel">
         <view class="panel-toolbar">
-          <text class="panel-title">质量问题</text>
+          <text class="panel-title">巡检记录</text>
           <text class="tool-btn" @click="goInspectAdd">+ 新建巡检</text>
         </view>
 
-        <view class="issue-list" v-if="issues.length">
-          <view class="issue-item" v-for="issue in issues" :key="issue.id" @click="goInspectDetail(issue)">
-            <view class="issue-header">
-              <view class="issue-level" :class="`level-${issue.level}`">
-                {{ issue.level === 'serious' ? '严重' : issue.level === 'stop' ? '停工' : '一般' }}
+        <view class="loading-state" v-if="issuesLoading">
+          <text>加载中...</text>
+        </view>
+        <view class="log-list" v-else-if="issues.length">
+          <view class="log-item" v-for="issue in issues" :key="issue.id" @click="goInspectDetail(issue)">
+            <!-- 第一行：日期卡片 + 提交人/时间 + 严重程度（转行） -->
+            <view class="log-row log-row-first">
+              <view class="log-date-bar">
+                <text class="log-date-day">{{ formatDay(issue.created_at) }}</text>
+                <text class="log-date-month">{{ formatMonth(issue.created_at) }}</text>
               </view>
-              <text class="issue-title">{{ issue.title }}</text>
+              <view class="log-user-info">
+                <!-- 第一行：提交人 + 时间 -->
+                <view class="log-user-line">
+                  <text class="log-operator">👷 {{ issue.creator_name || '未知' }}</text>
+                  <text class="log-time">{{ formatFullTime(issue.created_at) }}</text>
+                </view>
+                <!-- 第二行：严重程度和状态 -->
+                <view class="log-tags-row">
+                  <text class="log-tag-icon" :class="`level-tag-${issue.level}`" v-if="issue.level">
+                    {{ issue.level === 'serious' ? '⚠️ 严重' : issue.level === 'stop' ? '🛑 停工' : 'ℹ️ 一般' }}
+                  </text>
+                  <text class="log-tag-icon status-tag" :class="`status-${issue.rectify_status || issue.status}`">
+                    {{ getIssueStatusText(issue) }}
+                  </text>
+                </view>
+              </view>
             </view>
-            <view class="issue-meta">
-              <text class="issue-location">📍 {{ issue.location }}</text>
-              <view class="issue-status" :class="`status-${issue.status}`">{{ issue.statusText }}</view>
+
+            <!-- 内容区域 -->
+            <view class="log-content-area">
+              <!-- 问题描述 -->
+              <view class="log-content-row" v-if="issue.issue_desc">
+                <view class="log-tag-box">问题</view>
+                <view class="log-content-text">{{ issue.issue_desc }}</view>
+              </view>
+
+              <!-- 整改描述 -->
+              <view class="log-content-row" v-if="issue.result">
+                <view class="log-tag-box">整改</view>
+                <view class="log-content-text">{{ issue.result }}</view>
+              </view>
+
+              <!-- 备注 -->
+              <view class="log-content-row" v-if="issue.remark">
+                <view class="log-tag-box">描述</view>
+                <view class="log-content-text">{{ issue.remark }}</view>
+              </view>
+
+              <!-- 图片 -->
+              <view class="log-photos" v-if="getIssuePhotos(issue).length">
+                <view
+                  class="log-photo"
+                  v-for="(photo, idx) in getIssuePhotos(issue)"
+                  :key="idx"
+                  @click="previewIssuePhoto(issue, idx)"
+                >
+                  <image class="log-photo-img" :src="photo" mode="aspectFill" />
+                </view>
+              </view>
             </view>
           </view>
         </view>
         <view class="empty-state" v-else>
           <text class="empty-icon">🔍</text>
-          <text class="empty-text">暂无质量问题</text>
+          <text class="empty-text">暂无巡检记录</text>
         </view>
       </view>
 
@@ -200,6 +296,33 @@
         <view class="empty-state" v-if="materials.length === 0">
           <text class="empty-icon">🧱</text>
           <text class="empty-text">暂无材料记录</text>
+        </view>
+      </view>
+
+      <!-- 采购记录 -->
+      <view v-if="curTab === 'purchase'" class="tab-panel">
+        <view class="panel-toolbar">
+          <text class="panel-title">采购记录</text>
+          <text class="tool-btn" @click="goPurchaseAdd">+ 新建</text>
+        </view>
+        <view v-if="purchaseList.length === 0" class="empty-state">
+          <text class="empty-icon">📦</text>
+          <text class="empty-text">暂无采购记录</text>
+        </view>
+        <view v-else>
+          <view v-for="item in purchaseList" :key="item.id" class="purchase-card" @click="goPurchaseDetail(item)">
+            <view class="purchase-card-header">
+              <text class="purchase-name">{{ item.material_name }}</text>
+              <view class="purchase-status" :style="{ color: purchaseStatusColor(item.status) }">
+                {{ purchaseStatusLabel(item.status) }}
+              </view>
+            </view>
+            <view class="purchase-info">
+              <text>供应商：{{ item.supplier_name }}</text>
+              <text>数量：{{ item.quantity }}{{ item.unit }}</text>
+              <text>金额：¥{{ item.amount || 0 }}</text>
+            </view>
+          </view>
         </view>
       </view>
 
@@ -277,6 +400,9 @@
       <view class="action-quick" @click="goInspectAdd">
         <text>🔍 巡检</text>
       </view>
+      <view class="action-quick" @click="goMaterial">
+        <text>🧱 主材</text>
+      </view>
       <view class="action-primary" @click="goDispatchAdd">
         <text>+ 派工</text>
       </view>
@@ -286,35 +412,36 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 
 const projectId = ref(0);
 const project = ref({});
+const userStore = useUserStore();
 const curTab = ref('nodes');
 
 const tabs = computed(() => [
   { key: 'nodes', label: '进度节点' },
-  { key: 'logs', label: '施工日志' },
+  { key: 'logs', label: '施工日志', badge: logs.value.length || null },
   { key: 'inspect', label: '巡检', badge: issues.value.length || null },
   { key: 'dispatch', label: '派工' },
   { key: 'material', label: '材料' },
+  { key: 'purchase', label: '采购' },
   { key: 'contract', label: '合同' },
   { key: 'finance', label: '财务' },
   { key: 'gallery', label: '图库' },
 ]);
 
-// 假数据
-const logs = ref([
-  { id: 1, date: '09-16', content: '今日进行水电改造，完成了卫生间和厨房的布线工作...', worker: '李工长', photos: 6 },
-  { id: 2, date: '09-15', content: '开工交底完成，设计师、项目经理、业主三方现场确认...', worker: '王监理', photos: 12 },
-]);
+// 日志列表（从API加载）
+const logs = ref([]);
+const logsLoading = ref(false);
 
-const issues = ref([
-  { id: 1, title: '防水层局部破损', level: 'serious', location: '卫生间', status: 'pending', statusText: '待整改' },
-  { id: 2, title: '墙面空鼓', level: 'normal', location: '客厅', status: 'fixing', statusText: '整改中' },
-]);
+// 巡检问题列表（从API加载）
+const issues = ref([]);
+const issuesLoading = ref(false);
 
 const dispatches = ref([]);
 const materials = ref([]);
+const purchaseList = ref([]);
 
 const financeData = ref({
   income: 58000,
@@ -367,6 +494,110 @@ const goNodeManage = () => {
   uni.navigateTo({ url: `/pages/projects/nodeManage?id=${projectId.value}` });
 };
 
+// 格式化日志日期
+const formatLogDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// 施工日志日期格式化 - 日
+const formatDay = (dateStr) => {
+  if (!dateStr) return '';
+  // iOS 不支持 "2024-01-01 00:00:00" 格式，改用 "/" 分隔
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return String(d.getDate()).padStart(2, '0');
+};
+
+// 施工日志日期格式化 - 月
+const formatMonth = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  return months[d.getMonth()];
+};
+
+// 施工日志完整时间
+const formatFullTime = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+// 获取日志图片（处理双重编码的JSON字符串）
+const getLogPhotos = (log) => {
+  if (!log.images) {
+    console.log('getLogPhotos: log.images为空', log.id);
+    return [];
+  }
+  try {
+    // 图片数据可能是双重编码的JSON字符串："\[\"data:image/...\"\]"
+    let photosStr = log.images;
+    console.log('getLogPhotos原始数据:', photosStr.substring(0, 100), '...');
+    
+    // 第一次解析，得到字符串 "[\"data:image/...\"]"
+    let parsed = JSON.parse(photosStr);
+    console.log('第一次解析后:', typeof parsed, parsed ? parsed.substring(0, 50) : 'null');
+    
+    // 如果解析后是字符串，继续解析得到数组
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+      console.log('第二次解析后:', typeof parsed);
+    }
+    
+    // 确保是数组
+    if (Array.isArray(parsed)) {
+      console.log('返回图片数组，长度:', parsed.length);
+      // 过滤掉空字符串或无效数据
+      return parsed.filter(p => p && p.trim());
+    }
+    console.log('不是数组，返回空');
+    return [];
+  } catch (e) {
+    console.error('解析图片失败:', e.message, log.images);
+    return [];
+  }
+};
+
+// 预览日志图片
+const previewLogPhoto = (log, idx) => {
+  const photos = getLogPhotos(log);
+  uni.previewImage({
+    urls: photos,
+    current: idx
+  });
+};
+
+// 获取巡检图片（处理双重编码的JSON字符串）
+const getIssuePhotos = (issue) => {
+  if (!issue.images) return [];
+  try {
+    let photosStr = issue.images;
+    let parsed = JSON.parse(photosStr);
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+    if (Array.isArray(parsed)) return parsed.filter(p => p && p.trim());
+    return [];
+  } catch (e) {
+    return [];
+  }
+};
+
+// 预览巡检图片
+const previewIssuePhoto = (issue, idx) => {
+  const photos = getIssuePhotos(issue);
+  uni.previewImage({ urls: photos, current: idx });
+};
+
+// 巡检状态文字
+const getIssueStatusText = (issue) => {
+  const s = issue.rectify_status || issue.status || '';
+  if (s === '待处理' || s === '待整改') return '⏳ 待整改';
+  if (s === '整改中') return '🔧 整改中';
+  if (s === '待验收') return '👀 待验收';
+  if (s === '已完成') return '✅ 已完成';
+  return '⏳ 待整改';
+};
+
 const goLogAdd = () => {
   uni.navigateTo({ url: `/pages/projects/log-add?projectId=${projectId.value}` });
 };
@@ -384,11 +615,59 @@ const goDispatchAdd = () => {
 };
 
 const goMaterial = () => {
-  uni.navigateTo({ url: `/pages/material/list?projectId=${projectId.value}` });
+  uni.navigateTo({ url: `/pages/material/list?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
 };
 
 const goFinance = () => {
   uni.navigateTo({ url: `/pages/finance/add?projectId=${projectId.value}` });
+};
+
+const goPurchaseAdd = () => {
+  uni.navigateTo({ url: `/pages/purchase/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
+};
+
+const goPurchaseDetail = (item) => {
+  uni.navigateTo({ url: `/pages/purchase/detail?id=${item.id}` });
+};
+
+const loadPurchase = async () => {
+  if (!projectId.value) return;
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/purchase-requests?project_id=${projectId.value}&page_size=100`,
+      header: { Authorization: token },
+    });
+    if (res.data.code === 0 || res.data.code === undefined) {
+      purchaseList.value = res.data.list || res.data.data?.list || [];
+    }
+  } catch (e) {
+    console.error('加载采购记录失败:', e);
+  }
+};
+
+const purchaseStatusLabel = (s) => {
+  const map = {
+    pending: '待审核',
+    approved: '已通过',
+    rejected: '已驳回',
+    reimburse: '待报销',
+    reimbursed: '已报销',
+    finance_confirmed: '财务确认',
+  };
+  return map[s] || s;
+};
+
+const purchaseStatusColor = (s) => {
+  const map = {
+    pending: '#ff9800',
+    approved: '#4caf50',
+    rejected: '#f44336',
+    reimburse: '#ff9800',
+    reimbursed: '#4caf50',
+    finance_confirmed: '#2196f3',
+  };
+  return map[s] || '#999';
 };
 
 const goGallery = (cat) => {
@@ -463,9 +742,14 @@ const fetchDetail = async () => {
   try {
     uni.showLoading({ title: "加载中..." });
     const token = uni.getStorageSync("token");
+    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
       url: "/api/projects",
-      header: { Authorization: token },
+      header: {
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+      },
     });
     uni.hideLoading();
     const data = res.data;
@@ -473,9 +757,61 @@ const fetchDetail = async () => {
       const found = data.find((p) => p.id === projectId.value);
       if (found) project.value = found;
     }
+    // 加载日志和巡检
+    fetchLogs();
+    fetchInspections();
+    loadPurchase();
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: "加载失败", icon: "none" });
+  }
+};
+
+// 加载施工日志（只显示有内容的）
+const fetchLogs = async () => {
+  if (!projectId.value) return;
+  logsLoading.value = true;
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/project-logs/${projectId.value}`,
+      header: { Authorization: token },
+    });
+    if (Array.isArray(res.data)) {
+      // 过滤掉无内容的日志
+      logs.value = res.data.filter(log => log.content);
+    }
+  } catch (e) {
+    console.error('加载日志失败:', e);
+  } finally {
+    logsLoading.value = false;
+  }
+};
+
+// 加载巡检记录
+const fetchInspections = async () => {
+  if (!projectId.value) return;
+  issuesLoading.value = true;
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/rectification-issues?project_id=${projectId.value}`,
+      header: { Authorization: token },
+    });
+    console.log('[巡检] 返回:', JSON.stringify(res.data).slice(0, 200));
+    if (Array.isArray(res.data)) {
+      issues.value = res.data.map(item => ({
+        ...item,
+        title: item.title || item.issue_desc || '巡检记录',
+        level: item.level || (item.status === '合格' ? 'normal' : 'serious'),
+        location: item.location || '',
+        statusText: item.rectify_status || item.status || '待整改',
+      }));
+    }
+  } catch (e) {
+    console.error('加载巡检失败:', e);
+  } finally {
+    issuesLoading.value = false;
   }
 };
 
@@ -500,6 +836,7 @@ const goBack = () => {
   min-height: 100vh;
   background: #F5F7FA;
   padding-bottom: 80px;
+  text-align: left;
 }
 
 /* 项目头部 */
@@ -814,38 +1151,181 @@ const goBack = () => {
 }
 
 .log-item {
-  display: flex;
-  gap: 12px;
   background: #fff;
   border-radius: 12px;
   padding: 14px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  margin-bottom: 12px;
 }
 
-.log-date-tag {
-  background: #1E3A5F;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 6px;
-  white-space: nowrap;
-  height: fit-content;
+.log-row-first {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 10px;
 }
 
-.log-title {
-  font-size: 14px;
-  color: #1A1F36;
-  line-height: 1.5;
-  display: block;
-  margin-bottom: 6px;
+.log-user-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.log-meta {
+.log-user-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-tags-row {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.log-tag-icon {
+  font-size: 13px;
+  color: #1E3A5F;
+  background: #E8F4FF;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.log-date-bar {
+  width: 56px;
+  height: 56px;
+  background: #1E3A5F;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.log-date-day {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
+.log-date-month {
+  font-size: 10px;
+  color: rgba(255,255,255,0.8);
+  margin-top: 2px;
+}
+
+.log-operator {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1E3A5F;
+}
+
+.log-time {
   font-size: 12px;
   color: #9CA3AF;
+}
+
+.log-content-area {
+  /* 标签从最左边（日期卡片列）开始 */
+}
+
+.log-content-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+  gap: 0;
+  /* 不在这里加 padding，否则标签也会被推走 */
+}
+
+.log-content-text {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+  word-break: break-all;
+  text-align: left;
+  padding-left: 12px;
+}
+
+.log-tag-box {
+  background: rgba(217, 246, 0, 0.11);
+  color: #1E3A5F;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  min-width: 52px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.log-content-value {
+  font-size: 14px;
+  color: #333;
+  margin-right: 16px;
+}
+
+.log-tag {
+  font-size: 12px;
+  color: #1E3A5F;
+  background: #E8F4FF;
+  padding: 4px 12px;
+  border-radius: 12px;
+  margin-right: 8px;
+}
+
+.log-photos {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.log-photo {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.log-photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.log-section {
+  margin-bottom: 8px;
+}
+
+.log-section-label {
+  font-size: 12px;
+  color: #9CA3AF;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.log-section-content {
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.5;
+  display: block;
+}
+
+.log-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.log-tag {
+  font-size: 12px;
+  padding: 3px 8px;
+  background: #F3F4F6;
+  color: #6B7280;
+  border-radius: 4px;
 }
 
 /* 问题 */
@@ -1087,6 +1567,114 @@ const goBack = () => {
 
 .nav-placeholder {
   width: 40px;
+}
+
+/* 加载状态 */
+.loading-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  color: #9CA3AF;
+}
+
+/* 采购卡片 */
+.purchase-card {
+  background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px;
+}
+.purchase-card-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+}
+.purchase-name { font-size: 14px; font-weight: 600; color: #333; }
+.purchase-status { font-size: 12px; }
+.purchase-info {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 12px; color: #666;
+}
+
+/* 空状态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 20px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.empty-text {
+  font-size: 14px;
+  color: #9CA3AF;
+}
+
+/* 巡检列表 */
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.issue-item {
+  padding: 12px;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.issue-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.issue-level {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.level-serious { background: #FEE2E2; color: #DC2626; }
+.level-normal { background: #DBEAFE; color: #2563EB; }
+.level-stop { background: #FEF3C7; color: #D97706; }
+
+.issue-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1A1F36;
+}
+
+.issue-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #6B7280;
+}
+
+.issue-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.status-待整改, .status-待处理, .status-pending { background: #FEF3C7; color: #D97706; }
+.status-整改中 { background: #EDE9FE; color: #7C3AED; }
+.status-待验收 { background: #DBEAFE; color: #2563EB; }
+.status-已完成, .status-completed { background: #D1FAE5; color: #059669; }
+
+.level-tag-serious { background: #FEE2E2; color: #DC2626; }
+.level-tag-stop { background: #1E3A5F; color: #fff; }
+.level-tag-normal { background: #D1FAE5; color: #059669; }
+
+.issue-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.4;
 }
 
 </style>

@@ -18,13 +18,55 @@
       </view>
       <view v-else>
         <view class="log-item" v-for="log in logs" :key="log.id">
-          <view class="log-dot"></view>
-          <view class="log-content">
-            <view class="log-header">
-              <text class="log-date">{{ formatDate(log.created_at) }}</text>
-              <text class="log-author">{{ log.operator || '未知' }}</text>
+          <!-- 第一行：日期卡片 + 提交人/时间 + 工种人数 -->
+          <view class="log-row-first">
+            <view class="log-date-bar">
+              <text class="log-date-day">{{ formatDay(log.created_at) }}</text>
+              <text class="log-date-month">{{ formatMonth(log.created_at) }}</text>
             </view>
-            <text class="log-text">{{ log.content }}</text>
+            <view class="log-user-info">
+              <view class="log-user-line">
+                <text class="log-operator">👷 {{ log.operator || '未知' }}</text>
+                <text class="log-time">{{ formatFullTime(log.created_at) }}</text>
+              </view>
+              <view class="log-tags-row" v-if="log.work_type || log.worker_count">
+                <text class="log-tag-icon" v-if="log.work_type">🔧 {{ log.work_type }}</text>
+                <text class="log-tag-icon" v-if="log.worker_count">👷 {{ log.worker_count }}人</text>
+              </view>
+            </view>
+          </view>
+
+          <!-- 内容区域 -->
+          <view class="log-content-area">
+            <!-- 施工内容 -->
+            <view class="log-content-row" v-if="log.content">
+              <view class="log-tag-box">施工内容</view>
+              <view class="log-content-text">{{ log.content }}</view>
+            </view>
+
+            <!-- 明日计划 -->
+            <view class="log-content-row" v-if="log.tomorrow_plan">
+              <view class="log-tag-box">明日计划</view>
+              <view class="log-content-text">{{ log.tomorrow_plan }}</view>
+            </view>
+
+            <!-- 备注 -->
+            <view class="log-content-row" v-if="log.note">
+              <view class="log-tag-box">备注</view>
+              <view class="log-content-text">{{ log.note }}</view>
+            </view>
+
+            <!-- 图片 -->
+            <view class="log-photos" v-if="getLogPhotos(log).length">
+              <view
+                class="log-photo"
+                v-for="(photo, idx) in getLogPhotos(log)"
+                :key="idx"
+                @click="previewLogPhoto(log, idx)"
+              >
+                <image class="log-photo-img" :src="photo" mode="aspectFill" />
+              </view>
+            </view>
           </view>
         </view>
       </view>
@@ -59,6 +101,8 @@ function fetchLogs() {
     success: (res) => {
       if (Array.isArray(res.data)) {
         logs.value = res.data;
+      } else if (res.data?.data?.list) {
+        logs.value = res.data.data.list;
       } else {
         logs.value = [];
       }
@@ -72,10 +116,50 @@ function fetchLogs() {
   });
 }
 
-function formatDate(dateStr) {
+// 获取日志图片（处理双重编码的JSON字符串）
+function getLogPhotos(log) {
+  if (!log.images) return [];
+  try {
+    let photosStr = log.images;
+    let parsed = JSON.parse(photosStr);
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+    if (Array.isArray(parsed)) {
+      return parsed.filter(p => p && p.trim());
+    }
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 预览日志图片
+function previewLogPhoto(log, idx) {
+  const photos = getLogPhotos(log);
+  uni.previewImage({ urls: photos, current: photos[idx] });
+}
+
+// 施工日志日期格式化 - 日
+function formatDay(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return String(d.getDate()).padStart(2, '0');
+}
+
+// 施工日志日期格式化 - 月
+function formatMonth(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  return months[d.getMonth()];
+}
+
+// 施工日志完整时间
+function formatFullTime(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 const goBack = () => {
@@ -120,6 +204,7 @@ const goBack = () => {
   width: 40px;
 }
 
+/* 日志列表 */
 .log-list {
   padding: 16px;
   height: calc(100vh - 120px);
@@ -148,51 +233,134 @@ const goBack = () => {
   color: #9CA3AF;
 }
 
+/* 日志卡片 */
 .log-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
   background: #fff;
   border-radius: 12px;
   padding: 14px;
-  margin-bottom: 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  margin-bottom: 12px;
 }
 
-.log-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.log-row-first {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.log-user-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.log-user-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-tags-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.log-tag-icon {
+  font-size: 13px;
+  color: #1E3A5F;
+  background: #E8F4FF;
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.log-date-bar {
+  width: 56px;
+  height: 56px;
   background: #1E3A5F;
-  margin-top: 6px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
   flex-shrink: 0;
 }
 
-.log-content {
-  flex: 1;
+.log-date-day {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
 }
 
-.log-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
+.log-date-month {
+  font-size: 10px;
+  color: rgba(255,255,255,0.8);
+  margin-top: 2px;
 }
 
-.log-date {
+.log-operator {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1E3A5F;
+}
+
+.log-time {
   font-size: 12px;
   color: #9CA3AF;
 }
 
-.log-author {
-  font-size: 13px;
-  color: #1E3A5F;
-  font-weight: 600;
+.log-content-area {
+  /* 标签从最左边（日期卡片列）开始 */
 }
 
-.log-text {
+.log-content-row {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+  gap: 0;
+}
+
+.log-content-text {
+  flex: 1;
   font-size: 14px;
-  color: #1A1F36;
+  color: #333;
   line-height: 1.5;
+  word-break: break-all;
+  text-align: left;
+  padding-left: 12px;
+}
+
+.log-tag-box {
+  background: rgba(217, 246, 0, 0.11);
+  color: #1E3A5F;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  min-width: 52px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* 图片网格：每排5个正方形 */
+.log-photos {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.log-photo {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.log-photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 </style>

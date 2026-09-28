@@ -120,8 +120,8 @@ const myWork = computed(() => {
   const base = [
     { label: '我的项目', icon: '📁', bg: '#DBEAFE', url: '/pages/projects/list' },
     { label: '我的派工', icon: '👷', bg: '#FEF3C7', url: '/pages/dispatch/list' },
-    { label: '我的巡检', icon: '🔍', bg: '#FEE2E2', url: '/pages/inspection/list' },
-    { label: '施工日志', icon: '📝', bg: '#D1FAE5', url: '/pages/projects/logs' },
+    { label: '我的日志', icon: '📝', bg: '#D1FAE5', url: '/pages/mine/my-logs' },
+    { label: '我的巡检', icon: '🔍', bg: '#FEE2E2', url: '/pages/mine/my-inspections' },
   ];
   if (role === '财务') {
     return [{ label: '收支管理', icon: '💰', bg: '#DBEAFE', url: '/pages/finance/list' }];

@@ -129,9 +129,11 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
+import { useUserStore } from "@/stores/user";
 
 const project = ref({});
 const projectId = ref(0);
+const userStore = useUserStore();
 
 // 设置模式
 const settingMode = ref(false);
@@ -338,9 +340,15 @@ const fetchDetail = async () => {
   try {
     uni.showLoading({ title: "加载中..." });
     const token = uni.getStorageSync("token");
+    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
       url: "/api/projects",
-      header: { Authorization: token },
+      header: { 
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+
+      },
     });
     uni.hideLoading();
     const data = res.data;
