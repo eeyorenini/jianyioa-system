@@ -68,8 +68,10 @@
         <el-sub-menu index="material-group">
           <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
           <el-menu-item index="/main-materials">主材管理</el-menu-item>
+          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
           <el-menu-item index="/warehouse">仓库管理</el-menu-item>
           <el-menu-item index="/material-orders">采购订单</el-menu-item>
+          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="approval-group">
           <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
@@ -140,8 +142,10 @@
         <el-sub-menu index="material-group">
           <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
           <el-menu-item index="/main-materials">主材管理</el-menu-item>
+          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
           <el-menu-item index="/warehouse">仓库管理</el-menu-item>
           <el-menu-item index="/material-orders">采购订单</el-menu-item>
+          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="approval-group">
           <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
