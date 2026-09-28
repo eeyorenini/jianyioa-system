@@ -68,8 +68,10 @@
         <el-sub-menu index="material-group">
           <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
           <el-menu-item index="/main-materials">主材管理</el-menu-item>
+          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
           <el-menu-item index="/warehouse">仓库管理</el-menu-item>
           <el-menu-item index="/material-orders">采购订单</el-menu-item>
+          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="approval-group">
           <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
@@ -94,7 +96,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.19</div>
+      <div class="sidebar-version">v 2.1.21</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -140,8 +142,10 @@
         <el-sub-menu index="material-group">
           <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
           <el-menu-item index="/main-materials">主材管理</el-menu-item>
+          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
           <el-menu-item index="/warehouse">仓库管理</el-menu-item>
           <el-menu-item index="/material-orders">采购订单</el-menu-item>
+          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
         </el-sub-menu>
         <el-sub-menu index="approval-group">
           <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
@@ -166,7 +170,7 @@
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.19</div>
+      <div class="sidebar-version">v 2.1.21</div>
     </div>
     
     <!-- 主内容区 -->
