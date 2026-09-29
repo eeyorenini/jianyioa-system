@@ -513,6 +513,8 @@ onMounted(async () => {
   padding: 14px 0;
   border-radius: 10px;
   letter-spacing: 2px;
+  margin: 0 auto;
+  width: 90%;
 }
 
 .btn-submit.loading {

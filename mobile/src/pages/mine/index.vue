@@ -144,7 +144,13 @@ const getRoleClass = (role) => {
 
 const goPage = (url) => {
   if (url.startsWith('/pages')) {
-    uni.navigateTo({ url });
+    // tabbar页面用switchTab
+    const tabbarPages = ['/pages/dispatch/list', '/pages/home/index', '/pages/mine/index']
+    if (tabbarPages.some(p => url.startsWith(p))) {
+      uni.switchTab({ url })
+    } else {
+      uni.navigateTo({ url })
+    }
   }
 };
 

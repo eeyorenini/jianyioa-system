@@ -7,7 +7,6 @@
       <text class="nav-add" @click="goAdd">+</text>
     </view>
 
-    <view class="page-title">客户管理</view>
     <view class="list">
       <view
         class="list-item"

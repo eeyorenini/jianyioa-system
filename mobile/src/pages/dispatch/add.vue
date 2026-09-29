@@ -4,204 +4,299 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">新建派工单</text>
-      <view class="nav-placeholder"></view>
+      <text class="nav-btn" @click="submit" :class="{ disabled: submitting }">提交</text>
     </view>
+
+    <!-- 项目信息横幅 -->
     <view class="project-banner" v-if="projectName">
       📁 {{ projectName }}
     </view>
+
+    <!-- 表单 -->
     <view class="form-card">
+      <view class="form-section-title">基本信息</view>
+
+      <!-- 项目选择 -->
       <view class="form-item">
-        <view class="form-label">施工内容 *</view>
-        <input class="form-input" v-model="form.content" placeholder="描述施工内容" />
+        <text class="form-label">项目</text>
+        <view class="picker-value" :class="{ placeholder: !selectedProject }" @click="showProjectPicker">
+          {{ selectedProject?.name || '请选择项目' }}
+          <text class="arrow">›</text>
+        </view>
       </view>
 
+      <!-- 施工内容 -->
       <view class="form-item">
-        <view class="form-label">施工地点</view>
-        <input class="form-input" v-model="form.location" placeholder="如：主卧" />
+        <text class="form-label">施工内容 *</text>
+        <view class="picker-value" :class="{ placeholder: !selectedWork }" @click="showWorkPicker">
+          {{ selectedWork || '请选择施工内容' }}
+          <text class="arrow">›</text>
+        </view>
       </view>
 
-      <view class="form-item">
-        <view class="form-label">指派工人/班组</view>
-        <input class="form-input" v-model="form.worker" placeholder="输入工人姓名或班组" />
+      <!-- 施工内容快捷选项 -->
+      <view class="work-chips-wrap">
+        <view class="work-chips">
+          <view
+            v-for="work in workTypes"
+            :key="work"
+            class="work-chip"
+            :class="{ active: selectedWork === work }"
+            @click="onWorkChipClick(work)"
+          >{{ work }}</view>
+        </view>
       </view>
 
+      <!-- 施工地点 -->
       <view class="form-item">
-        <view class="form-label">约定工费</view>
+        <text class="form-label">施工地点</text>
+        <input class="form-input" v-model="form.location" placeholder="自动填入项目地址，可修改" />
+      </view>
+
+      <!-- 约定工费 -->
+      <view class="form-item">
+        <text class="form-label">约定工费</text>
         <input class="form-input" v-model="form.fee" type="number" placeholder="¥0" />
       </view>
 
+      <!-- 施工开始时间 -->
       <view class="form-item">
-        <view class="form-label">施工开始时间</view>
-        <input class="form-input" v-model="form.start_date" type="date" />
+        <text class="form-label">施工开始时间</text>
+        <picker mode="date" :value="form.start_date" @change="onStartDateChange">
+          <view class="picker-value" :class="{ placeholder: !form.start_date }">
+            {{ form.start_date || '请选择日期' }}
+            <text class="arrow">›</text>
+          </view>
+        </picker>
       </view>
 
-      <view class="form-item">
-        <view class="form-label">施工要求</view>
-        <textarea class="form-textarea" v-model="form.requirement" placeholder="补充施工要求..."></textarea>
+      <!-- 施工要求 -->
+      <view class="form-item form-item-top">
+        <text class="form-label">施工要求</text>
+        <textarea class="form-textarea" v-model="form.requirement" placeholder="补充施工要求..." rows="3" />
       </view>
     </view>
 
-    <view class="submit-bar">
-      <view class="btn btn-primary btn-block" @click="submit">提交派工</view>
-    </view>
+    <!-- 项目选择弹窗 -->
+    <BottomPicker
+      v-model:visible="projectPicker.visible"
+      :title="projectPicker.title"
+      :items="projectPicker.items"
+      @select="onProjectSelect"
+      @cancel="projectPicker.visible = false"
+    />
+    <!-- 施工内容选择弹窗 -->
+    <BottomPicker
+      v-model:visible="workPicker.visible"
+      :title="workPicker.title"
+      :items="workPicker.items"
+      @select="onWorkSelect"
+      @cancel="workPicker.visible = false"
+    />
   </view>
 </template>
 
-<script setup >
-import { ref, reactive, onMounted } from "vue";
+<script setup>
+import { ref, onMounted } from 'vue'
+import BottomPicker from '@/components/bottom-picker.vue'
 
-const projectId = ref(0);
-const projectName = ref('');
+const selectedProject = ref(null)
+const selectedWork = ref('')
+const submitting = ref(false)
 
-const form = reactive({
+const form = ref({
+  project_id: '',
+  project_name: '',
   content: '',
   location: '',
   worker: '',
   fee: '',
   start_date: '',
   requirement: '',
-});
+})
 
-const submit = async () => {
-  if (!form.content.trim()) {
-    uni.showToast({ title: '请填写施工内容', icon: 'none' }); return;
-  }
-  try {
-    const token = uni.getStorageSync("token");
-    await uni.request({
-      url: "/api/dispatches",
-      method: "POST",
-      header: { Authorization: token, 'Content-Type': 'application/json' },
-      data: { project_id: projectId.value, project_name: projectName.value, ...form },
-    });
-    uni.showToast({ title: '派工单已创建', icon: 'success' });
-    uni.$emit('dispatch-refresh');
-    setTimeout(() => uni.navigateBack(), 1500);
-  } catch (e) {
-    uni.showToast({ title: '提交失败', icon: 'none' });
-  }
-};
+const projectPicker = ref({ visible: false, title: '选择项目', items: [] })
+const workPicker = ref({ visible: false, title: '选择施工内容', items: [] })
 
-onMounted(async () => {
-  const pages = getCurrentPages();
-  const current = pages[pages.length - 1];
-  const options = (current).options || {};
-  projectId.value = parseInt(options.projectId || '0');
-  if (options.projectName) {
-    projectName.value = decodeURIComponent(options.projectName);
-  }
-  if (projectId.value && !projectName.value) {
-    try {
-      const token = uni.getStorageSync('token');
-      const res = await uni.request({ url: '/api/projects', header: { Authorization: token } });
-      const data = (res.data) || [];
-      const p = Array.isArray(data) ? data.find((x) => x.id === projectId.value) : null;
-      if (p) projectName.value = p.name;
-    } catch (e) {}
-  }
-});
+// 施工内容快捷选项（用于点击，也作为底部选择器数据）
+const workTypes = [
+  '水电改造', '防水工程', '瓦工贴砖', '水泥砂浆',
+  '木工吊顶', '油漆工', '地板铺设', '门窗安装',
+  '保洁开荒', '垃圾清运', '灯具安装', '开关插座',
+  '全屋定制', '甲醛治理', '竣工验收', '其他工程',
+]
 
+let projectList = []
 
-const goBack = () => {
-  uni.navigateBack();
-};
+onMounted(() => {
+  // 加载项目列表
+  uni.request({
+    url: '/api/projects',
+    data: { limit: 500 },
+    success: (res) => {
+      if (Array.isArray(res.data)) {
+        projectList = res.data
+      } else if (res.data.code === 0) {
+        projectList = res.data.data?.list || res.data.list || []
+      } else {
+        projectList = []
+      }
+    }
+  })
+
+  // 从 URL 参数读取项目信息（从项目详情页跳转来）
+  const pages = getCurrentPages()
+  const current = pages[pages.length - 1]
+  const options = current.options || {}
+
+  if (options.projectId) {
+    form.value.project_id = parseInt(options.projectId)
+    form.value.project_name = options.projectName ? decodeURIComponent(options.projectName) : ''
+    form.value.location = options.projectAddress ? decodeURIComponent(options.projectAddress) : ''
+    selectedProject.value = { id: form.value.project_id, name: form.value.project_name }
+  }
+})
+
+const showProjectPicker = () => {
+  projectPicker.value = {
+    visible: true,
+    title: '选择项目',
+    items: projectList.map((p, i) => ({ name: p.name, icon: '📁', _index: i })),
+  }
+}
+
+const onProjectSelect = ({ item }) => {
+  const idx = item._index
+  const p = projectList[idx]
+  selectedProject.value = p
+  form.value.project_id = p.id
+  form.value.project_name = p.name
+  // 自动填入项目地址
+  if (p.customer_address || p.address) {
+    form.value.location = p.customer_address || p.address
+  }
+  projectPicker.value.visible = false
+}
+
+const showWorkPicker = () => {
+  workPicker.value = {
+    visible: true,
+    title: '选择施工内容',
+    items: workTypes.map((w, i) => ({ name: w, icon: '🔧', _index: i })),
+  }
+}
+
+const onWorkSelect = ({ item }) => {
+  const work = workTypes[item._index]
+  selectedWork.value = work
+  form.value.content = work
+  workPicker.value.visible = false
+}
+
+const onWorkChipClick = (work) => {
+  selectedWork.value = work
+  form.value.content = work
+}
+
+const onStartDateChange = (e) => {
+  form.value.start_date = e.detail.value
+}
+
+function goBack() { uni.navigateBack() }
+
+function submit() {
+  console.log('submit 按钮被点击了')
+  if (!form.value.project_id) { uni.showToast({ title: '请选择项目', icon: 'none' }); return }
+  if (!form.value.content.trim()) { uni.showToast({ title: '请选择施工内容', icon: 'none' }); return }
+
+  submitting.value = true
+  console.log('开始发送请求')
+
+  const userId = uni.getStorageSync('userInfo')?.id || ''
+  console.log('userId:', userId)
+
+  uni.request({
+    url: '/api/dispatches',
+    method: 'POST',
+    header: { 'x-user-id': userId },
+    data: {
+      project_id: form.value.project_id,
+      project_name: form.value.project_name,
+      content: form.value.content,
+      location: form.value.location,
+      worker: form.value.worker,
+      fee: form.value.fee || 0,
+      start_date: form.value.start_date,
+      requirement: form.value.requirement,
+    },
+    success: function(res) {
+      console.log('请求成功, statusCode:', res.statusCode, 'data:', JSON.stringify(res.data))
+      submitting.value = false
+      if (res.data.code === 0 || res.data.code === undefined) {
+        uni.showToast({ title: '提交成功', icon: 'success' })
+        uni.$emit('dispatch-refresh')
+        setTimeout(function() { uni.navigateBack() }, 1500)
+      } else {
+        console.log('业务错误:', res.data.msg || res.data.error)
+        uni.showToast({ title: res.data.msg || res.data.error || '提交失败', icon: 'none' })
+      }
+    },
+    fail: function(err) {
+      console.log('请求失败:', JSON.stringify(err))
+      submitting.value = false
+      uni.showToast({ title: '网络错误', icon: 'none' })
+    }
+  })
+}
 </script>
 
-<style scoped>
-.page {
-  min-height: 100vh;
-  background: #F5F7FA;
-  padding-bottom: 100px;
+<style lang="scss" scoped>
+.page { min-height: 100vh; background: #f5f5f5; padding-bottom: 120rpx; }
+.form-card { margin: 20rpx; background: #fff; border-radius: 16rpx; padding: 30rpx; }
+.form-section-title { font-size: 28rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 24rpx; }
+.form-item {
+  display: flex; align-items: flex-start;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
 }
+.form-item:last-child { border-bottom: none; }
+.form-item-top { align-items: flex-start; }
+.form-label { width: 160rpx; font-size: 26rpx; color: #666; flex-shrink: 0; padding-top: 6rpx; }
+.form-input { flex: 1; font-size: 28rpx; color: #333; }
+.form-textarea { flex: 1; font-size: 28rpx; color: #333; border: 1rpx solid #eee; border-radius: 8rpx; padding: 16rpx; resize: none; }
+.picker-value {
+  flex: 1; font-size: 28rpx; color: #333;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.picker-value.placeholder { color: #999; }
+.arrow { font-size: 18px; color: #ccc; }
 
+/* 施工内容快捷选项 */
+.work-chips-wrap { padding: 0 0 16rpx 160rpx; }
+.work-chips {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.work-chip {
+  padding: 5px 14px; background: #F3F4F6;
+  border-radius: 18px; font-size: 13px; color: #6B7280;
+}
+.work-chip.active { background: #1E3A5F; color: #fff; }
+
+/* 项目横幅 */
 .project-banner {
-  font-size: 13px;
-  color: #1E3A5F;
-  background: #DBEAFE;
-  padding: 8px 14px;
-  font-weight: 500;
+  font-size: 13px; color: #1E3A5F;
+  background: #DBEAFE; padding: 8px 14px; font-weight: 500;
 }
 
-
-
-.form-card {
-  background: #fff;
-  border-radius: 14px;
-  padding: 16px;
-  margin-bottom: 12px;
-}
-
-.form-item { margin-bottom: 16px; }
-.form-item:last-child { margin-bottom: 0; }
-
-.form-label {
-  font-size: 13px;
-  color: #374151;
-  font-weight: 500;
-  margin-bottom: 8px;
-  display: block;
-}
-
-.form-input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1.5px solid #E5E7EB;
-  border-radius: 8px;
-  font-size: 14px;
-  min-height: 44px;
-  box-sizing: border-box;
-}
-
-.form-textarea {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1.5px solid #E5E7EB;
-  border-radius: 8px;
-  font-size: 14px;
-  min-height: 100px;
-  resize: none;
-  box-sizing: border-box;
-}
-
-.submit-bar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 12px 16px;
-  background: #fff;
-  box-shadow: 0 -2px 12px rgba(0,0,0,0.06);
-  z-index: 100;
-}
 /* 导航栏 */
 .nav-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #1E3A5F;
-  color: #fff;
-  padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  background: #1E3A5F; color: #fff; padding: 12px 16px;
   padding-top: max(12px, env(safe-area-inset-top));
-  position: sticky;
-  top: 0;
-  z-index: 100;
+  position: sticky; top: 0; z-index: 100;
 }
-
-.nav-back {
-  font-size: 28px;
-  font-weight: 300;
-  width: 40px;
-}
-
-.nav-title {
-  flex: 1;
-  text-align: center;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-.nav-placeholder {
-  width: 40px;
-}
-
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+.nav-btn { font-size: 15px; color: #fff; width: 40px; text-align: right; }
+.nav-btn.disabled { opacity: 0.5; }
 </style>

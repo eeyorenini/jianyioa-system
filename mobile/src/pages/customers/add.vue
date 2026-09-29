@@ -60,7 +60,17 @@
 
         <view class="form-item">
           <text class="label">所在地区</text>
-          <input class="input" v-model="form.area" placeholder="如：朝阳区" />
+          <input class="input" v-model="form.area" placeholder="如：密云区" />
+          <!-- 区域快捷选项 -->
+          <view class="area-chips">
+            <view
+              v-for="area in areaOptions"
+              :key="area"
+              class="area-chip"
+              :class="{ active: form.area === area }"
+              @click="form.area = area"
+            >{{ area }}</view>
+          </view>
         </view>
 
         <view class="form-item">
@@ -115,7 +125,7 @@ const form = ref({
   source: '',
   status: '新客户',
   level: '普通',
-  area: '',
+  area: '密云区',
   address: '',
   budget: '',
   demand: '',
@@ -126,6 +136,7 @@ const phoneError = ref('');
 const sourceOptions = ['自然进店', '电话咨询', '抖音', '微信', '朋友推荐', '小区推广', '展会', '其他'];
 const levelOptions = ['普通', '重点', 'VIP'];
 const statusOptions = ['新客户', '跟进中', '已预约', '已量房', '已出方案', '已成交', '已签约'];
+const areaOptions = ['密云', '怀柔', '顺义', '通州'];
 
 // 装修需求快捷标签
 const demandTags = [
@@ -221,9 +232,7 @@ const doSubmit = async () => {
     uni.hideLoading();
     if (res.data.id || res.data.message === '添加成功') {
       uni.showToast({ title: '添加成功', icon: 'success' });
-      setTimeout(() => {
-        uni.navigateBack();
-      }, 1500);
+      // 不跳转，留在原地
     } else if (res.data.exists) {
       uni.showModal({
         title: '客户已存在',
@@ -378,6 +387,27 @@ const goBack = () => {
   font-size: 12px;
   color: #ff4d4f;
   margin-top: 4px;
+}
+
+/* 区域快捷选项 */
+.area-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.area-chip {
+  padding: 5px 14px;
+  background: #f0f0f0;
+  border-radius: 16px;
+  font-size: 12px;
+  color: #666;
+}
+
+.area-chip.active {
+  background: #1E3A5F;
+  color: #fff;
 }
 
 /* 需求标签 */

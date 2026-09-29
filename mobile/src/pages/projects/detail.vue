@@ -611,7 +611,7 @@ const goInspectDetail = (issue) => {
 };
 
 const goDispatchAdd = () => {
-  uni.navigateTo({ url: `/pages/dispatch/add?projectId=${projectId.value}` });
+  uni.navigateTo({ url: `/pages/dispatch/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}&projectAddress=${encodeURIComponent(project.value.customer_address || project.value.address || '')}` });
 };
 
 const goMaterial = () => {
