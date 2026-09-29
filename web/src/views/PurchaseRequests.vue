@@ -3,12 +3,19 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <el-tabs v-model="activeTab" @tab-change="onTabChange">
-            <el-tab-pane label="我的申请" name="my" />
-            <el-tab-pane v-if="canApprove" label="待审核" name="pending" />
-            <el-tab-pane v-if="canFinance" label="待报销" name="reimbursing" />
-            <el-tab-pane v-if="canViewAll" label="全部记录" name="all" />
-          </el-tabs>
+          <!-- 自定义 Tab 栏 -->
+          <div class="pr-tabs">
+            <div
+              v-for="tab in visibleTabs"
+              :key="tab.key"
+              class="pr-tab"
+              :class="{ active: activeTab === tab.key }"
+              @click="switchTab(tab.key)"
+            >
+              {{ tab.label }}
+              <span v-if="tab.badge" class="pr-tab-badge">{{ tab.badge }}</span>
+            </div>
+          </div>
           <el-button v-if="activeTab === 'my'" type="primary" @click="openCreateDialog">
             <el-icon><Plus /></el-icon> 提交采购申请
           </el-button>
@@ -53,6 +60,7 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" @click.stop="openDetail(row)">详情</el-button>
+            <el-button v-if="activeTab === 'my' && (row._isAdmin || row._isApplicant) && (row.status === 'pending' || row.status === 'rejected')" size="small" type="danger" @click.stop="deleteRow(row)">删除</el-button>
             <el-button v-if="row._canApprove && row.status === 'pending'" size="small" type="success" @click.stop="showApproveDialog(row)">审核</el-button>
             <el-button v-if="row._isApplicant && row.status === 'approved'" size="small" type="warning" @click.stop="showReimburseDialog(row)">上传报销</el-button>
             <el-button v-if="row._canFinance && row.status === 'reimbursing'" size="small" type="success" @click.stop="showFinanceDialog(row)">确认报销</el-button>
@@ -307,6 +315,11 @@ const canApprove = ref(false)
 const canFinance = ref(false)
 const canViewAll = ref(false)
 
+// Badge 数量
+const pendingCount = ref(0)
+const reimburseCount = ref(0)
+const financeCount = ref(0)
+
 // 创建表单
 const createVisible = ref(false)
 const formRef = ref()
@@ -385,11 +398,16 @@ async function loadData() {
       res = await request.get(url + '&status=reimbursing')
       list.value = res.list || []
       total.value = res.total || 0
+    } else if (activeTab.value === 'finance') {
+      res = await request.get('/purchase-requests/finance?page=' + page.value + '&limit=' + limit.value)
+      list.value = res.list || []
+      total.value = res.total || 0
     } else {
       res = await request.get(url)
       list.value = res.list || []
       total.value = res.total || 0
     }
+    loadCounts()
   } catch (e) {
     console.error(e)
   } finally {
@@ -397,10 +415,41 @@ async function loadData() {
   }
 }
 
-function onTabChange() {
+// 加载 Badge 数量
+async function loadCounts() {
+  if (!canApprove.value && !canFinance.value) return
+  try {
+    if (canApprove.value) {
+      const r = await request.get('/purchase-requests?status=pending&limit=1')
+      pendingCount.value = r.total || 0
+    }
+    if (canFinance.value) {
+      const [r1, r2] = await Promise.all([
+        request.get('/purchase-requests?status=reimbursing&limit=1'),
+        request.get('/purchase-requests/finance?limit=1')
+      ])
+      reimburseCount.value = r1.total || 0
+      financeCount.value = r2.total || 0
+    }
+  } catch {}
+}
+
+function switchTab(key) {
+  activeTab.value = key
   page.value = 1
+  filterStatus.value = ''
   loadData()
 }
+
+const visibleTabs = computed(() => {
+  const all = [
+    { key: 'my', label: '我的申请', badge: null },
+    { key: 'pending', label: '待审核', badge: pendingCount.value || null },
+    { key: 'reimbursing', label: '待报销', badge: reimburseCount.value || null },
+    { key: 'finance', label: '财务确认', badge: financeCount.value || null },
+  ]
+  return all
+})
 
 // 打开详情
 async function openDetail(row) {
@@ -520,6 +569,24 @@ async function handleDelete() {
     detailVisible.value = false
     loadData()
   } catch (e) { if (e !== 'cancel') console.error(e) }
+}
+
+// 删除
+async function deleteRow(row) {
+  try {
+    await ElMessageBox.confirm('确定删除该采购申请吗？', '删除确认', { type: 'warning' })
+  } catch { return }
+  submitting.value = true
+  try {
+    await request.delete('/purchase-requests/' + row.id)
+    ElMessage.success('删除成功')
+    loadData()
+    detailVisible.value = false
+  } catch (e) {
+    ElMessage.error(e.message || '删除失败')
+  } finally {
+    submitting.value = false
+  }
 }
 
 // 审核
@@ -642,4 +709,29 @@ onMounted(async () => {
 .purchase-requests { padding: 20px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .filter-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pr-tabs { display: flex; gap: 4px; }
+.pr-tab {
+  padding: 6px 16px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #666;
+  position: relative;
+  user-select: none;
+  border-bottom: 2px solid transparent;
+}
+.pr-tab:hover { color: #409eff; }
+.pr-tab.active { color: #409eff; border-bottom-color: #409eff; font-weight: 500; }
+.pr-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #f56c6c;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  padding: 1px 6px;
+  min-width: 18px;
+  text-align: center;
+}
 </style>

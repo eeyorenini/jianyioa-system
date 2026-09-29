@@ -26,7 +26,12 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 // ================================================================
 // 全局系统日志中间件 — 记录所有数据交互（POST/PUT/DELETE）
 // ================================================================
+let systemLogStmt = null;
+let systemLogTableChecked = false;
+
 async function ensureSystemLogTable() {
+  if (systemLogTableChecked) return;
+  systemLogTableChecked = true;
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS system_logs (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -48,6 +53,8 @@ async function ensureSystemLogTable() {
       INDEX idx_path (path(100)),
       INDEX idx_success (success)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    systemLogStmt = pool.format('INSERT INTO system_logs (method, path, query, body, user_id, username, ip_address, user_agent, status_code, response_time, error_message, success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
+      ['', '', '', '', null, '', '', '', null, null, '', 1]);
   } catch (e) { console.log('system_logs init error:', e.message); }
 }
 
@@ -176,6 +183,16 @@ async function initDatabase() {
       for (const sql of riMigrations) {
         try { await pool.query(sql); console.log('✅ 迁移成功:', sql.slice(0, 60)); } catch (_) { /* 字段已存在 */ }
       }
+
+      // 字段迁移：main_materials 加供应商关联字段
+      try {
+        await pool.query(`ALTER TABLE main_materials ADD COLUMN supplier_id INT DEFAULT NULL`);
+        console.log('✅ 字段迁移：main_materials.supplier_id 添加成功');
+      } catch (_) { /* 字段已存在 */ }
+      try {
+        await pool.query(`ALTER TABLE main_materials ADD COLUMN supplier_name VARCHAR(100) DEFAULT ''`);
+        console.log('✅ 字段迁移：main_materials.supplier_name 添加成功');
+      } catch (_) { /* 字段已存在 */ }
 
       // 建表迁移：确保 system_logs 表存在（全新建表语句，已存在则忽略）
       const createSystemLogs = `CREATE TABLE IF NOT EXISTS system_logs (
@@ -463,6 +480,7 @@ app.put('/api/family-members/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 const defaultPermissions = [
   { name: '数据看板', code: 'dashboard', path: '/dashboard', icon: 'DataAnalysis', sort_order: 1 },
@@ -1125,6 +1143,7 @@ app.get('/api/customer-follow/:customerId', async (req, res) => {
 });
 
 app.post('/api/customer-follow', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { customer_id, follow_type, content, follow_date, next_date } = req.body;
@@ -1136,6 +1155,7 @@ app.post('/api/customer-follow', async (req, res) => {
 });
 
 app.get('/api/contracts', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const userRole = req.headers['x-user-role'] || '';
@@ -1185,6 +1205,7 @@ app.get('/api/contracts', async (req, res) => {
 });
 
 app.get('/api/contracts/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const userRole = req.headers['x-user-role'] || '';
@@ -1238,6 +1259,7 @@ async function generateContractNo() {
 }
 
 app.post('/api/contracts', checkPermission('contract:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   console.log('=== POST /api/contracts 收到请求 ===');
@@ -1340,6 +1362,7 @@ app.post('/api/contracts', checkPermission('contract:write'), async (req, res) =
 });
 
 app.put('/api/contracts/:id', checkPermission('contract:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const editUserId = getUserId(req);
   const { contract_no, customer_id, project_name, customer_name, customer_phone, customer_address, id_card, engineering_address, total_amount, design_fee, manager_fee, tax_amount, area, start_date, end_date, status, sign_date, decoration_style, payment1, payment2, payment3, guarantee_period, dispute_court, content, attachment, category, custom_fields } = req.body;
@@ -1394,6 +1417,7 @@ app.delete('/api/contracts/:id', checkPermission('contract:delete'), async (req,
 
 // ==================== 签约人管理 ====================
 app.get('/api/signers', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { keyword } = req.query;
@@ -1411,6 +1435,7 @@ app.get('/api/signers', async (req, res) => {
 });
 
 app.post('/api/signers', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, phone, id_card, remark } = req.body;
@@ -1433,6 +1458,7 @@ app.post('/api/signers', async (req, res) => {
 });
 
 app.put('/api/signers/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, phone, id_card, remark } = req.body;
@@ -1453,6 +1479,7 @@ app.put('/api/signers/:id', async (req, res) => {
 });
 
 app.delete('/api/signers/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   try {
@@ -1598,6 +1625,7 @@ app.post('/api/upload-pdf', upload.single('file'), (req, res) => {
 
 app.get('/api/contract-templates', async (req, res) => {
   const { template_type } = req.query;
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const userRole = req.headers['x-user-role'] || '';
@@ -1648,13 +1676,19 @@ const getUserId = (req) => {
   return 0;
 };
 
+
+// Promise 超时辅助函数
+const promiseTimeout = (ms, promise) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('查询超时')), ms))]);
+
 const isAdmin = async (userId) => {
   if (!userId) return false;
   try {
-    // 获取用户信息和角色
-    const user = await db.prepare('SELECT e.*, r.code as role_code FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?').get(userId);
+    // 获取用户信息和角色（5秒超时，防止数据库慢查询卡死所有接口）
+    const user = await promiseTimeout(5000, db.prepare('SELECT e.*, r.code as role_code FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?').get(userId));
     return user && user.role_code === 'admin';
   } catch (e) {
+    console.error('isAdmin 查询失败:', e.message);
     return false;
   }
 };
@@ -1663,15 +1697,15 @@ const isAdmin = async (userId) => {
 const userPermCache = new Map();
 const PERM_CACHE_TTL = 30000;
 
-// 获取用户权限数组
+// 获取用户权限数组（5秒超时，防止数据库慢查询卡死所有接口）
 async function getUserPermissions(userId) {
   if (!userId) return [];
   const cached = userPermCache.get(userId);
   if (cached && Date.now() - cached.ts < PERM_CACHE_TTL) return cached.perms;
   try {
-    const [emp] = await db.prepare('SELECT role_id FROM employees WHERE id = ?').all(userId);
+    const emp = await promiseTimeout(5000, db.prepare('SELECT role_id FROM employees WHERE id = ?').get(userId));
     if (!emp?.role_id) return [];
-    const [role] = await db.prepare('SELECT permissions FROM roles WHERE id = ?').all(emp.role_id);
+    const role = await promiseTimeout(5000, db.prepare('SELECT permissions FROM roles WHERE id = ?').get(emp.role_id));
     let perms = [];
     if (role?.permissions) {
       if (typeof role.permissions === 'string') {
@@ -1682,7 +1716,10 @@ async function getUserPermissions(userId) {
     }
     userPermCache.set(userId, { perms, ts: Date.now() });
     return perms;
-  } catch { return []; }
+  } catch (e) {
+    console.error('getUserPermissions 查询失败:', e.message);
+    return [];
+  }
 }
 
 // 检查用户是否有指定模块的 read_all 权限
@@ -1701,20 +1738,31 @@ function clearUserPermCache(userId) {
 // permission 格式如 "employee:read", "contract:write"
 function checkPermission(permission) {
   return async (req, res, next) => {
-    const userId = getUserId(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    // 管理员跳过权限检查
-    if (await isAdmin(userId)) return next();
-    
-    const perms = await getUserPermissions(userId);
-    if (!Array.isArray(perms) || !perms.includes(permission)) {
-      return res.status(403).json({ error: '无此操作权限' });
+    try {
+      const userId = getUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: '未登录' });
+      }
+      const adminResult = await isAdmin(userId);
+      if (adminResult) {
+        return next();
+      }
+      const perms = await getUserPermissions(userId);
+      if (!Array.isArray(perms) || !perms.includes(permission)) {
+        return res.status(403).json({ error: '无此操作权限' });
+      }
+      next();
+    } catch (err) {
+      console.error('[checkPermission] 捕获到异常:', err.message, err.stack);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: '权限检查异常: ' + err.message });
+      }
     }
-    next();
   };
 }
 
 app.post('/api/contract-templates', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'] || req.body.user_id;
     
   const userId = getUserId(req);
   const { name, category, content, is_default, template_type, template_fields } = req.body;
@@ -1731,6 +1779,7 @@ app.post('/api/contract-templates', async (req, res) => {
 });
 
 app.put('/api/contract-templates/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'] || req.body.user_id;
     
   const userId = getUserId(req);
   const { name, category, content, is_default, template_type, template_fields } = req.body;
@@ -1753,6 +1802,7 @@ app.put('/api/contract-templates/:id', async (req, res) => {
 });
 
 app.delete('/api/contract-templates/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'] || req.body.user_id;
     
   const userId = getUserId(req);
   
@@ -1893,6 +1943,7 @@ app.get('/api/budgets', async (req, res) => {
 });
 
 app.post('/api/budgets', checkPermission('budget:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { customer_id, project_name, house_area, style, total_amount, profit_rate, status, items } = req.body;
@@ -1903,6 +1954,7 @@ app.post('/api/budgets', checkPermission('budget:write'), async (req, res) => {
 });
 
 app.delete('/api/budgets/:id', checkPermission('budget:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [b] = await db.prepare('SELECT category, creator_id FROM budgets WHERE id = ?').all(req.params.id);
@@ -1929,6 +1981,7 @@ app.get('/api/finance', async (req, res) => {
 });
 
 app.post('/api/finance', checkPermission('finance:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { type, amount, category, description, date, project_id } = req.body;
@@ -1939,6 +1992,7 @@ app.post('/api/finance', checkPermission('finance:write'), async (req, res) => {
 });
 
 app.delete('/api/finance/:id', checkPermission('finance:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [f] = await db.prepare('SELECT category, creator_id FROM finance WHERE id = ?').all(req.params.id);
@@ -1972,7 +2026,7 @@ app.get('/api/projects', async (req, res) => {
     const { customer_id, status, search } = req.query;
     const userId = getUserId(req);
     const userRole = req.headers['x-user-role'] || '';
-    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+    const userIsAdmin = userRole === 'admin' || userRole === '管理员' || userRole === '超级管理员' || userRole === '系统管理员';
     const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'project');
 
     let sql = `SELECT p.*, 
@@ -1993,8 +2047,8 @@ app.get('/api/projects', async (req, res) => {
       conditions.push('p.customer_id = ?');
       params.push(customer_id);
     } else if (!hasAll) {
-      // 非admin且无read_all权限时，只看自己创建的项目
-      conditions.push('p.creator_id = ?');
+      // 非admin且无read_all权限时，只看自己创建的项目（也包含creator_id为null的历史项目）
+      conditions.push('(p.creator_id = ? OR p.creator_id IS NULL)');
       params.push(userId);
     }
 
@@ -2142,6 +2196,7 @@ app.get('/api/project-stages', async (req, res) => {
 });
 
 app.post('/api/project-stages', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { project_id, node_name, plan_date, plan_end_date, status, progress, note, sms_template_id, after_node_id } = req.body;
@@ -2297,6 +2352,7 @@ app.get('/api/project-logs/:projectId', async (req, res) => {
 });
 
 app.post('/api/project-logs', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note } = req.body;
@@ -2411,6 +2467,7 @@ app.get('/api/quotes', async (req, res) => {
 });
 
 app.post('/api/quotes', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { customer_name, project_name, total_amount, status, items, valid_date } = req.body;
@@ -2421,6 +2478,7 @@ app.post('/api/quotes', async (req, res) => {
 });
 
 app.delete('/api/quotes/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [q] = await db.prepare('SELECT project_name, creator_id FROM quotes WHERE id = ?').all(req.params.id);
@@ -2447,6 +2505,7 @@ app.get('/api/materials', async (req, res) => {
 });
 
 app.post('/api/materials', checkPermission('warehouse:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { code, name, category, unit, quantity, price, cost_price, supplier, min_stock, location } = req.body;
@@ -2457,6 +2516,7 @@ app.post('/api/materials', checkPermission('warehouse:write'), async (req, res) 
 });
 
 app.put('/api/materials/:id', checkPermission('warehouse:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { code, name, category, unit, quantity, price, cost_price, supplier, min_stock, location } = req.body;
@@ -2471,6 +2531,7 @@ app.put('/api/materials/:id', checkPermission('warehouse:write'), async (req, re
 });
 
 app.delete('/api/materials/:id', checkPermission('warehouse:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [m] = await db.prepare('SELECT name, creator_id FROM materials WHERE id = ?').all(req.params.id);
@@ -2484,6 +2545,7 @@ app.delete('/api/materials/:id', checkPermission('warehouse:delete'), async (req
 });
 
 app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { material_id, quantity, unit_price, supplier, operator, note, date } = req.body;
@@ -2532,6 +2594,7 @@ app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, re
 });
 
 app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
   const userId = getUserId(req);
   const { material_id, quantity, project_id, operator, note, date } = req.body;
 
@@ -2588,7 +2651,7 @@ app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, r
 });
 
 app.get('/api/main-materials', async (req, res) => {
-  const { keyword = '', category = '', page = 1, limit = 20 } = req.query;
+  const { keyword = '', category = '', page = 1, limit = 20, project_id = '' } = req.query;
   const userId = getUserId(req);
   const userRole = req.headers['x-user-role'] || '';
   const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
@@ -2599,8 +2662,44 @@ app.get('/api/main-materials', async (req, res) => {
 
   const conditions = [];
   const params = [];
+
+  // project_id 模式下：查某项目使用的主材及用量（不限制权限，普通员工也能查）
+  if (project_id) {
+    // 直接返回所有主材（采购目录），带上该项目已用量
+    let sql = `
+      SELECT m.*,
+        COALESCE(mo.used_qty, 0) as used,
+        (m.quantity - COALESCE(mo.used_qty, 0)) as left
+      FROM main_materials m
+      LEFT JOIN (
+        SELECT material_id, SUM(quantity) as used_qty
+        FROM material_out
+        WHERE project_id = ?
+        GROUP BY material_id
+      ) mo ON m.id = mo.material_id
+    `;
+    const allParams = [project_id];
+    if (keyword) {
+      conditions.push('(m.code LIKE ? OR m.name LIKE ? OR m.brand LIKE ? OR m.model LIKE ?)');
+      const k = `%${keyword}%`;
+      allParams.push(k, k, k, k);
+    }
+    if (category) {
+      conditions.push('m.category = ?');
+      allParams.push(category);
+    }
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+    sql += ' ORDER BY m.sort_order ASC, m.id DESC';
+    const list = await db.prepare(sql).all(...allParams);
+    res.json({ list, total: list.length, page: 1, limit: list.length });
+    return;
+  }
+
+  // 非 project_id 模式：原逻辑（受限权限）
   if (!hasAll) {
-    conditions.push('1=0'); // 无 read_all 权限则无数据
+    conditions.push('1=0');
   }
   if (keyword) {
     conditions.push('(code LIKE ? OR name LIKE ? OR brand LIKE ? OR model LIKE ?)');
@@ -2636,9 +2735,19 @@ app.get('/api/main-materials/categories', async (req, res) => {
 });
 
 app.post('/api/main-materials', async (req, res) => {
-    
+  const _rawUid = req.headers['x-user-id'];
+
   const userId = getUserId(req);
   const data = req.body || {};
+
+  // 自动补全 supplier_name
+  let supplierId = data.supplier_id || null;
+  let supplierName = data.supplier_name || '';
+  if (supplierId && !supplierName) {
+    const [sup] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(supplierId);
+    if (sup) supplierName = sup.name;
+  }
+
   const stmt = db.prepare(`
     INSERT INTO main_materials (
       code, name, original_price, cost_price, cost_price2, quote_price, contract_price,
@@ -2646,8 +2755,8 @@ app.post('/api/main-materials', async (req, res) => {
       specification, model, color, spec_alternative, model_alternative, color_alternative, brand,
       sort_order, remark, acceptance_remark, contract_remark, other_remark, position, package_name,
       upgrade_profit_rate, internal_control_price, combo, limit_formula, quote_formula, category,
-      is_visible, is_fixed, creator_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      is_visible, is_fixed, creator_id, supplier_id, supplier_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = await stmt.run(
     data.code || '',
@@ -2686,20 +2795,32 @@ app.post('/api/main-materials', async (req, res) => {
     data.category || '',
     Number(data.is_visible ?? 1),
     Number(data.is_fixed ?? 0),
-    userId
+    userId,
+    supplierId,
+    supplierName
   );
   await addLog(userId, '', '新增', '主材管理', result.lastInsertRowid, data.name || '', `主材: ${data.name || result.lastInsertRowid}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
 app.put('/api/main-materials/:id', async (req, res) => {
-    
+  const _rawUid = req.headers['x-user-id'];
+
   const userId = getUserId(req);
   // 权限检查
   const [existing] = await db.prepare('SELECT creator_id FROM main_materials WHERE id = ?').all(req.params.id);
   if (!existing) return res.status(404).json({ error: '主材不存在' });
   if (existing.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权修改他人的数据' });
   const data = req.body || {};
+
+  // 自动补全 supplier_name
+  let supplierId = data.supplier_id || null;
+  let supplierName = data.supplier_name || '';
+  if (supplierId && !supplierName) {
+    const [sup] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(supplierId);
+    if (sup) supplierName = sup.name;
+  }
+
   const stmt = db.prepare(`
     UPDATE main_materials SET
       code=?, name=?, original_price=?, cost_price=?, cost_price2=?, quote_price=?, contract_price=?,
@@ -2707,7 +2828,7 @@ app.put('/api/main-materials/:id', async (req, res) => {
       specification=?, model=?, color=?, spec_alternative=?, model_alternative=?, color_alternative=?, brand=?,
       sort_order=?, remark=?, acceptance_remark=?, contract_remark=?, other_remark=?, position=?, package_name=?,
       upgrade_profit_rate=?, internal_control_price=?, combo=?, limit_formula=?, quote_formula=?, category=?,
-      is_visible=?, is_fixed=?, updated_at=CURRENT_TIMESTAMP
+      is_visible=?, is_fixed=?, updated_at=CURRENT_TIMESTAMP, supplier_id=?, supplier_name=?
     WHERE id=?
   `);
   await stmt.run(
@@ -2747,6 +2868,8 @@ app.put('/api/main-materials/:id', async (req, res) => {
     data.category || '',
     Number(data.is_visible ?? 1),
     Number(data.is_fixed ?? 0),
+    supplierId,
+    supplierName,
     req.params.id
   );
   await addLog(userId, '', '编辑', '主材管理', req.params.id, data.name || '', `更新主材: ${data.name || req.params.id}`, req.ip);
@@ -2754,6 +2877,7 @@ app.put('/api/main-materials/:id', async (req, res) => {
 });
 
 app.delete('/api/main-materials/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [m] = await db.prepare('SELECT name, creator_id FROM main_materials WHERE id = ?').all(req.params.id);
@@ -3015,6 +3139,7 @@ app.get('/api/material-orders', async (req, res) => {
 });
 
 app.post('/api/material-orders', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { material_id, quantity, status, order_date, expected_date, supplier, operator, note } = req.body;
@@ -3133,7 +3258,14 @@ app.get('/api/dashboard/stats', async (req, res) => {
   });
 });
 
+app.get('/api/departments', async (req, res) => {
+  const stmt = db.prepare('SELECT * FROM departments ORDER BY id');
+  res.json(await stmt.all());
+});
+
 app.post('/api/departments', checkPermission('department:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
+    
   const userId = getUserId(req);
   const { name, parent_id, manager_id, description } = req.body;
   const stmt = db.prepare('INSERT INTO departments (name, parent_id, manager_id, description) VALUES (?, ?, ?, ?)');
@@ -3143,6 +3275,7 @@ app.post('/api/departments', checkPermission('department:write'), async (req, re
 });
 
 app.delete('/api/departments/:id', checkPermission('department:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3155,6 +3288,7 @@ app.delete('/api/departments/:id', checkPermission('department:delete'), async (
 });
 
 app.get('/api/user/info', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!userId) {
@@ -3234,6 +3368,7 @@ function passwordFromPhone(phone) {
 }
 
 app.post('/api/employees', checkPermission('employee:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
@@ -3254,6 +3389,7 @@ app.post('/api/employees', checkPermission('employee:write'), async (req, res) =
 });
 
 app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
@@ -3271,6 +3407,7 @@ app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res
 
 // 管理员重置密码（重置为手机号后6位）
 app.post('/api/employees/:id/reset-password', checkPermission('employee:reset_password'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   // 仅管理员可操作
@@ -3288,6 +3425,7 @@ app.post('/api/employees/:id/reset-password', checkPermission('employee:reset_pa
 
 // 个人修改密码
 app.put('/api/employees/:id/password', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { old_password, new_password } = req.body;
@@ -3306,6 +3444,7 @@ app.put('/api/employees/:id/password', async (req, res) => {
 });
 
 app.delete('/api/employees/:id', checkPermission('employee:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3403,6 +3542,7 @@ app.get('/api/roles', async (req, res) => {
 });
 
 app.post('/api/roles', checkPermission('role:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, code, description, permissions } = req.body;
@@ -3413,6 +3553,7 @@ app.post('/api/roles', checkPermission('role:write'), async (req, res) => {
 });
 
 app.put('/api/roles/:id', checkPermission('role:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, code, description, permissions } = req.body;
@@ -3423,6 +3564,7 @@ app.put('/api/roles/:id', checkPermission('role:write'), async (req, res) => {
 });
 
 app.delete('/api/roles/:id', checkPermission('role:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3451,16 +3593,24 @@ app.post('/api/permissions', async (req, res) => {
 // ==================== 审批相关 API ====================
 
 // 获取当前用户信息（从请求头）
-function getCurrentUser(req) {
+async function getCurrentUser(req) {
   const userId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id']) : null;
-  const userName = req.headers['x-user-name'] || '';
-  return { userId, userName };
+  const headerName = req.headers['x-user-name'] || '';
+  if (!userId) return { userId: null, userName: '' };
+  // 如果 header 没带姓名，查数据库
+  if (headerName) return { userId, userName: headerName };
+  try {
+    const [rows] = await pool.query('SELECT name FROM employees WHERE id = ?', [userId]);
+    return { userId, userName: rows[0]?.name || '' };
+  } catch {
+    return { userId, userName: '' };
+  }
 }
 
 // 我的申请列表
 app.get('/api/approvals/my', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
     const { status, type, keyword } = req.query;
@@ -3484,7 +3634,7 @@ app.get('/api/approvals/my', async (req, res) => {
 // 待我审批列表
 app.get('/api/approvals/todo', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
     const { status, type, keyword } = req.query;
@@ -3522,7 +3672,7 @@ app.get('/api/approvals/:id', async (req, res) => {
 // 发起审批
 app.post('/api/approvals', async (req, res) => {
   const userId = getUserId(req);
-  const { userId: uid, userName: uname } = getCurrentUser(req);
+  const { userId: uid, userName: uname } = await getCurrentUser(req);
   
   const { title, type, content, amount, approver_id, approver_name, approver_ids, approver_names, form_data } = req.body;
   
@@ -3571,7 +3721,7 @@ app.post('/api/approvals', async (req, res) => {
 
 // 审批操作（同意）
 app.post('/api/approvals/:id/approve', async (req, res) => {
-  const { userId, userName } = getCurrentUser(req);
+  const { userId, userName } = await getCurrentUser(req);
   const { comment } = req.body;
   
   const [approval] = await db.prepare('SELECT * FROM approvals WHERE id = ?').all(req.params.id);
@@ -3613,7 +3763,7 @@ app.post('/api/approvals/:id/approve', async (req, res) => {
 
 // 审批操作（驳回）
 app.post('/api/approvals/:id/reject', async (req, res) => {
-  const { userId, userName } = getCurrentUser(req);
+  const { userId, userName } = await getCurrentUser(req);
   const { comment } = req.body;
   
   const [approval] = await db.prepare('SELECT * FROM approvals WHERE id = ?').all(req.params.id);
@@ -3718,7 +3868,7 @@ app.put('/api/notifications/read-all', async (req, res) => {
 // 获取消息列表（统一查 notifications 表，兼容员工和客户）
 app.get('/api/messages', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
     const { type, is_read, keyword, page = 1, pageSize = 20 } = req.query;
@@ -3728,7 +3878,7 @@ app.get('/api/messages', async (req, res) => {
     let total = 0;
     
     // 先查客户表，通过 userId 找 phone
-    const [customer] = db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
+    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
     
     if (customer) {
       // 客户：查 notifications 表（按 receiver_phone 匹配）
@@ -3774,11 +3924,11 @@ app.get('/api/messages', async (req, res) => {
 // 获取未读消息数量（统一查 notifications 表，兼容员工和客户）
 app.get('/api/messages/unread-count', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
     // 先查客户表，通过 userId 找 phone
-    const [customer] = db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
+    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
     
     let count = 0;
     if (customer) {
@@ -3801,10 +3951,10 @@ app.get('/api/messages/unread-count', async (req, res) => {
 // 标记消息已读（统一处理 notifications 和 messages）
 app.put('/api/messages/:id/read', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
-    const [customer] = db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
+    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
     
     if (customer) {
       // 客户：更新 notifications 表
@@ -3823,10 +3973,10 @@ app.put('/api/messages/:id/read', async (req, res) => {
 // 标记全部已读（统一处理 notifications 和 messages）
 app.put('/api/messages/read-all', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
-    const [customer] = db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
+    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
     
     if (customer) {
       // 客户：更新 notifications 表
@@ -3845,7 +3995,7 @@ app.put('/api/messages/read-all', async (req, res) => {
 // 获取单条消息
 app.get('/api/messages/:id', async (req, res) => {
   try {
-    const { userId } = getCurrentUser(req);
+    const { userId } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     
     const [msg] = await db.prepare('SELECT * FROM messages WHERE id = ? AND user_id = ?').all(req.params.id, userId);
@@ -3880,12 +4030,582 @@ async function sendApprovalNotification({ userId, userName, title, content, type
   }
 }
 
+// ==================== 主材采购申请 API ====================
+
+// 查询具有指定权限的用户ID列表
+async function getUserIdsByPermission(permCode) {
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT e.id FROM employees e
+      LEFT JOIN roles r ON e.role_id = r.id
+      WHERE (
+        (r.permissions IS NOT NULL AND r.permissions != '' AND r.permissions != '[]'
+          AND (r.permissions LIKE ? OR JSON_SEARCH(r.permissions, 'one', ?) IS NOT NULL))
+      )
+    `, [`%${permCode}%`, permCode]);
+    return rows.map(r => r.id);
+  } catch (e) {
+    console.error('getUserIdsByPermission error:', e.message);
+    return [];
+  }
+}
+
+// 发送采购通知（站内消息）
+async function sendPurchaseNotification({ userId, userName, title, content, type, relatedId, relatedType }) {
+  try {
+    await db.prepare(`
+      INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
+    `).run(userId, userName || '', title, content, type, relatedId, relatedType);
+    // 短信通知
+    const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+    if (emp && emp.phone) {
+      sendSmsFromNotify(emp.phone, userName, title, content).catch(err => console.error('短信发送失败:', err));
+    }
+  } catch (err) {
+    console.error('sendPurchaseNotification error:', err);
+  }
+}
+
+// GET /api/purchase-requests — 列表（支持 project_id / status / applicant_id 过滤）
+app.get('/api/purchase-requests', async (req, res) => {
+  try {
+    const { project_id, status, applicant_id, page, limit, keyword } = req.query;
+    const { userId } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const perms = await getUserPermissions(userId);
+    const isAdminUser = await isAdmin(userId);
+    const canViewAll = isAdminUser || perms.includes('purchase:view');
+    const canApprove = perms.includes('purchase:approve');
+    const canFinance = perms.includes('purchase:finance');
+
+    let sql = 'SELECT * FROM purchase_requests WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as total FROM purchase_requests WHERE 1=1';
+    const params = [];
+
+    // 权限过滤：非管理员且无全视图权限，只能看自己提交的
+    if (!canViewAll) {
+      sql += ' AND applicant_id = ?';
+      countSql += ' AND applicant_id = ?';
+      params.push(userId);
+    }
+
+    if (project_id) { sql += ' AND project_id = ?'; countSql += ' AND project_id = ?'; params.push(project_id); }
+    if (status) { sql += ' AND status = ?'; countSql += ' AND status = ?'; params.push(status); }
+    if (applicant_id) { sql += ' AND applicant_id = ?'; countSql += ' AND applicant_id = ?'; params.push(applicant_id); }
+    if (keyword) {
+      sql += ' AND (project_name LIKE ? OR applicant_name LIKE ?)';
+      countSql += ' AND (project_name LIKE ? OR applicant_name LIKE ?)';
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+
+    const p = parseInt(page) || 1;
+    const l = parseInt(limit) || 50;
+    const offset = (p - 1) * l;
+
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    const [countResult] = await pool.query(countSql, params);
+    const [rows] = await pool.query(sql, [...params, l, offset]);
+
+    // 附上 items
+    if (rows.length > 0) {
+      const ids = rows.map(r => r.id);
+      const [items] = await pool.query(
+        `SELECT * FROM purchase_request_items WHERE request_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      const [reimbursements] = await pool.query(
+        `SELECT * FROM purchase_reimbursements WHERE request_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      rows.forEach(r => {
+        r.items = items.filter(i => i.request_id === r.id);
+        r.reimbursement = reimbursements.find(re => re.request_id === r.id) || null;
+        // 附上权限标记（admin 跳过权限检查）
+        r._canApprove = isAdminUser || canApprove;
+        r._canFinance = isAdminUser || canFinance;
+        r._isApplicant = r.applicant_id === userId;
+        r._isAdmin = isAdminUser;
+      });
+    }
+
+    res.json({ list: rows, total: countResult[0].total, page: p, limit: l });
+  } catch (err) {
+    console.error('purchase-requests list error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// POST /api/purchase-requests — 新建申请
+app.post('/api/purchase-requests', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const raw = req.body;
+    // 兼容移动端单条格式 vs PC端items数组格式
+    let items = raw.items;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      // 移动端单字段格式：从顶层字段构造单条item
+      if (!raw.project_id) return res.status(400).json({ error: '请选择项目' });
+      if (!raw.material_name) return res.status(400).json({ error: '请选择主材' });
+      const qty = parseFloat(raw.quantity) || 0;
+      const amt = parseFloat(raw.amount) || 0;
+      items = [{
+        material_id: raw.material_id || null,
+        material_name: raw.material_name,
+        unit: raw.unit || '',
+        quantity: qty,
+        unit_price: amt && qty ? (amt / qty) : 0,
+        total_price: amt,
+      }];
+    }
+
+    const supplier_id = raw.supplier_id || null;
+    const supplier_name = raw.supplier_name || '';
+    const total_amount = items.reduce((sum, i) => sum + (parseFloat(i.total_price) || 0), 0);
+    const project_name = raw.project_name || '';
+    const remark = raw.remark || '';
+    const images = raw.images ? (typeof raw.images === 'string' ? raw.images : JSON.stringify(raw.images)) : '';
+
+    const [result] = await pool.query(
+      `INSERT INTO purchase_requests (project_id, project_name, supplier_id, supplier_name, applicant_id, applicant_name, total_amount, status, remark, images, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NOW())`,
+      [raw.project_id, project_name, supplier_id, supplier_name, userId, userName, total_amount, remark, images]
+    );
+    const requestId = result.insertId;
+
+    // 插入 items
+    for (const item of items) {
+      await pool.query(
+        `INSERT INTO purchase_request_items (request_id, material_id, material_name, unit, quantity, unit_price, total_price, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [requestId, item.material_id || null, item.material_name || '', item.unit || '', item.quantity || 0, item.unit_price || 0, item.total_price || 0]
+      );
+    }
+
+    await addLog(userId, '', '新增', '采购管理', requestId, project_name || '', `提交采购申请，金额：${total_amount}`, req.ip);
+
+    // 通知有 purchase:approve 权限的人
+    const approverIds = await getUserIdsByPermission('purchase:approve');
+    for (const uid of approverIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '新采购申请待审核',
+          content: `${userName} 提交了采购申请，项目：${project_name || ''}，金额：${total_amount}`,
+          type: '采购', relatedId: requestId, relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ id: requestId, message: '提交成功' });
+  } catch (err) {
+    console.error('purchase-requests create error:', err);
+    res.status(500).json({ error: '提交失败' });
+  }
+});
+
+// GET /api/purchase-requests/my — 我的申请（applicant_id 过滤）
+app.get('/api/purchase-requests/my', checkPermission('purchase:read'), async (req, res) => {
+  const { applicant_id, page, page_size } = req.query;
+  const targetId = applicant_id || getUserId(req);
+  const p = parseInt(page) || 1;
+  const l = parseInt(page_size) || 50;
+  const offset = (p - 1) * l;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
+       FROM purchase_requests pr
+       LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
+       WHERE pr.applicant_id = ?
+       ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
+      [targetId, l, offset]
+    );
+    const [countResult] = await pool.query(
+      'SELECT COUNT(*) as total FROM purchase_requests WHERE applicant_id = ?',
+      [targetId]
+    );
+    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+  } catch (err) {
+    console.error('purchase-requests my error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/purchase-requests/pending — 待审批列表（status=pending）
+app.get('/api/purchase-requests/pending', checkPermission('purchase:approve'), async (req, res) => {
+  const { page, page_size } = req.query;
+  const p = parseInt(page) || 1;
+  const l = parseInt(page_size) || 50;
+  const offset = (p - 1) * l;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
+       FROM purchase_requests pr
+       LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
+       WHERE pr.status = ?
+       ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
+      ['pending', l, offset]
+    );
+    const [countResult] = await pool.query(
+      'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
+      ['pending']
+    );
+    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+  } catch (err) {
+    console.error('purchase-requests pending error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/purchase-requests/reimburse — 待报销列表（status=reimburse）
+app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'), async (req, res) => {
+  const { page, page_size } = req.query;
+  const p = parseInt(page) || 1;
+  const l = parseInt(page_size) || 50;
+  const offset = (p - 1) * l;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
+       FROM purchase_requests pr
+       LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
+       WHERE pr.status = ?
+       ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
+      ['reimburse', l, offset]
+    );
+    const [countResult] = await pool.query(
+      'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
+      ['reimburse']
+    );
+    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+  } catch (err) {
+    console.error('purchase-requests reimburse error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/purchase-requests/finance — 已财务确认列表（status=finance_confirmed）
+app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), async (req, res) => {
+  const { page, page_size } = req.query;
+  const p = parseInt(page) || 1;
+  const l = parseInt(page_size) || 50;
+  const offset = (p - 1) * l;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
+       FROM purchase_requests pr
+       LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
+       WHERE pr.status = ?
+       ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
+      ['finance_confirmed', l, offset]
+    );
+    const [countResult] = await pool.query(
+      'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
+      ['finance_confirmed']
+    );
+    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+  } catch (err) {
+    console.error('purchase-requests finance error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/purchase-requests/:id — 详情
+app.get('/api/purchase-requests/:id', async (req, res) => {
+  try {
+    const { userId } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+
+    const [items] = await pool.query('SELECT * FROM purchase_request_items WHERE request_id = ?', [req.params.id]);
+    const [reimbursements] = await pool.query('SELECT * FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
+
+    const perms = await getUserPermissions(userId);
+    const canApprove = perms.includes('purchase:approve');
+    const canFinance = perms.includes('purchase:finance');
+
+    const record = rows[0];
+    record.items = items;
+    record.reimbursement = reimbursements[0] || null;
+    record._canApprove = canApprove;
+    record._canFinance = canFinance;
+    record._isApplicant = record.applicant_id === userId;
+
+    res.json(record);
+  } catch (err) {
+    console.error('purchase-requests get error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// PUT /api/purchase-requests/:id — 修改申请（仅待审核状态）
+app.put('/api/purchase-requests/:id', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].status !== 'pending') return res.status(400).json({ error: '只有待审核状态可以修改' });
+    if (rows[0].applicant_id !== userId) return res.status(403).json({ error: '只能修改自己的申请' });
+
+    const { project_name, items, remark } = req.body;
+    const total_amount = items.reduce((sum, i) => sum + (parseFloat(i.total_price) || 0), 0);
+
+    await pool.query(
+      `UPDATE purchase_requests SET project_name=?, total_amount=?, remark=?, updated_at=NOW() WHERE id=?`,
+      [project_name || rows[0].project_name, total_amount, remark || '', req.params.id]
+    );
+
+    // 删除旧items，插入新items
+    await pool.query('DELETE FROM purchase_request_items WHERE request_id = ?', [req.params.id]);
+    for (const item of items) {
+      await pool.query(
+        `INSERT INTO purchase_request_items (request_id, material_id, material_name, unit, quantity, unit_price, total_price, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [req.params.id, item.material_id || null, item.material_name || '', item.unit || '', item.quantity || 0, item.unit_price || 0, item.total_price || 0]
+      );
+    }
+
+    await addLog(userId, '', '编辑', '采购管理', req.params.id, project_name || '', `修改采购申请，金额：${total_amount}`, req.ip);
+    res.json({ message: '修改成功' });
+  } catch (err) {
+    console.error('purchase-requests update error:', err);
+    res.status(500).json({ error: '修改失败' });
+  }
+});
+
+// DELETE /api/purchase-requests/:id — 删除申请（仅申请人+待审核）
+app.delete('/api/purchase-requests/:id', async (req, res) => {
+  try {
+    const { userId } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (!['pending', 'rejected'].includes(rows[0].status)) return res.status(400).json({ error: '只有待审核或已驳回的申请可以删除' });
+    if (rows[0].applicant_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除' });
+
+    await pool.query('DELETE FROM purchase_request_items WHERE request_id = ?', [req.params.id]);
+    await pool.query('DELETE FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
+    await pool.query('DELETE FROM purchase_requests WHERE id = ?', [req.params.id]);
+
+    await addLog(userId, '', '删除', '采购管理', req.params.id, rows[0].project_name || '', `删除采购申请`, req.ip);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    console.error('purchase-requests delete error:', err);
+    res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// PUT /api/purchase-requests/:id/approve — 审核（通过/拒绝）
+app.put('/api/purchase-requests/:id/approve', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+
+    const { action, reason } = req.body; // action: 'approve' | 'reject'
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+    await pool.query(
+      `UPDATE purchase_requests SET status=?, rejection_reason=?, updated_at=NOW() WHERE id=?`,
+      [newStatus, action === 'reject' ? (reason || '') : '', req.params.id]
+    );
+
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '采购管理', req.params.id, rows[0].project_name || '', `采购审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
+
+    // 通知申请人
+    const record = rows[0];
+    const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [record.applicant_id]);
+    if (action === 'approve') {
+      await sendPurchaseNotification({
+        userId: record.applicant_id, userName: emp[0]?.name || '',
+        title: '采购申请已通过',
+        content: `您的采购申请（项目：${record.project_name}，金额：${record.total_amount}）已审核通过，请上传报销单`,
+        type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+      });
+    } else {
+      await sendPurchaseNotification({
+        userId: record.applicant_id, userName: emp[0]?.name || '',
+        title: '采购申请未通过',
+        content: `您的采购申请（项目：${record.project_name}）未通过${reason ? '：' + reason : ''}，可重新提交`,
+        type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+      });
+    }
+
+    res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
+  } catch (err) {
+    console.error('purchase-requests approve error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// POST /api/purchase-requests/:id/reimburse — 上传报销单（申请人）
+app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].applicant_id !== userId) return res.status(403).json({ error: '只能上传自己的报销单' });
+    if (rows[0].status !== 'approved') return res.status(400).json({ error: '只有在审核通过后才能上传报销单' });
+
+    const { actual_amount, financial_notes } = req.body;
+
+    // 处理上传的图片
+    const images = (req.files || []).map(f => `/uploads/logs/${f.filename}`);
+
+    // 检查是否已有报销记录
+    const [existing] = await pool.query('SELECT id FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE purchase_reimbursements SET images=?, actual_amount=?, financial_notes=?, created_at=NOW() WHERE request_id=?`,
+        [JSON.stringify(images), actual_amount || 0, financial_notes || '', req.params.id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO purchase_reimbursements (request_id, images, actual_amount, financial_notes, created_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [req.params.id, JSON.stringify(images), actual_amount || 0, financial_notes || '']
+      );
+    }
+
+    // 更新状态为 reimbursing（报销中）
+    await pool.query(`UPDATE purchase_requests SET status='reimbursing', updated_at=NOW() WHERE id=?`, [req.params.id]);
+
+    await addLog(userId, '', '上传报销', '采购管理', req.params.id, rows[0].project_name || '', `上传报销单，实付金额：${actual_amount || 0}`, req.ip);
+
+    // 通知有 purchase:finance 权限的人
+    const financeIds = await getUserIdsByPermission('purchase:finance');
+    for (const uid of financeIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '有报销单待核对',
+          content: `${userName} 已上传报销单，项目：${rows[0].project_name}，实付金额：${actual_amount || 0}，请及时核对`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '上传成功' });
+  } catch (err) {
+    console.error('purchase-requests reimburse error:', err);
+    res.status(500).json({ error: '上传失败' });
+  }
+});
+
+// PUT /api/purchase-requests/:id/finance-confirm — 财务确认（确认报销）
+app.put('/api/purchase-requests/:id/finance-confirm', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:finance') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无财务确认权限' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].status !== 'reimbursing') return res.status(400).json({ error: '状态不允许财务确认' });
+
+    const { actual_amount, financial_notes } = req.body;
+
+    // 更新报销记录
+    await pool.query(
+      `UPDATE purchase_reimbursements SET actual_amount=?, financial_notes=?, confirmed_by=?, confirmed_by_name=?, confirmed_at=NOW() WHERE request_id=?`,
+      [actual_amount || 0, financial_notes || '', userId, userName, req.params.id]
+    );
+
+    // 更新申请状态为已报销
+    await pool.query(`UPDATE purchase_requests SET status='reimbursed', actual_amount=?, updated_at=NOW() WHERE id=?`, [actual_amount || 0, req.params.id]);
+
+    await addLog(userId, '', '财务确认', '采购管理', req.params.id, rows[0].project_name || '', `财务确认报销，实付：${actual_amount || 0}`, req.ip);
+
+    // 通知申请人 + 原审核人
+    const notifyIds = new Set([rows[0].applicant_id, ...await getUserIdsByPermission('purchase:approve')]);
+    for (const uid of notifyIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '采购已报销完成',
+          content: `采购申请（项目：${rows[0].project_name}）已报销完成，实付金额：${actual_amount || 0}`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '财务确认完成' });
+  } catch (err) {
+    console.error('purchase-requests finance-confirm error:', err);
+    res.status(500).json({ error: '确认失败' });
+  }
+});
+
+// POST /api/purchase-requests/:id/resubmit — 重新提交（驳回后）
+app.post('/api/purchase-requests/:id/resubmit', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].applicant_id !== userId) return res.status(403).json({ error: '只能重新提交自己的申请' });
+    if (rows[0].status !== 'rejected') return res.status(400).json({ error: '只能重新提交被拒绝的申请' });
+
+    await pool.query(`UPDATE purchase_requests SET status='pending', rejection_reason='', updated_at=NOW() WHERE id=?`, [req.params.id]);
+
+    // 通知有 purchase:approve 权限的人
+    const approverIds = await getUserIdsByPermission('purchase:approve');
+    for (const uid of approverIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '采购申请重新提交',
+          content: `${userName} 重新提交了采购申请，项目：${rows[0].project_name || ''}，金额：${rows[0].total_amount}`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '重新提交成功' });
+  } catch (err) {
+    console.error('purchase-requests resubmit error:', err);
+    res.status(500).json({ error: '重新提交失败' });
+  }
+});
+
 app.get('/api/reports', async (req, res) => {
   const stmt = db.prepare('SELECT * FROM reports ORDER BY created_at DESC');
   res.json(await stmt.all());
 });
 
 app.post('/api/reports', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { title, content, report_type, reporter_id, reporter_name, status } = req.body;
@@ -3896,6 +4616,7 @@ app.post('/api/reports', async (req, res) => {
 });
 
 app.put('/api/reports/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { title, content, report_type, status, reviewer_id, reviewer_name, review_time } = req.body;
@@ -3906,6 +4627,7 @@ app.put('/api/reports/:id', async (req, res) => {
 });
 
 app.delete('/api/reports/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3923,6 +4645,7 @@ app.get('/api/notices', async (req, res) => {
 });
 
 app.post('/api/notices', checkPermission('notice:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { title, content, type, publisher_id, publisher_name, status, publish_time } = req.body;
@@ -3933,6 +4656,7 @@ app.post('/api/notices', checkPermission('notice:write'), async (req, res) => {
 });
 
 app.put('/api/notices/:id', checkPermission('notice:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { title, content, type, status, publish_time } = req.body;
@@ -3943,6 +4667,7 @@ app.put('/api/notices/:id', checkPermission('notice:write'), async (req, res) =>
 });
 
 app.delete('/api/notices/:id', checkPermission('notice:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -3967,6 +4692,7 @@ app.get('/api/inspections', async (req, res) => {
 });
 
 app.post('/api/inspections', checkPermission('inspection:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { project_id, project_name, inspector_id, inspector_name, score, status, issues, images, result, rectify_status } = req.body;
@@ -3988,6 +4714,7 @@ app.post('/api/inspections', checkPermission('inspection:write'), async (req, re
 });
 
 app.put('/api/inspections/:id', checkPermission('inspection:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
 
   const userId = getUserId(req);
   const { score, status, issues, result, rectify_status } = req.body;
@@ -4003,7 +4730,44 @@ app.put('/api/inspections/:id', checkPermission('inspection:write'), async (req,
 });
 
 // 删除巡检（谁创建谁可以删除）
+app.delete('/api/inspections/:id', async (req, res) => {
+  const userId = getUserId(req);
+  const userRole = req.headers['x-user-role'] || '';
+  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+
+  const [insp] = await db.prepare('SELECT * FROM inspections WHERE id = ?').all(req.params.id);
+  if (!insp) return res.status(404).json({ error: '巡检记录不存在' });
+
+  // 检查权限：创建者本人或管理员可以删除
+  if (insp.creator_id !== userId && !userIsAdmin) {
+    return res.status(403).json({ error: '无权删除他人的巡检' });
+  }
+
+  await db.prepare('DELETE FROM inspections WHERE id = ?').run(req.params.id);
+  res.json({ message: '删除成功' });
+});
+
+// 获取我的巡检（当前用户创建的所有整改问题）
+app.get('/api/my/inspections', async (req, res) => {
+  const userId = getUserId(req);
+  try {
+    const stmt = db.prepare(`
+      SELECT r.*, p.name as project_name 
+      FROM rectification_issues r 
+      LEFT JOIN projects p ON r.project_id = p.id 
+      WHERE r.creator_id = ? OR r.creator_id IS NULL
+      ORDER BY r.created_at DESC
+    `);
+    res.json(await stmt.all(userId));
+  } catch (e) {
+    console.error('查询巡检失败:', e.message);
+    res.json([]);
+  }
+});
+
 app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
+    
   const userId = getUserId(req);
   const [insp] = await db.prepare('SELECT project_name, creator_id FROM inspections WHERE id = ?').all(req.params.id);
   if (!insp) return res.status(404).json({ error: '记录不存在' });
@@ -4013,24 +4777,6 @@ app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '验房管理', req.params.id, inspName, `删除验房: ${inspName}`, req.ip);
   res.json({ message: '删除成功' });
-});
-
-// 获取我的巡检（当前用户创建的所有整改问题）
-app.get('/api/my/inspections', async (req, res) => {
-  const userId = getUserId(req);
-  try {
-    const stmt = db.prepare(`
-      SELECT r.*, p.name as project_name
-      FROM rectification_issues r
-      LEFT JOIN projects p ON r.project_id = p.id
-      WHERE r.creator_id = ? OR r.creator_id IS NULL
-      ORDER BY r.created_at DESC
-    `);
-    res.json(await stmt.all(userId));
-  } catch (e) {
-    console.error('查询巡检失败:', e.message);
-    res.json([]);
-  }
 });
 
 app.get('/api/acceptance', async (req, res) => {
@@ -4046,6 +4792,7 @@ app.get('/api/acceptance', async (req, res) => {
 });
 
 app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment } = req.body;
@@ -4061,6 +4808,7 @@ app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res
 });
 
 app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { accept_status, accept_date, quality_score, issues } = req.body;
@@ -4083,6 +4831,7 @@ app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, 
 });
 
 app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const [a] = await db.prepare('SELECT project_name, creator_id FROM acceptance WHERE id = ?').all(req.params.id);
@@ -4102,6 +4851,7 @@ app.get('/api/dispatches', async (req, res) => {
 });
 
 app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { project_id, project_name, content, location, worker, fee, start_date, requirement, status } = req.body;
@@ -4117,6 +4867,7 @@ app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) 
 });
 
 app.put('/api/dispatches/:id', checkPermission('dispatch:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { status, content, location, worker, fee, start_date, requirement } = req.body;
@@ -4136,6 +4887,7 @@ app.put('/api/dispatches/:id', checkPermission('dispatch:write'), async (req, re
 });
 
 app.delete('/api/dispatches/:id', checkPermission('dispatch:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4152,6 +4904,7 @@ app.get('/api/invoices', async (req, res) => {
 });
 
 app.post('/api/invoices', checkPermission('invoice:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { invoice_no, customer_id, customer_name, amount, tax_rate, tax_amount, total_amount, type, status, issue_date, remark } = req.body;
@@ -4162,6 +4915,7 @@ app.post('/api/invoices', checkPermission('invoice:write'), async (req, res) => 
 });
 
 app.put('/api/invoices/:id', checkPermission('invoice:write'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { invoice_no, customer_id, customer_name, amount, tax_rate, tax_amount, total_amount, type, status, issue_date, remark } = req.body;
@@ -4172,6 +4926,7 @@ app.put('/api/invoices/:id', checkPermission('invoice:write'), async (req, res) 
 });
 
 app.delete('/api/invoices/:id', checkPermission('invoice:delete'), async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4199,6 +4954,7 @@ app.post('/api/customer-pool', async (req, res) => {
 });
 
 app.delete('/api/customer-pool/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4220,6 +4976,7 @@ app.post('/api/buildings', async (req, res) => {
 });
 
 app.put('/api/buildings/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, address, area, building_type, total_houses, developer, property_fee, status } = req.body;
@@ -4230,6 +4987,7 @@ app.put('/api/buildings/:id', async (req, res) => {
 });
 
 app.delete('/api/buildings/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4254,6 +5012,7 @@ app.post('/api/channels', async (req, res) => {
 });
 
 app.put('/api/channels/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { name, type, contact_person, contact_phone, address, commission_rate, status, remark } = req.body;
@@ -4264,6 +5023,7 @@ app.put('/api/channels/:id', async (req, res) => {
 });
 
 app.delete('/api/channels/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4288,6 +5048,7 @@ app.post('/api/marketing-cases', async (req, res) => {
 });
 
 app.put('/api/marketing-cases/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { title, building_name, area, style, budget, cost, images, description, status, publish_date } = req.body;
@@ -4298,6 +5059,7 @@ app.put('/api/marketing-cases/:id', async (req, res) => {
 });
 
 app.delete('/api/marketing-cases/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4314,15 +5076,16 @@ app.get('/api/suppliers', async (req, res) => {
   res.json(await stmt.all());
 });
 
-app.post('/api/suppliers', async (req, res) => {
+app.post('/api/suppliers', checkPermission('supplier:write'), async (req, res) => {
   const { name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark } = req.body;
   const stmt = db.prepare('INSERT INTO suppliers (name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(name, type, contact_person, contact_phone, address, bank_account, tax_number, status || '合作中', remark);
+  const userId = getUserId(req);
+  await addLog(userId, '', '新增', '供应商管理', result.lastInsertRowid, name, `新增供应商: ${name}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/suppliers/:id', async (req, res) => {
-    
+app.put('/api/suppliers/:id', checkPermission('supplier:write'), async (req, res) => {
   const userId = getUserId(req);
   const { name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark } = req.body;
   await db.prepare('UPDATE suppliers SET name=?, type=?, contact_person=?, contact_phone=?, address=?, bank_account=?, tax_number=?, status=?, remark=? WHERE id=?')
@@ -4331,10 +5094,8 @@ app.put('/api/suppliers/:id', async (req, res) => {
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/suppliers/:id', async (req, res) => {
-    
+app.delete('/api/suppliers/:id', checkPermission('supplier:write'), async (req, res) => {
   const userId = getUserId(req);
-  if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
   const [s] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(req.params.id);
   const sName = s ? s.name : req.params.id;
   await db.prepare('DELETE FROM suppliers WHERE id = ?').run(req.params.id);
@@ -4349,6 +5110,7 @@ app.get('/api/purchases', async (req, res) => {
 });
 
 app.post('/api/purchases', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { purchase_no, supplier_id, supplier_name, project_id, project_name, total_amount, status, purchase_date, expected_date, operator, remark } = req.body;
@@ -4359,6 +5121,7 @@ app.post('/api/purchases', async (req, res) => {
 });
 
 app.put('/api/purchases/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   const { total_amount, paid_amount, status, remark } = req.body;
@@ -4369,6 +5132,7 @@ app.put('/api/purchases/:id', async (req, res) => {
 });
 
 app.delete('/api/purchases/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4397,6 +5161,7 @@ app.post('/api/cost-records', async (req, res) => {
 });
 
 app.delete('/api/cost-records/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4456,6 +5221,7 @@ app.put('/api/rectification-issues/:id', async (req, res) => {
 });
 
 app.delete('/api/rectification-issues/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4485,6 +5251,7 @@ app.post('/api/attendance', async (req, res) => {
 });
 
 app.delete('/api/attendance/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4516,6 +5283,7 @@ app.put('/api/warranties/:id', async (req, res) => {
 });
 
 app.delete('/api/warranties/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4547,6 +5315,7 @@ app.put('/api/design-measurements/:id', async (req, res) => {
 });
 
 app.delete('/api/design-measurements/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -4651,6 +5420,7 @@ app.post('/api/contract-variables', async (req, res) => {
 });
 
 app.delete('/api/contract-variables/:id', async (req, res) => {
+  const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
   if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
@@ -6234,6 +7004,8 @@ app.get('/api/debug-perms', async (req, res) => {
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads') && !req.path.startsWith('/auth')) {
     res.sendFile(path.join(webDistPath, 'index.html'));
+  } else {
+    res.status(404).json({ error: 'Not Found' });
   }
 });
 
