@@ -144,9 +144,12 @@ function fetchMessages() {
   uni.request({
     url: '/api/messages',
     data: { page: 1, pageSize: pageSize },
+    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
     success: (res) => {
       if (res.data && Array.isArray(res.data)) {
         messages.value = (res.data || []).map(m => ({ ...m, _translateX: 0 }))
+      } else if (res.data?.list) {
+        messages.value = (res.data.list || []).map(m => ({ ...m, _translateX: 0 }))
       } else {
         messages.value = []
       }
@@ -162,15 +165,16 @@ function onRefresh() {
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return
-  loadingMore.value = true
+  if (loadingMore.value || noMore.value) return;
+  loadingMore.value = true;
   page.value++
   uni.request({
     url: '/api/messages',
     data: { page: page.value, pageSize: pageSize },
+    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
     success: (res) => {
-      if (res.data && Array.isArray(res.data)) {
-        const list = res.data || []
+      const list = res.data?.list || (Array.isArray(res.data) ? res.data : []);
+      if (list.length > 0) {
         messages.value = [...messages.value, ...list.map(m => ({ ...m, _translateX: 0 }))]
         if (list.length < pageSize) noMore.value = true
       } else {
@@ -259,18 +263,8 @@ const goBack = () => {
 };
 
 const refreshUnreadBadge = () => {
-  uni.request({
-    url: '/api/messages/unread-count',
-    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
-    success: (res) => {
-      const count = res.data?.count || 0;
-      if (count > 0) {
-        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
-      } else {
-        uni.removeTabBarBadge({ index: 4 });
-      }
-    }
-  });
+  // 注意：message/list 不是 TabBar 页面，不能调用 setTabBarBadge
+  // TabBar badge 由 mine/index.vue 的 onShow 统一设置
 };
 </script>
 

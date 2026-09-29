@@ -143,10 +143,11 @@ onMounted(() => {
   if (id) {
     loading.value = true
     uni.request({
-      url: `/api/notifications/${id}`,
+      url: `/api/messages/${id}`,
+      header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
       success: (res) => {
-        if (res.data) {
-          message.value = res.data
+        if (res.data && typeof res.data === 'object') {
+          message.value = res.data.data || res.data
         }
       },
       complete: () => { loading.value = false }

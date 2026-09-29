@@ -383,19 +383,11 @@ const openMaterialPicker = async () => {
       };
       return;
     }
-    // 有项目时，显示操作选项列表
+    // 直接显示操作选项列表（不再按项目分组）
     materialPicker.value = {
       visible: true,
       title: '主材管理',
-      items: materialActionItems.concat(
-        data.map((p) => ({
-          name: p.name,
-          desc: p.customer_name ? `客户: ${p.customer_name}` : (p.status || ''),
-          icon: '📁',
-          value: `proj_${p.id}`,
-          _raw: p,
-        }))
-      ),
+      items: materialActionItems,
     };
   } catch (e) {
     uni.hideLoading();
@@ -411,22 +403,6 @@ const onMaterialSelect = ({ item }) => {
     uni.navigateTo({ url: '/pages/purchase/list' });
   } else if (item.value === 'inbound') {
     uni.navigateTo({ url: '/pages/material/inbound' });
-  } else if (item.value && item.value.startsWith('proj_') && item._raw) {
-    // 选了具体项目，再选操作
-    const p = item._raw;
-    uni.showModal({
-      title: `${p.name}`,
-      content: '请选择操作',
-      confirmText: '采购申请',
-      cancelText: '到货验收',
-      success: (res) => {
-        if (res.confirm) {
-          uni.navigateTo({ url: `/pages/material/purchase?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
-        } else {
-          uni.navigateTo({ url: `/pages/material/inbound?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
-        }
-      },
-    });
   }
 };
 

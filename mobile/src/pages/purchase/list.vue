@@ -65,7 +65,7 @@
             </view>
             <view class="info-row">
               <text class="info-label">金额</text>
-              <text class="info-value amount">¥{{ item.amount || 0 }}</text>
+              <text class="info-value amount">¥{{ item.total_amount || 0 }}</text>
             </view>
             <view class="info-row">
               <text class="info-label">申请人</text>
@@ -75,11 +75,38 @@
               <text class="info-label">时间</text>
               <text class="info-value">{{ item.created_at }}</text>
             </view>
+            <!-- 图片缩略图 -->
+            <view v-if="getImages(item.images).length" class="info-row image-row">
+              <text class="info-label">图片</text>
+              <view class="thumb-list">
+                <image
+                  v-for="(img, idx) in getImages(item.images)"
+                  :key="idx"
+                  class="thumb-img"
+                  :src="getImgUrl(img)"
+                  mode="aspectFill"
+                  @click.stop="previewImage(img, getImages(item.images))"
+                />
+              </view>
+            </view>
+          </view>
+          <!-- 我的申请 显示删除按钮（待审核/已驳回可删） -->
+          <view v-if="activeTab === 'my' && (item.status === 'pending' || item.status === 'rejected')" class="card-actions" @click.stop>
+            <view class="action-btn danger" @click="handleDelete(item)">删除</view>
           </view>
           <!-- 待我审核 显示操作按钮 -->
-          <view v-if="activeTab === 'pending' && item.status === 'pending'" class="card-actions" @click.stop>
+          <view v-else-if="activeTab === 'pending' && item.status === 'pending'" class="card-actions" @click.stop>
             <view class="action-btn reject" @click="handleReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleApprove(item)">通过</view>
+          </view>
+          <!-- 待报销（财务视角）显示确认/驳回按钮 -->
+          <view v-else-if="activeTab === 'reimburse' && item.status === 'reimbursing'" class="card-actions" @click.stop>
+            <view class="action-btn reject" @click="handleFinanceReject(item)">驳回</view>
+            <view class="action-btn approve" @click="handleFinanceConfirm(item)">确认</view>
+          </view>
+          <!-- 财务确认tab：finance_confirmed 状态跳上传回执页 -->
+          <view v-else-if="activeTab === 'finance' && item.status === 'finance_confirmed'" class="card-actions" @click.stop>
+            <view class="action-btn approve" @click="goFinanceConfirm(item)">上传回执</view>
           </view>
         </view>
       </view>
@@ -113,7 +140,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 
 const activeTab = ref('my')
 const list = ref([])
@@ -143,6 +170,7 @@ const emptyText = computed(() => {
     pending: '暂无待审核申请',
     reimburse: '暂无待报销申请',
     finance: '暂无待财务确认',
+    finance_confirmed: '暂无受理中单据',
   }
   return map[activeTab.value] || '暂无数据'
 })
@@ -152,9 +180,9 @@ function statusLabel(s) {
     pending: '待审核',
     approved: '已通过',
     rejected: '已驳回',
-    reimburse: '待报销',
-    reimbursed: '已报销',
-    finance_confirmed: '财务确认',
+    reimbursing: '报销中',
+    finance_confirmed: '受理中',
+    reimbursed: '已完结',
   }
   return map[s] || s
 }
@@ -164,9 +192,9 @@ function statusBg(s) {
     pending: '#fff3e0',
     approved: '#e8f5e9',
     rejected: '#ffebee',
-    reimburse: '#fff3e0',
-    reimbursed: '#e8f5e9',
+    reimbursing: '#fff3e0',
     finance_confirmed: '#e3f2fd',
+    reimbursed: '#e8f5e9',
   }
   return map[s] || '#f5f5f5'
 }
@@ -176,11 +204,27 @@ function statusColor(s) {
     pending: '#ff9800',
     approved: '#4caf50',
     rejected: '#f44336',
-    reimburse: '#ff9800',
-    reimbursed: '#4caf50',
+    reimbursing: '#ff9800',
     finance_confirmed: '#2196f3',
+    reimbursed: '#4caf50',
   }
   return map[s] || '#999'
+}
+
+const getImages = (imgField) => {
+  if (!imgField) return []
+  if (Array.isArray(imgField)) return imgField
+  try { return JSON.parse(imgField) } catch { return [] }
+}
+
+const getImgUrl = (path) => {
+  if (!path) return ''
+  if (path.startsWith('http')) return path
+  return path
+}
+
+const previewImage = (current, list) => {
+  uni.previewImage({ current, urls: list })
 }
 
 function goBack() { uni.navigateBack() }
@@ -251,15 +295,13 @@ function loadData(isMore = false) {
 }
 
 function loadCounts() {
-  const userInfo = uni.getStorageSync('userInfo') || {}
-
   // 待审核数量
   uni.request({
     url: '/api/purchase-requests/pending',
     data: { page: 1, page_size: 1 },
     success: (res) => {
-      const arr = res.data.list || res.data.data?.list || []
-      pendingCount.value = arr.length
+      const total = res.data.total || res.data.list?.length || 0
+      pendingCount.value = total
     }
   })
 
@@ -268,8 +310,8 @@ function loadCounts() {
     url: '/api/purchase-requests/reimburse',
     data: { page: 1, page_size: 1 },
     success: (res) => {
-      const arr = res.data.list || res.data.data?.list || []
-      reimburseCount.value = arr.length
+      const total = res.data.total || res.data.list?.length || 0
+      reimburseCount.value = total
     }
   })
 }
@@ -279,7 +321,7 @@ function goDetail(item) {
 }
 
 function goAdd() {
-  uni.navigateTo({ url: '/pages/purchase/add' })
+  uni.navigateTo({ url: '/pages/material/purchase' })
 }
 
 function handleApprove(item) {
@@ -296,19 +338,92 @@ function handleReject(item) {
   showDialog.value = true
 }
 
+function handleDelete(item) {
+  uni.showModal({
+    title: '确认删除',
+    content: '确定要删除这条采购申请吗？删除后不可恢复。',
+    confirmColor: '#f44336',
+    success: (res) => {
+      if (res.confirm) {
+        uni.request({
+          url: `/api/purchase-requests/${item.id}`,
+          method: 'DELETE',
+          success: (res) => {
+            if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
+              uni.showToast({ title: '已删除', icon: 'success' })
+              page.value = 1
+              loadData()
+            } else {
+              uni.showToast({ title: res.data.error || '删除失败', icon: 'none' })
+            }
+          },
+          fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+        })
+      }
+    }
+  })
+}
+
+// 财务确认 — 跳转到财务受理页
+function handleFinanceConfirm(item) {
+  uni.navigateTo({ url: `/pages/purchase/finance-accept?id=${item.id}` })
+}
+
+// 财务上传回执 — 跳转到财务确认页
+function goFinanceConfirm(item) {
+  uni.navigateTo({ url: `/pages/purchase/finance-confirm?id=${item.id}` })
+}
+
+// 财务驳回（打回给员工重新上传）
+function handleFinanceReject(item) {
+  currentItem.value = item
+  dialogAction.value = 'finance_reject'
+  dialogComment.value = ''
+  showDialog.value = true
+}
+
 function submitAction() {
+  const id = currentItem.value.id
+
+  // 财务驳回报销
+  if (dialogAction.value === 'finance_reject') {
+    if (!dialogComment.value.trim()) {
+      uni.showToast({ title: '请输入驳回原因', icon: 'none' })
+      return
+    }
+    uni.request({
+      url: `/api/purchase-requests/${id}/finance-reject`,
+      method: 'PUT',
+      data: { reason: dialogComment.value },
+      success: (res) => {
+        if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
+          uni.showToast({ title: '已驳回', icon: 'success' })
+          showDialog.value = false
+          page.value = 1
+          loadData()
+          loadCounts()
+        } else {
+          uni.showToast({ title: res.data.error || '操作失败', icon: 'none' })
+        }
+      },
+      fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
+    return
+  }
+
+  // 审批通过/驳回
   if (dialogAction.value === 'reject' && !dialogComment.value.trim()) {
     uni.showToast({ title: '请输入驳回原因', icon: 'none' })
     return
   }
-  const id = currentItem.value.id
-  const url = dialogAction.value === 'approve'
-    ? `/api/purchase-requests/${id}/approve`
-    : `/api/purchase-requests/${id}/reject`
+  const url = `/api/purchase-requests/${id}/approve`
+  const data = dialogAction.value === 'approve'
+    ? { action: 'approve' }
+    : { action: 'reject', reason: dialogComment.value }
   uni.request({
     url,
-    method: 'POST',
-    data: { comment: dialogComment.value },
+    method: 'PUT',
+    data,
     success: (res) => {
       if (res.data.code === 0 || res.data.code === undefined) {
         uni.showToast({ title: dialogAction.value === 'approve' ? '已通过' : '已驳回', icon: 'success' })
@@ -317,7 +432,7 @@ function submitAction() {
         loadData()
         loadCounts()
       } else {
-        uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
+        uni.showToast({ title: res.data.msg || res.data.error || '操作失败', icon: 'none' })
       }
     },
     fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
@@ -327,6 +442,11 @@ function submitAction() {
 onMounted(() => {
   loadData()
   loadCounts()
+})
+
+// 切换 tab 时重新加载数据
+watch(activeTab, () => {
+  loadData()
 })
 </script>
 
@@ -390,6 +510,13 @@ onMounted(() => {
 .info-value { color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .amount { color: #ff6b00; font-weight: 600; }
 
+.image-row { align-items: flex-start; }
+.thumb-list { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.thumb-img {
+  width: 50px; height: 50px; border-radius: 4px;
+  border: 1rpx solid #eee; flex-shrink: 0;
+}
+
 .card-actions {
   display: flex; gap: 10px; margin-top: 12px;
   padding-top: 12px; border-top: 1px solid #f0f0f0; justify-content: flex-end;
@@ -397,6 +524,7 @@ onMounted(() => {
 .action-btn { padding: 6px 16px; border-radius: 4px; font-size: 13px; }
 .action-btn.reject { background: #fff; color: #f44336; border: 1px solid #f44336; }
 .action-btn.approve { background: #1E3A5F; color: #fff; }
+.action-btn.danger { background: #fff; color: #f44336; border: 1px solid #f44336; }
 
 .loading-more { text-align: center; padding: 20px; }
 .loading-text { font-size: 24rpx; color: #999; }

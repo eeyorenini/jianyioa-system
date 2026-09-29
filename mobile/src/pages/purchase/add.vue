@@ -53,7 +53,25 @@
       <!-- 单位 -->
       <view class="form-item">
         <text class="form-label">单位</text>
-        <input class="form-input" v-model="form.unit" placeholder="如：块、米、个" />
+        <view class="picker-value" :class="{ placeholder: !form.unit }" @click="showUnitPicker">
+          {{ form.unit || '请选择单位' }}
+          <text class="arrow">›</text>
+        </view>
+      </view>
+
+      <!-- 图片 -->
+      <view class="form-item form-item-top">
+        <text class="form-label">图片</text>
+        <view class="image-upload-area">
+          <view v-for="(img, idx) in images" :key="idx" class="image-preview-item">
+            <image class="image-preview" :src="getImageUrl(img)" mode="aspectFill" />
+            <view class="image-remove" @click="removeImage(idx)">×</view>
+          </view>
+          <view v-if="images.length < 9" class="image-add-btn" @click="chooseImage">
+            <text class="image-add-icon">+</text>
+            <text class="image-add-text">添加图片</text>
+          </view>
+        </view>
       </view>
 
       <!-- 预计金额 -->
@@ -93,6 +111,14 @@
       @select="onMaterialSelect"
       @cancel="materialPicker.visible = false"
     />
+    <!-- 单位选择弹窗 -->
+    <BottomPicker
+      v-model:visible="unitPicker.visible"
+      :title="unitPicker.title"
+      :items="unitPicker.items"
+      @select="onUnitSelect"
+      @cancel="unitPicker.visible = false"
+    />
   </view>
 </template>
 
@@ -122,6 +148,15 @@ const form = ref({
 const projectPicker = ref({ visible: false, title: '选择项目', items: [] })
 const supplierPicker = ref({ visible: false, title: '选择供应商', items: [] })
 const materialPicker = ref({ visible: false, title: '选择主材', items: [] })
+const images = ref([])
+const uploadingImage = ref(false)
+
+const unitList = [
+  '个', '块', '片', '张', '卷', '卷', '米', '平方米', '立方米',
+  '套', '件', '根', '条', '米', '袋', '箱', '桶', '捆', '包', '把',
+  '台', '部', '台', '扇', '樘', '盏', '米', '平方', '延米',
+]
+const unitPicker = ref({ visible: false, title: '选择单位', items: unitList.map(n => ({ name: n, icon: '📏' })) })
 
 onMounted(() => {
   // 加载项目列表（admin看到所有，非admin只看到自己参与的）
@@ -265,6 +300,72 @@ const loadMaterials = (supplierId) => {
   })
 }
 
+function goAdd() { uni.navigateTo({ url: '/pages/purchase/add' }) }
+
+const showUnitPicker = () => {
+  unitPicker.value.visible = true
+}
+
+const onUnitSelect = ({ item }) => {
+  form.value.unit = item.name
+  unitPicker.value.visible = false
+}
+
+const getImageUrl = (path) => {
+  if (!path) return ''
+  if (path.startsWith('http')) return path
+  return path
+}
+
+const chooseImage = () => {
+  if (uploadingImage.value) return
+  uni.chooseImage({
+    count: 9 - images.value.length,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: async (res) => {
+      uploadingImage.value = true
+      let successCount = 0
+      for (const tempPath of res.tempFilePaths) {
+        try {
+          const up = await uploadImage(tempPath)
+          images.value.push(up)
+          successCount++
+        } catch (e) {
+          console.error('图片上传失败:', e)
+        }
+      }
+      uploadingImage.value = false
+      if (successCount === 0 && res.tempFilePaths.length > 0) {
+        uni.showToast({ title: '图片上传失败', icon: 'none' })
+      }
+    },
+    fail: () => { uploadingImage.value = false }
+  })
+}
+
+const uploadImage = (filePath) => {
+  return new Promise((resolve, reject) => {
+    const token = uni.getStorageSync('userInfo')?.id || ''
+    uni.uploadFile({
+      url: 'http://localhost:10086/api/upload-image',
+      filePath,
+      name: 'file',
+      header: { 'x-user-id': token },
+      success: (up) => {
+        try {
+          const d = JSON.parse(up.data)
+          if (d.url) resolve(d.url)
+          else reject(new Error(d.error || '上传失败'))
+        } catch { reject(new Error('解析失败')) }
+      },
+      fail: (e) => reject(e)
+    })
+  })
+}
+
+const removeImage = (idx) => images.value.splice(idx, 1)
+
 function goBack() { uni.navigateBack() }
 
 function submit() {
@@ -286,11 +387,13 @@ function submit() {
     unit: form.value.unit,
     amount: form.value.amount || 0,
     remark: form.value.remark,
+    images: images.value,
   }
 
   uni.request({
     url: '/api/purchase-requests',
     method: 'POST',
+    header: { 'x-user-id': uni.getStorageSync('userInfo')?.id || '' },
     data: payload,
     success: (res) => {
       console.log('提交响应:', res.statusCode, JSON.stringify(res.data))
@@ -327,6 +430,52 @@ function submit() {
 }
 .picker-value.placeholder { color: #999; }
 .arrow { font-size: 18px; color: #ccc; }
+
+.image-upload-area {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.image-preview-item {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.image-preview {
+  width: 100%;
+  height: 100%;
+}
+.image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.image-add-btn {
+  width: 80px;
+  height: 80px;
+  border: 1px dashed #ccc;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #fafafa;
+}
+.image-add-icon { font-size: 24px; color: #999; }
+.image-add-text { font-size: 11px; color: #999; margin-top: 2px; }
 
 .nav-bar {
   display: flex; align-items: center; justify-content: space-between;

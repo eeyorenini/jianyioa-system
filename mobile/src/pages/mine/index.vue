@@ -85,31 +85,28 @@ const roleName = computed(() => userStore.state.position || userStore.state.role
 const avatarText = computed(() => (userName.value || 'U').substring(0, 1).toUpperCase());
 const unreadCount = ref(0);
 
-// TODO: 临时注释掉 loadUnread 排查超时问题
-// const loadUnread = () => {
-//   const token = uni.getStorageSync('token');
-//   if (!token) return;
-//   const userId = uni.getStorageSync('userInfo')?.id;
-//   if (!userId) return;
-//   uni.request({
-//     url: '/api/notifications/unread-count',
-//     header: {
-//       'Authorization': token,
-//       'x-user-id': String(userId)
-//     },
-//     success: (res) => {
-//       if (res.statusCode === 200 && res.data) {
-//         unreadCount.value = res.data.count || 0;
-//       }
-//     },
-//     fail: (err) => {
-//       console.log('loadUnread fail', err);
-//     }
-//   });
-// };
+const loadUnread = () => {
+  const userId = uni.getStorageSync('userInfo')?.id;
+  if (!userId) return;
+  uni.request({
+    url: '/api/messages/unread-count',
+    header: { 'x-user-id': String(userId) },
+    success: (res) => {
+      const count = res.data?.count || 0;
+      unreadCount.value = count;
+      // 设置 TabBar 第5个tab（index=4）的badge
+      if (count > 0) {
+        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
+      } else {
+        uni.removeTabBarBadge({ index: 4 });
+      }
+    },
+    fail: () => {}
+  });
+};
 
-// onMounted(() => loadUnread());
-// onShow(() => loadUnread());
+onMounted(() => loadUnread());
+onShow(() => loadUnread());
 
 const goMessage = () => {
   uni.navigateTo({ url: '/pages/message/list' });

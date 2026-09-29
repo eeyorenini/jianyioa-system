@@ -211,6 +211,20 @@
       }
     },
     {
+      "path": "pages/purchase/finance-accept",
+      "style": {
+        "navigationBarTitleText": "财务受理",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/purchase/finance-confirm",
+      "style": {
+        "navigationBarTitleText": "财务确认",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/contract/list",
       "style": {
         "navigationBarTitleText": "合同管理",

@@ -83,22 +83,15 @@
       </view>
 
       <!-- 报销凭证 -->
-      <view class="section-card" v-if="detail.status === 'reimburse' || detail.status === 'reimbursed'">
+      <view class="section-card" v-if="detail.status === 'approved' || detail.status === 'reimbursing' || detail.status === 'reimbursed'">
         <view class="section-title">报销凭证</view>
-        <view v-if="detail.reimburse_images && detail.reimburse_images.length > 0" class="image-list">
-          <image
-            v-for="(img, idx) in detail.reimburse_images"
-            :key="idx"
-            class="preview-img"
-            :src="img"
-            mode="aspectFill"
-            @click="previewImage(idx)"
-          />
+        <view v-if="reimburseImages.length > 0" class="image-list">
+          <image v-for="(img, idx) in reimburseImages" :key="idx" class="preview-img" :src="getImgUrl(img)" mode="aspectFill" @click="previewImage(img, reimburseImages)" />
         </view>
         <view v-else class="empty-images">暂无凭证</view>
 
-        <!-- 上传凭证（待报销状态且是本人） -->
-        <view v-if="detail.status === 'reimburse' && isApplicant" class="upload-section">
+        <!-- approved/reimbursing 状态 — 本人可上传凭证 -->
+        <view v-if="(detail.status === 'approved' || detail.status === 'reimbursing') && isApplicant" class="upload-section">
           <view class="upload-btn" @click="chooseImage">
             <text class="upload-icon">+</text>
             <text class="upload-text">添加凭证</text>
@@ -108,19 +101,48 @@
             <view class="remove-btn" @click="removeImage(idx)">×</view>
           </view>
         </view>
+
+        <!-- 显示财务驳回原因 -->
+        <view v-if="detail.reimbursement?.reject_reason" class="reject-reason">
+          <text class="reject-label">财务驳回原因：</text>
+          <text class="reject-text">{{ detail.reimbursement.reject_reason }}</text>
+        </view>
       </view>
 
-      <!-- 财务确认 -->
-      <view class="section-card" v-if="detail.status === 'finance_confirmed'">
+      <!-- 报销中/待财务确认 -->
+      <view class="section-card" v-if="detail.status === 'reimbursing'">
         <view class="section-title">财务确认</view>
         <view class="info-grid">
           <view class="info-item">
-            <text class="info-label">确认人</text>
-            <text class="info-value">{{ detail.finance_confirmer_name || '-' }}</text>
+            <text class="info-label">实付金额</text>
+            <text class="info-value">¥{{ detail.reimbursement?.actual_amount || '-' }}</text>
           </view>
+          <view class="info-item" v-if="detail.reimbursement?.financial_notes">
+            <text class="info-label">财务备注</text>
+            <text class="info-value">{{ detail.reimbursement.financial_notes }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 已完结 -->
+      <view class="section-card" v-if="detail.status === 'reimbursed'">
+        <view class="section-title">报销完成</view>
+        <view class="info-grid">
           <view class="info-item">
+            <text class="info-label">实付金额</text>
+            <text class="info-value amount">¥{{ detail.reimbursement?.actual_amount || '-' }}</text>
+          </view>
+          <view class="info-item" v-if="detail.reimbursement?.confirmed_by_name">
+            <text class="info-label">财务确认人</text>
+            <text class="info-value">{{ detail.reimbursement.confirmed_by_name }}</text>
+          </view>
+          <view class="info-item" v-if="detail.reimbursement?.confirmed_at">
             <text class="info-label">确认时间</text>
-            <text class="info-value">{{ detail.finance_confirmed_at || '-' }}</text>
+            <text class="info-value">{{ detail.reimbursement.confirmed_at }}</text>
+          </view>
+          <view class="info-item full" v-if="detail.reimbursement?.financial_notes">
+            <text class="info-label">财务备注</text>
+            <text class="info-value">{{ detail.reimbursement.financial_notes }}</text>
           </view>
         </view>
       </view>
@@ -133,28 +155,58 @@
           <view class="btn approve" @click="showApproveDialog">通过</view>
         </template>
 
-        <!-- 待报销 - 本人上传凭证 -->
-        <template v-if="detail.status === 'reimburse' && isApplicant">
+        <!-- 已通过/报销中 - 本人上传凭证 -->
+        <template v-if="(detail.status === 'approved' || detail.status === 'reimbursing') && isApplicant">
           <view class="btn primary full" @click="submitReimburse" :class="{ disabled: submitting }">
-            {{ submitting ? '提交中...' : '提交报销' }}
+            {{ submitting ? '提交中...' : (detail.status === 'reimbursing' ? '重新提交报销' : '提交报销') }}
           </view>
         </template>
 
-        <!-- 财务确认 - 财务人员可操作 -->
-        <template v-if="detail.status === 'finance_confirmed' && isFinance">
-          <view class="btn reject" @click="showRejectDialog">驳回</view>
-          <view class="btn approve" @click="confirmFinance">确认付款</view>
+        <!-- 报销中 - 财务人员操作 -->
+        <template v-if="detail.status === 'reimbursing' && isFinance">
+          <view class="btn reject" @click="showFinanceRejectDialog">驳回</view>
+          <view class="btn approve" @click="showFinanceConfirmDialog">确认报销</view>
         </template>
       </view>
     </template>
 
+    <!-- 提交报销遮罩 -->
+    <view class="upload-overlay" v-if="uploadProgress.visible">
+      <view class="upload-overlay-content">
+        <view class="upload-overlay-spinner">⟳</view>
+        <text class="upload-overlay-text">{{ uploadProgress.text }}</text>
+        <view class="upload-overlay-bar-wrap">
+          <view class="upload-overlay-bar" :style="{ width: uploadProgress.percent + '%' }"></view>
+        </view>
+        <text class="upload-overlay-percent">{{ uploadProgress.percent }}%</text>
+      </view>
+    </view>
+
     <!-- 审批/财务驳回弹窗 -->
     <view v-if="showDialog" class="dialog-mask" @click="showDialog = false">
       <view class="dialog-content" @click.stop>
-        <view class="dialog-header">{{ dialogType === 'approve' ? '通过申请' : '驳回申请' }}</view>
+        <view class="dialog-header">{{ dialogType === 'approve' ? '通过申请' : dialogType === 'finance_confirm' ? '确认报销' : '驳回申请' }}</view>
         <view class="dialog-body">
-          <textarea class="comment-input" v-model="dialogComment"
-            :placeholder="dialogType === 'approve' ? '选填备注' : '请输入驳回原因'" />
+          <template v-if="dialogType === 'finance_confirm'">
+            <view class="finance-amount-wrap">
+              <text class="label">实付金额（元）</text>
+              <input class="finance-input" type="digit" v-model="financeAmount" placeholder="请输入实付金额" />
+            </view>
+            <view class="finance-img-wrap">
+              <text class="label">上传凭证</text>
+              <view class="img-list">
+                <view v-for="(img, idx) in pendingFinanceImages" :key="idx" class="img-item">
+                  <image :src="img" mode="aspectFill" @click="previewImage(img, pendingFinanceImages)" />
+                  <view class="img-remove" @click="removeFinanceImage(idx)">×</view>
+                </view>
+                <view v-if="pendingFinanceImages.length < 3" class="img-add" @click="chooseFinanceImage">+</view>
+              </view>
+            </view>
+          </template>
+          <template v-else>
+            <textarea class="comment-input" v-model="dialogComment"
+              :placeholder="dialogType === 'approve' ? '选填备注' : '请输入驳回原因'" />
+          </template>
         </view>
         <view class="dialog-footer">
           <view class="dialog-btn cancel" @click="showDialog = false">取消</view>
@@ -166,15 +218,25 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted } from 'vue'
 
 const loading = ref(true)
 const detail = ref(null)
 const submitting = ref(false)
 const pendingImages = ref([])
 const showDialog = ref(false)
-const dialogType = ref('approve') // 'approve' | 'reject'
+const dialogType = ref('approve') // 'approve' | 'reject' | 'finance_reject' | 'finance_confirm'
 const dialogComment = ref('')
+const financeAmount = ref(0)
+const pendingFinanceImages = ref([])
+const submittingDialog = ref(false)
+const uploadProgress = reactive({
+  visible: false,
+  total: 0,
+  done: 0,
+  percent: 0,
+  text: ''
+})
 
 let currentPage = null
 
@@ -184,7 +246,8 @@ const statusLabel = (s) => {
     approved: '已通过',
     rejected: '已驳回',
     reimburse: '待报销',
-    reimbursed: '已报销',
+    reimbursed: '已完结',
+    reimbursing: '报销中',
     finance_confirmed: '财务确认',
   }
   return map[s] || s
@@ -197,6 +260,7 @@ const statusBg = (s) => {
     rejected: 'linear-gradient(135deg, #ffebee, #ffcdd2)',
     reimburse: 'linear-gradient(135deg, #fff3e0, #ffe0b2)',
     reimbursed: 'linear-gradient(135deg, #e8f5e9, #c8e6c9)',
+    reimbursing: 'linear-gradient(135deg, #fff3e0, #ffe0b2)',
     finance_confirmed: 'linear-gradient(135deg, #e3f2fd, #bbdefb)',
   }
   return map[s] || '#f5f5f5'
@@ -208,7 +272,8 @@ const statusIcon = (s) => {
     approved: '✅',
     rejected: '❌',
     reimburse: '💰',
-    reimbursed: '✅',
+    reimbursed: '🏁',
+    reimbursing: '💰',
     finance_confirmed: '🏦',
   }
   return map[s] || '📋'
@@ -218,14 +283,27 @@ const userInfo = computed(() => uni.getStorageSync('userInfo') || {})
 const isApplicant = computed(() => detail.value?.applicant_id === userInfo.value.id)
 const isApprover = computed(() => detail.value?.can_approve === true)
 const isFinance = computed(() => detail.value?.can_finance_confirm === true)
+const reimburseImages = computed(() => {
+  try {
+    // 报销凭证存在 reimbursement.images，不在 request.images
+    const raw = detail.value?.reimbursement?.images
+    if (!raw) return []
+    const arr = Array.isArray(raw) ? raw : JSON.parse(raw)
+    return arr.filter(Boolean)
+  } catch { return [] }
+})
+
+function getImgUrl(path) {
+  if (!path) return ''
+  if (path.startsWith('http')) return path
+  return path
+}
 
 function goBack() { uni.navigateBack() }
 
-function previewImage(idx) {
-  uni.previewImage({
-    urls: detail.value.reimburse_images,
-    current: idx
-  })
+function previewImage(current, urls) {
+  const allUrls = (urls || []).map(u => getImgUrl(u))
+  uni.previewImage({ urls: allUrls, current: getImgUrl(current) || allUrls[0] })
 }
 
 function chooseImage() {
@@ -246,9 +324,11 @@ function removeImage(idx) {
 async function uploadImages(urls) {
   // 提交报销
   submitting.value = true
+  const userInfo = uni.getStorageSync('userInfo') || {}
   uni.request({
     url: `/api/purchase-requests/${detail.value.id}/reimburse`,
     method: 'POST',
+    header: { 'x-user-id': userInfo.id },
     data: { images: JSON.stringify(urls) },
     success: (res) => {
       if (res.data.code === 0 || res.data.code === undefined) {
@@ -265,17 +345,25 @@ async function uploadImages(urls) {
 
 function loadDetail() {
   loading.value = true
+  const userInfo = uni.getStorageSync('userInfo') || {}
   uni.request({
     url: `/api/purchase-requests/${currentPage.options.id}`,
+    header: { 'x-user-id': userInfo.id },
     success: (res) => {
-      if (res.data.code === 0) {
-        detail.value = res.data.data || res.data
-        // 解析报销图片
-        if (detail.value.reimburse_images) {
-          try {
-            detail.value.reimburse_images = JSON.parse(detail.value.reimburse_images)
-          } catch { detail.value.reimburse_images = [] }
+      if (res.data && (res.data.code === 0 || res.data.id)) {
+        const raw = res.data.data || res.data
+        // 展平 items[0] 到顶层（兼容模板的扁平字段）
+        if (raw.items && raw.items.length > 0) {
+          const item = raw.items[0]
+          raw.material_name = item.material_name
+          raw.quantity = item.quantity
+          raw.unit_price = item.unit_price
+          raw.unit = item.unit
+          raw.amount = item.total_price
         }
+        detail.value = raw
+        // 清空待上传图片
+        pendingImages.value = []
       } else {
         uni.showToast({ title: '加载失败', icon: 'none' })
       }
@@ -297,29 +385,109 @@ function showRejectDialog() {
   showDialog.value = true
 }
 
+function showFinanceRejectDialog() {
+  dialogType.value = 'finance_reject'
+  dialogComment.value = ''
+  showDialog.value = true
+}
+
 function submitDialog() {
   if (dialogType.value === 'reject' && !dialogComment.value.trim()) {
     uni.showToast({ title: '请输入驳回原因', icon: 'none' })
     return
   }
+  if (dialogType.value === 'finance_reject' && !dialogComment.value.trim()) {
+    uni.showToast({ title: '请输入驳回原因', icon: 'none' })
+    return
+  }
   const id = detail.value.id
-  const url = dialogType.value === 'approve'
-    ? `/api/purchase-requests/${id}/approve`
-    : `/api/purchase-requests/${id}/reject`
-  uni.request({
-    url, method: 'POST',
-    data: { comment: dialogComment.value },
-    success: (res) => {
-      if (res.data.code === 0 || res.data.code === undefined) {
-        uni.showToast({ title: dialogType.value === 'approve' ? '已通过' : '已驳回', icon: 'success' })
-        showDialog.value = false
-        setTimeout(() => { loadDetail() }, 1000)
-      } else {
-        uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
-      }
-    },
-    fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
-  })
+  const userInfo = uni.getStorageSync('userInfo') || {}
+
+  if (dialogType.value === 'approve') {
+    uni.request({
+      url: `/api/purchase-requests/${id}/approve`,
+      method: 'POST',
+      header: { 'x-user-id': String(userInfo.id) },
+      data: { comment: dialogComment.value },
+      success: (res) => {
+        if (res.data.code === 0 || res.data.code === undefined) {
+          uni.showToast({ title: '已通过', icon: 'success' })
+          showDialog.value = false
+          setTimeout(() => { loadDetail() }, 1000)
+        } else {
+          uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
+        }
+      },
+      fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
+    return
+  }
+
+  if (dialogType.value === 'reject') {
+    uni.request({
+      url: `/api/purchase-requests/${id}/reject`,
+      method: 'POST',
+      header: { 'x-user-id': String(userInfo.id) },
+      data: { reason: dialogComment.value },
+      success: (res) => {
+        if (res.data.code === 0 || res.data.code === undefined) {
+          uni.showToast({ title: '已驳回', icon: 'success' })
+          showDialog.value = false
+          setTimeout(() => { loadDetail() }, 1000)
+        } else {
+          uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
+        }
+      },
+      fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
+    return
+  }
+
+  if (dialogType.value === 'finance_reject') {
+    uni.request({
+      url: `/api/purchase-requests/${id}/finance-reject`,
+      method: 'PUT',
+      header: { 'x-user-id': String(userInfo.id) },
+      data: { reason: dialogComment.value },
+      success: (res) => {
+        if (res.data.code === 0 || res.data.code === undefined) {
+          uni.showToast({ title: '已驳回', icon: 'success' })
+          showDialog.value = false
+          setTimeout(() => { loadDetail() }, 1000)
+        } else {
+          uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
+        }
+      },
+      fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
+    return
+  }
+
+  if (dialogType.value === 'finance_confirm') {
+    submittingDialog.value = true
+    if (pendingFinanceImages.value.length > 0) {
+      const uploadTasks = pendingFinanceImages.value.map(path =>
+        new Promise((resolve) => {
+          uni.uploadFile({
+            url: '/api/upload-image',
+            filePath: path,
+            name: 'file',
+            success: (res) => {
+              try { resolve(JSON.parse(res.data).url || JSON.parse(res.data).path || '') } catch { resolve('') }
+            },
+            fail: () => resolve('')
+          })
+        })
+      )
+      Promise.all(uploadTasks).then((urls) => {
+        const validUrls = urls.filter(Boolean)
+        doFinanceConfirm(validUrls)
+      })
+    } else {
+      doFinanceConfirm([])
+    }
+    return
+  }
 }
 
 function submitReimburse() {
@@ -327,32 +495,93 @@ function submitReimburse() {
     uni.showToast({ title: '请先上传凭证', icon: 'none' })
     return
   }
-  // 上传图片到服务器
-  const uploadTasks = pendingImages.value.map(path =>
-    new Promise((resolve, reject) => {
-      uni.uploadFile({
-        url: '/api/upload',
-        filePath: path,
-        name: 'file',
-        success: (res) => {
-          try {
-            const data = JSON.parse(res.data)
-            resolve(data.url || data.path || '')
-          } catch { resolve('') }
-        },
-        fail: () => resolve('')
-      })
+  const paths = pendingImages.value
+  uploadProgress.visible = true
+  uploadProgress.total = paths.length
+  uploadProgress.done = 0
+  uploadProgress.percent = 0
+  uploadProgress.text = '正在上传 0/' + paths.length
+
+  const userInfo = uni.getStorageSync('userInfo') || {}
+  const uploadOne = (path) => new Promise((resolve) => {
+    uni.uploadFile({
+      url: '/api/upload-image',
+      filePath: path,
+      name: 'file',
+      header: { 'x-user-id': userInfo.id },
+      success: (res) => {
+        try {
+          const data = JSON.parse(res.data)
+          resolve(data.url || data.path || '')
+        } catch { resolve('') }
+      },
+      fail: () => resolve('')
     })
-  )
-  submitting.value = true
-  Promise.all(uploadTasks).then(uploadImages)
+  })
+
+  Promise.all(paths.map(async (path) => {
+    const url = await uploadOne(path)
+    uploadProgress.done++
+    uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100)
+    uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total
+    return url
+  })).then((urls) => {
+    uploadProgress.visible = false
+    const validUrls = urls.filter(Boolean)
+    // 提交报销
+    submitting.value = true
+    uni.request({
+      url: `/api/purchase-requests/${detail.value.id}/reimburse`,
+      method: 'POST',
+      header: { 'x-user-id': userInfo.id },
+      data: { images: JSON.stringify(validUrls) },
+      success: (res) => {
+        submitting.value = false
+        if (res.data.code === 0 || res.data.code === undefined) {
+          uni.showToast({ title: '提交成功', icon: 'success' })
+          pendingImages.value = []
+          setTimeout(() => { loadDetail() }, 1500)
+        } else {
+          uni.showToast({ title: res.data.msg || '提交失败', icon: 'none' })
+        }
+      },
+      fail: () => { submitting.value = false; uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
+  })
 }
 
-function confirmFinance() {
+function showFinanceConfirmDialog() {
+  pendingFinanceImages.value = []
+  financeAmount.value = ''
+  dialogType.value = 'finance_confirm'
+  showDialog.value = true
+}
+
+function chooseFinanceImage() {
+  uni.chooseImage({
+    count: 3 - pendingFinanceImages.value.length,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      pendingFinanceImages.value = [...pendingFinanceImages.value, ...res.tempFilePaths]
+    }
+  })
+}
+
+function removeFinanceImage(idx) {
+  pendingFinanceImages.value.splice(idx, 1)
+}
+
+function doFinanceConfirm(images) {
+  submittingDialog.value = true
   uni.request({
     url: `/api/purchase-requests/${detail.value.id}/finance-confirm`,
     method: 'POST',
+    header: { 'x-user-id': userId },
+    data: { images, finance_amount: financeAmount.value },
     success: (res) => {
+      submittingDialog.value = false
+      showDialog.value = false
       if (res.data.code === 0 || res.data.code === undefined) {
         uni.showToast({ title: '确认成功', icon: 'success' })
         setTimeout(() => { loadDetail() }, 1000)
@@ -360,7 +589,7 @@ function confirmFinance() {
         uni.showToast({ title: res.data.msg || '操作失败', icon: 'none' })
       }
     },
-    fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    fail: () => { submittingDialog.value = false; uni.showToast({ title: '网络错误', icon: 'none' }) }
   })
 }
 
@@ -471,4 +700,47 @@ onMounted(() => {
 .dialog-btn { flex: 1; text-align: center; padding: 15px; font-size: 15px; }
 .dialog-btn.cancel { color: #666; border-right: 1px solid #eee; }
 .dialog-btn.confirm { color: #1E3A5F; font-weight: bold; }
+.finance-amount-wrap { margin-bottom: 16px; }
+.finance-amount-wrap .label { display: block; font-size: 14px; color: #333; margin-bottom: 8px; }
+.finance-input {
+  width: 100%; border: 1px solid #eee; border-radius: 8px;
+  padding: 10px; font-size: 14px; box-sizing: border-box;
+}
+.finance-img-wrap .label { display: block; font-size: 14px; color: #333; margin-bottom: 8px; }
+.img-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.img-item { position: relative; width: 160rpx; height: 160rpx; }
+.img-item image { width: 100%; height: 100%; border-radius: 8px; }
+.img-remove {
+  position: absolute; top: -8px; right: -8px;
+  width: 32rpx; height: 32rpx; background: #f44336; color: #fff;
+  border-radius: 50%; font-size: 20px; display: flex; align-items: center;
+  justify-content: center; line-height: 1;
+}
+.img-add {
+  width: 160rpx; height: 160rpx; border: 2rpx dashed #ccc;
+  border-radius: 8px; display: flex; align-items: center;
+  justify-content: center; font-size: 40px; color: #ccc;
+}
+.upload-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); display: flex; align-items: center;
+  justify-content: center; z-index: 9999;
+}
+.upload-overlay-content {
+  background: #fff; border-radius: 12px; padding: 32rpx 48rpx;
+  display: flex; flex-direction: column; align-items: center; min-width: 400rpx;
+}
+.upload-overlay-spinner {
+  font-size: 48rpx; color: #1E3A5F; margin-bottom: 16rpx;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.upload-overlay-text { font-size: 28rpx; color: #333; margin-bottom: 16rpx; }
+.upload-overlay-bar-wrap {
+  width: 100%; height: 8rpx; background: #eee; border-radius: 4rpx; overflow: hidden;
+}
+.upload-overlay-bar {
+  height: 100%; background: #1E3A5F; border-radius: 4rpx; transition: width 0.2s;
+}
+.upload-overlay-percent { font-size: 24rpx; color: #999; margin-top: 8rpx; }
 </style>
