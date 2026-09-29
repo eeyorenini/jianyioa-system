@@ -4985,56 +4985,164 @@ app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (r
 
 // ==================== 派工管理 ====================
 app.get('/api/dispatches', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM dispatches ORDER BY created_at DESC');
-  res.json(await stmt.all());
+  try {
+    const { status } = req.query;
+    let sql = 'SELECT * FROM dispatches';
+    const params = [];
+    if (status) {
+      sql += ' WHERE status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY created_at DESC';
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('dispatches list error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
 });
 
 app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
-  const userId = getUserId(req);
-  const { project_id, project_name, content, location, worker, fee, start_date, requirement, status } = req.body;
-  const stmt = db.prepare('INSERT INTO dispatches (project_id, project_name, content, location, worker, fee, start_date, requirement, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(project_id, project_name || '', content, location || '', worker || '', fee || '', start_date || null, requirement || '', status || '待接单');
-  await addLog(userId, '', '新增', '派工管理', result.lastInsertRowid, content, `派工内容: ${content}`, req.ip);
-  notifyProject('dispatch_created', project_id,
-    `新派工通知：${content}`,
-    `派工内容：${content || ''}，工人：${worker || ''}，项目：${project_name || ''}，请及时处理。`,
-    result.lastInsertRowid, 'dispatch'
-  ).catch(console.error);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  try {
+    const userId = getUserId(req);
+    const { project_id, project_name, content, location, worker, fee, start_date, requirement } = req.body;
+    const [result] = await pool.query(
+      'INSERT INTO dispatches (project_id, project_name, content, location, worker, fee, start_date, requirement, status, applicant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [project_id, project_name || '', content, location || '', worker || '', fee || '', start_date || null, requirement || '', 'pending', userId || 0]
+    );
+    await addLog(userId, '', '新增', '派工管理', result.insertId, content, `派工内容: ${content}`, req.ip);
+    notifyProject('dispatch_created', project_id,
+      `新派工通知：${content}`,
+      `派工内容：${content || ''}，工人：${worker || ''}，项目：${project_name || ''}，请及时处理。`,
+      result.insertId, 'dispatch'
+    ).catch(console.error);
+    res.json({ id: result.insertId, message: '添加成功' });
+  } catch (err) {
+    console.error('dispatches create error:', err);
+    res.status(500).json({ error: '添加失败' });
+  }
+});
+
+// GET /api/dispatches/my — 我的派工单
+app.get('/api/dispatches/my', checkPermission('dispatch:write'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { page = 1, page_size = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+    const [rows] = await pool.query('SELECT * FROM dispatches WHERE applicant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?', [userId, parseInt(page_size), offset]);
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM dispatches WHERE applicant_id = ?', [userId]);
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('dispatches my error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/dispatches/pending — 待审核派工单（需 dispatch:approve 权限）
+app.get('/api/dispatches/pending', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('dispatch:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const { page = 1, page_size = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+    const [rows] = await pool.query('SELECT * FROM dispatches WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?', ['pending', parseInt(page_size), offset]);
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM dispatches WHERE status = ?', ['pending']);
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('dispatches pending error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// PUT /api/dispatches/:id/approve — 审核通过/驳回
+app.put('/api/dispatches/:id/approve', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('dispatch:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const [[record]] = await pool.query('SELECT * FROM dispatches WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '派工单不存在' });
+    const { action, reason } = req.body;
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await pool.query('UPDATE dispatches SET status=?, updated_at=NOW() WHERE id=?', [newStatus, req.params.id]);
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '派工管理', req.params.id, record.content || '', `派工审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
+    const allNotifyIds = new Set([record.applicant_id]);
+    for (const uid of allNotifyIds) {
+      if (uid && uid !== userId) {
+        const [[emp]] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        const msg = action === 'approve'
+          ? `您的派工申请（项目：${record.project_name}）已审核通过，请准备施工。`
+          : `您的派工申请（项目：${record.project_name}）未通过${reason ? '：' + reason : ''}，可重新提交。`;
+        await pool.query('INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())', [uid, action === 'approve' ? '派工申请已通过' : '派工申请未通过', msg, '派工', req.params.id]);
+      }
+    }
+    res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
+  } catch (err) {
+    console.error('dispatches approve error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// PUT /api/dispatches/:id/complete — 确认完工
+app.put('/api/dispatches/:id/complete', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [[record]] = await pool.query('SELECT * FROM dispatches WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '派工单不存在' });
+    await pool.query('UPDATE dispatches SET status=?, updated_at=NOW() WHERE id=?', ['completed', req.params.id]);
+    await addLog(userId, '', '确认完工', '派工管理', req.params.id, record.content || '', `派工完工确认`, req.ip);
+    res.json({ message: '已确认完工' });
+  } catch (err) {
+    console.error('dispatches complete error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
 });
 
 app.put('/api/dispatches/:id', checkPermission('dispatch:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
-  const userId = getUserId(req);
-  const { status, content, location, worker, fee, start_date, requirement } = req.body;
-  const [d] = await db.prepare('SELECT content FROM dispatches WHERE id = ?').all(req.params.id);
-  const dName = d ? d.content : req.params.id;
-  const stmt = db.prepare('UPDATE dispatches SET status=?, content=?, location=?, worker=?, fee=?, start_date=?, requirement=? WHERE id=?');
-  await stmt.run(status, content, location, worker, fee, start_date, requirement, req.params.id);
-  await addLog(userId, '', '编辑', '派工管理', req.params.id, dName, `更新派工: ${dName}`, req.ip);
-  if (d && d.status !== status) {
-    notifyProject('dispatch_status_changed', null,
-      `派工状态变更：${dName}`,
-      `派工「${dName}」状态已变更为「${status}」，请知悉。`,
-      parseInt(req.params.id), 'dispatch'
-    ).catch(console.error);
+  try {
+    const userId = getUserId(req);
+    const { status, content, location, worker, fee, start_date, requirement } = req.body;
+    const [[d]] = await pool.query('SELECT content, status FROM dispatches WHERE id = ?', [req.params.id]);
+    const dName = d ? d.content : req.params.id;
+    await pool.query('UPDATE dispatches SET status=?, content=?, location=?, worker=?, fee=?, start_date=?, requirement=? WHERE id=?', [status, content, location, worker, fee, start_date, requirement, req.params.id]);
+    await addLog(userId, '', '编辑', '派工管理', req.params.id, dName, `更新派工: ${dName}`, req.ip);
+    if (d && d.status !== status) {
+      notifyProject('dispatch_status_changed', null,
+        `派工状态变更：${dName}`,
+        `派工「${dName}」状态已变更为「${status}」，请知悉。`,
+        parseInt(req.params.id), 'dispatch'
+      ).catch(console.error);
+    }
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error('dispatches update error:', err);
+    res.status(500).json({ error: '更新失败' });
   }
-  res.json({ message: '更新成功' });
 });
 
 app.delete('/api/dispatches/:id', checkPermission('dispatch:delete'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
-  const userId = getUserId(req);
-  if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
-  const [d] = await db.prepare('SELECT content FROM dispatches WHERE id = ?').all(req.params.id);
-  const dName = d ? d.content : req.params.id;
-  await db.prepare('DELETE FROM dispatches WHERE id = ?').run(req.params.id);
-  await addLog(userId, '', '删除', '派工管理', req.params.id, dName, `删除派工: ${dName}`, req.ip);
-  res.json({ message: '删除成功' });
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '只有管理员可删除此数据' });
+    const [[d]] = await pool.query('SELECT content FROM dispatches WHERE id = ?', [req.params.id]);
+    const dName = d ? d.content : req.params.id;
+    await pool.query('DELETE FROM dispatches WHERE id = ?', [req.params.id]);
+    await addLog(userId, '', '删除', '派工管理', req.params.id, dName, `删除派工: ${dName}`, req.ip);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    console.error('dispatches delete error:', err);
+    res.status(500).json({ error: '删除失败' });
+  }
 });
 
 app.get('/api/invoices', async (req, res) => {
