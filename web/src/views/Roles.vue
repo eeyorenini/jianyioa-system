@@ -206,7 +206,9 @@ const presetRoles = [
       'contract_created', 'contract_updated', 'project_created', 'project_status_changed',
       'node_status_changed', 'project_progress', 'inspection_submit', 'acceptance_submit',
       'dispatch_created', 'dispatch_status_changed', 'approval_submit', 'approval_result',
-      'notice_published', 'customer_follow', 'invoice_created', 'system_notice'
+      'notice_published', 'customer_follow', 'invoice_created', 'system_notice',
+      'purchase_submit', 'purchase_approved', 'purchase_rejected',
+      'purchase_reimbursing', 'purchase_finance_confirmed', 'purchase_reimbursed'
     ],
     description: '系统超级管理员，拥有全部权限'
   },
@@ -221,7 +223,8 @@ const presetRoles = [
     notification_types: [
       'contract_created', 'contract_updated', 'project_created', 'project_status_changed',
       'node_status_changed', 'project_progress', 'inspection_submit', 'acceptance_submit',
-      'dispatch_created', 'approval_submit'
+      'dispatch_created', 'approval_submit',
+      'purchase_submit', 'purchase_approved', 'purchase_reimbursing', 'purchase_finance_confirmed', 'purchase_reimbursed'
     ],
     description: '负责项目整体管理和协调'
   },
@@ -233,7 +236,8 @@ const presetRoles = [
       'contract:read', 'inspection:read', 'notice:read'
     ],
     notification_types: [
-      'project_created', 'node_status_changed', 'project_progress', 'acceptance_submit'
+      'project_created', 'node_status_changed', 'project_progress', 'acceptance_submit',
+      'purchase_submit', 'purchase_approved', 'purchase_reimbursing'
     ],
     description: '负责设计方案和客户沟通'
   },
@@ -244,7 +248,8 @@ const presetRoles = [
       'project:read', 'inspection:write', 'acceptance:write', 'notice:read'
     ],
     notification_types: [
-      'inspection_submit', 'acceptance_submit', 'dispatch_created'
+      'inspection_submit', 'acceptance_submit', 'dispatch_created',
+      'purchase_submit', 'purchase_approved', 'purchase_reimbursing'
     ],
     description: '负责工程质量和进度监督'
   },
@@ -256,7 +261,8 @@ const presetRoles = [
       'invoice:read', 'invoice:write', 'notice:read'
     ],
     notification_types: [
-      'contract_created', 'contract_updated', 'invoice_created', 'approval_result'
+      'contract_created', 'contract_updated', 'invoice_created', 'approval_result',
+      'purchase_finance_confirmed', 'purchase_reimbursed'
     ],
     description: '负责财务和发票管理'
   },
@@ -313,7 +319,14 @@ const notificationTypes = [
   { value: 'notice_published', label: '发布公告' },
   { value: 'customer_follow', label: '客户跟进' },
   { value: 'invoice_created', label: '新增发票' },
-  { value: 'system_notice', label: '系统通知' }
+  { value: 'system_notice', label: '系统通知' },
+  // 采购流程
+  { value: 'purchase_submit', label: '采购提交' },
+  { value: 'purchase_approved', label: '采购审批通过' },
+  { value: 'purchase_rejected', label: '采购驳回' },
+  { value: 'purchase_reimbursing', label: '采购报销中' },
+  { value: 'purchase_finance_confirmed', label: '财务受理' },
+  { value: 'purchase_reimbursed', label: '报销完成' }
 ]
 
 const form = reactive({

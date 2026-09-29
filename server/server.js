@@ -3163,9 +3163,9 @@ app.post('/api/material/purchase', async (req, res) => {
   const newPurchaseId = result.lastInsertRowid;
   await addLog(userId, '', '新增', '采购申请', newPurchaseId, 0, `采购申请：${material_name}`, req.ip);
 
-  // 发送应用内通知：查项目相关人（设计师/监理/经理）+ 管理员
+  // 发送应用内通知：查项目相关人（设计师/监理/经理）+ 管理员（改用 MySQL）
   try {
-    const [proj] = await db.prepare(`
+    const [proj] = await pool.query(`
       SELECT p.*,
         des.phone as designer_phone, des.name as designer_name, des.id as designer_id,
         sup.phone as supervisor_phone, sup.name as supervisor_name, sup.id as supervisor_id,
@@ -3177,7 +3177,7 @@ app.post('/api/material/purchase', async (req, res) => {
       LEFT JOIN employees mgr ON p.manager_id = mgr.id
       LEFT JOIN employees creator ON creator.id = ?
       WHERE p.id = ?
-    `).all(userId, project_id);
+    `, [userId, project_id]);
 
     const targets = [];
     if (proj) {
@@ -3186,11 +3186,11 @@ app.post('/api/material/purchase', async (req, res) => {
       if (proj.manager_phone) targets.push({ phone: proj.manager_phone, name: proj.manager_name, user_id: proj.manager_id });
       if (proj.creator_phone) targets.push({ phone: proj.creator_phone, name: proj.creator_name, user_id: userId });
       // 管理员
-      const [admin] = await db.prepare('SELECT phone, name, id FROM employees WHERE id = 1').all();
-      if (admin && admin.phone) targets.push({ phone: admin.phone, name: admin.name || '管理员', user_id: admin.id });
+      const [admins] = await pool.query('SELECT phone, name, id FROM employees WHERE id = 1');
+      if (admins[0] && admins[0].phone) targets.push({ phone: admins[0].phone, name: admins[0].name || '管理员', user_id: admins[0].id });
     }
 
-    const creatorName = proj?.creator_name || '未知';
+    const creatorName = proj[0]?.creator_name || '未知';
     const content = `【${material_name}】采购申请，数量：${quantity}${unit || ''}，金额：¥${amount || 0}，申请人：${creatorName}`;
     sendAppNotification('purchase', '新采购申请', content, newPurchaseId, 'purchase', targets).catch(console.error);
   } catch (err) {
@@ -3898,20 +3898,25 @@ app.get('/api/messages', async (req, res) => {
       const offset = (parseInt(page) - 1) * parseInt(pageSize);
       list = all.slice(offset, offset + parseInt(pageSize));
     } else {
-      // 员工：查 messages 表（原有逻辑）
-      let sql = 'SELECT * FROM messages WHERE user_id = ?';
+      // 员工：查 MySQL messages 表（修复：sendPurchaseNotification 写 MySQL，读取也要从 MySQL 读）
+      let where = 'WHERE user_id = ?';
       const params = [userId];
-      
-      if (type) { sql += ' AND type = ?'; params.push(type); }
-      if (is_read !== undefined && is_read !== '') { sql += ' AND is_read = ?'; params.push(parseInt(is_read)); }
-      if (keyword) { sql += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
-      
-      sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-      params.push(parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
-      
-      const stmt = db.prepare(sql);
-      list = await stmt.all(...params);
-      total = list.length;
+
+      if (type) { where += ' AND type = ?'; params.push(type); }
+      if (is_read !== undefined && is_read !== '') { where += ' AND is_read = ?'; params.push(parseInt(is_read)); }
+      if (keyword) { where += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+
+      const offset = (parseInt(page) - 1) * parseInt(pageSize);
+      const [rows] = await pool.query(
+        `SELECT * FROM messages ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [...params, parseInt(pageSize), offset]
+      );
+      const [countResult] = await pool.query(
+        `SELECT COUNT(*) as total FROM messages ${where}`,
+        params
+      );
+      list = rows;
+      total = countResult[0].total;
     }
     
     res.json({ list, total, page: parseInt(page), page_size: parseInt(pageSize) });
@@ -3936,9 +3941,9 @@ app.get('/api/messages/unread-count', async (req, res) => {
       const [row] = await db.prepare('SELECT COUNT(*) as count FROM notifications WHERE receiver_phone = ? AND is_read = 0').all(customer.phone);
       count = row.count;
     } else {
-      // 员工：查 messages 表
-      const [row] = await db.prepare('SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND is_read = 0').all(userId);
-      count = row.count;
+      // 员工：查 MySQL messages 表未读数
+      const [row] = await pool.query('SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND is_read = 0', [userId]);
+      count = row[0].count;
     }
     
     res.json({ count });
@@ -3960,8 +3965,8 @@ app.put('/api/messages/:id/read', async (req, res) => {
       // 客户：更新 notifications 表
       await db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?').run(req.params.id, customer.phone);
     } else {
-      // 员工：更新 messages 表
-      await db.prepare('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, userId);
+      // 员工：更新 MySQL messages 表
+      await pool.query('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, userId]);
     }
     res.json({ message: '已标记已读' });
   } catch (err) {
@@ -4050,15 +4055,36 @@ async function getUserIdsByPermission(permCode) {
   }
 }
 
+// 查询订阅了指定消息类型的用户ID列表
+async function getUserIdsByNotificationType(notifType) {
+  try {
+    const [rows] = await pool.query(`
+      SELECT DISTINCT e.id FROM employees e
+      LEFT JOIN roles r ON e.role_id = r.id
+      WHERE (
+        r.notification_types IS NOT NULL AND r.notification_types != ''
+        AND r.notification_types != '[]'
+        AND JSON_SEARCH(r.notification_types, 'one', ?) IS NOT NULL
+      )
+    `, [notifType]);
+    return rows.map(r => r.id);
+  } catch (e) {
+    console.error('getUserIdsByNotificationType error:', e.message);
+    return [];
+  }
+}
+
 // 发送采购通知（站内消息）
 async function sendPurchaseNotification({ userId, userName, title, content, type, relatedId, relatedType }) {
   try {
-    await db.prepare(`
-      INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, NOW())
-    `).run(userId, userName || '', title, content, type, relatedId, relatedType);
+    // 写 MySQL messages 表（移动端读的就是这个表）
+    await pool.query(
+      'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, NOW())',
+      [userId, userName || '', title, content, type, relatedId || 0, relatedType || '', 'pending']
+    );
     // 短信通知
-    const [emp] = await db.prepare('SELECT phone FROM employees WHERE id = ?').all(userId);
+    const [emps] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+    const emp = emps[0];
     if (emp && emp.phone) {
       sendSmsFromNotify(emp.phone, userName, title, content).catch(err => console.error('短信发送失败:', err));
     }
@@ -4187,9 +4213,11 @@ app.post('/api/purchase-requests', async (req, res) => {
 
     await addLog(userId, '', '新增', '采购管理', requestId, project_name || '', `提交采购申请，金额：${total_amount}`, req.ip);
 
-    // 通知有 purchase:approve 权限的人
+    // 通知有 purchase:approve 权限的人 + 订阅了 purchase_submit 的角色成员
     const approverIds = await getUserIdsByPermission('purchase:approve');
-    for (const uid of approverIds) {
+    const subscribedIds = await getUserIdsByNotificationType('purchase_submit');
+    const allNotifyIds = [...new Set([...approverIds, ...subscribedIds])];
+    for (const uid of allNotifyIds) {
       if (uid !== userId) {
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
@@ -4263,7 +4291,7 @@ app.get('/api/purchase-requests/pending', checkPermission('purchase:approve'), a
   }
 });
 
-// GET /api/purchase-requests/reimburse — 待报销列表（status=reimburse）
+// GET /api/purchase-requests/reimburse — 报销中列表（status=reimbursing）
 app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'), async (req, res) => {
   const { page, page_size } = req.query;
   const p = parseInt(page) || 1;
@@ -4277,11 +4305,11 @@ app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'),
        LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
        WHERE pr.status = ?
        ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
-      ['reimburse', l, offset]
+      ['reimbursing', l, offset]
     );
     const [countResult] = await pool.query(
       'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
-      ['reimburse']
+      ['reimbursing']
     );
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
@@ -4290,7 +4318,7 @@ app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'),
   }
 });
 
-// GET /api/purchase-requests/finance — 已财务确认列表（status=finance_confirmed）
+// GET /api/purchase-requests/finance — 财务确认列表（finance_confirmed + reimbursed）
 app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), async (req, res) => {
   const { page, page_size } = req.query;
   const p = parseInt(page) || 1;
@@ -4302,13 +4330,13 @@ app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), a
       `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
        FROM purchase_requests pr
        LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
-       WHERE pr.status = ?
+       WHERE pr.status IN ('finance_confirmed', 'reimbursed')
        ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
-      ['finance_confirmed', l, offset]
+      [l, offset]
     );
     const [countResult] = await pool.query(
-      'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
-      ['finance_confirmed']
+      'SELECT COUNT(*) as total FROM purchase_requests WHERE status IN (?, ?)',
+      ['finance_confirmed', 'reimbursed']
     );
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
@@ -4433,23 +4461,29 @@ app.put('/api/purchase-requests/:id/approve', async (req, res) => {
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '采购管理', req.params.id, rows[0].project_name || '', `采购审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
 
-    // 通知申请人
+    // 通知申请人 + 订阅了该通知类型的角色成员
     const record = rows[0];
-    const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [record.applicant_id]);
-    if (action === 'approve') {
-      await sendPurchaseNotification({
-        userId: record.applicant_id, userName: emp[0]?.name || '',
-        title: '采购申请已通过',
-        content: `您的采购申请（项目：${record.project_name}，金额：${record.total_amount}）已审核通过，请上传报销单`,
-        type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
-      });
-    } else {
-      await sendPurchaseNotification({
-        userId: record.applicant_id, userName: emp[0]?.name || '',
-        title: '采购申请未通过',
-        content: `您的采购申请（项目：${record.project_name}）未通过${reason ? '：' + reason : ''}，可重新提交`,
-        type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
-      });
+    const subscribedIds = await getUserIdsByNotificationType(action === 'approve' ? 'purchase_approved' : 'purchase_rejected');
+    const allNotifyIds = new Set([record.applicant_id, ...subscribedIds]);
+    for (const uid of allNotifyIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        if (action === 'approve') {
+          await sendPurchaseNotification({
+            userId: uid, userName: emp[0]?.name || '',
+            title: '采购申请已通过',
+            content: `您的采购申请（项目：${record.project_name}，金额：${record.total_amount}）已审核通过，请上传报销单`,
+            type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+          });
+        } else {
+          await sendPurchaseNotification({
+            userId: uid, userName: emp[0]?.name || '',
+            title: '采购申请未通过',
+            content: `您的采购申请（项目：${record.project_name}）未通过${reason ? '：' + reason : ''}，可重新提交`,
+            type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+          });
+        }
+      }
     }
 
     res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
@@ -4460,6 +4494,7 @@ app.put('/api/purchase-requests/:id/approve', async (req, res) => {
 });
 
 // POST /api/purchase-requests/:id/reimburse — 上传报销单（申请人）
+// 支持两种方式：1) multipart/form-data（files字段）2) JSON body { images: ["url1","url2"] }
 app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), async (req, res) => {
   try {
     const { userId, userName } = await getCurrentUser(req);
@@ -4470,10 +4505,13 @@ app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), asyn
     if (rows[0].applicant_id !== userId) return res.status(403).json({ error: '只能上传自己的报销单' });
     if (rows[0].status !== 'approved') return res.status(400).json({ error: '只有在审核通过后才能上传报销单' });
 
-    const { actual_amount, financial_notes } = req.body;
+    const { actual_amount, financial_notes, images: imagesJson } = req.body;
 
-    // 处理上传的图片
-    const images = (req.files || []).map(f => `/uploads/logs/${f.filename}`);
+    // 处理图片：优先从文件上传获取，其次从 JSON body 解析
+    let images = (req.files || []).map(f => `/uploads/logs/${f.filename}`);
+    if (images.length === 0 && imagesJson) {
+      try { images = JSON.parse(imagesJson); } catch { images = []; }
+    }
 
     // 检查是否已有报销记录
     const [existing] = await pool.query('SELECT id FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
@@ -4495,9 +4533,11 @@ app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), asyn
 
     await addLog(userId, '', '上传报销', '采购管理', req.params.id, rows[0].project_name || '', `上传报销单，实付金额：${actual_amount || 0}`, req.ip);
 
-    // 通知有 purchase:finance 权限的人
+    // 通知有 purchase:finance 权限的人 + 订阅了 purchase_reimbursing 的角色成员
     const financeIds = await getUserIdsByPermission('purchase:finance');
-    for (const uid of financeIds) {
+    const subscribedIds = await getUserIdsByNotificationType('purchase_reimbursing');
+    const allNotifyIds = [...new Set([...financeIds, ...subscribedIds])];
+    for (const uid of allNotifyIds) {
       if (uid !== userId) {
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
@@ -4516,8 +4556,58 @@ app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), asyn
   }
 });
 
-// PUT /api/purchase-requests/:id/finance-confirm — 财务确认（确认报销）
-app.put('/api/purchase-requests/:id/finance-confirm', async (req, res) => {
+// PUT /api/purchase-requests/:id/finance-reject — 财务驳回报销（打回给员工重新上传）
+app.put('/api/purchase-requests/:id/finance-reject', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:finance') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无财务操作权限' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].status !== 'reimbursing') return res.status(400).json({ error: '状态不允许财务驳回' });
+
+    const { reason } = req.body;
+
+    // 更新报销记录填入驳回原因
+    await pool.query(
+      `UPDATE purchase_reimbursements SET reject_reason=? WHERE request_id=?`,
+      [reason || '', req.params.id]
+    );
+
+    // 状态打回 approved，员工可重新上传
+    await pool.query(`UPDATE purchase_requests SET status='approved', updated_at=NOW() WHERE id=?`, [req.params.id]);
+
+    await addLog(userId, '', '财务驳回', '采购管理', req.params.id, rows[0].project_name || '', `财务驳回报销，原因：${reason || '未填写'}`, req.ip);
+
+    // 通知申请人 + 订阅了 purchase_rejected 的角色成员
+    const subscribedIds = await getUserIdsByNotificationType('purchase_rejected');
+    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds]);
+    for (const uid of allNotifyIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '报销单被驳回',
+          content: `您的报销单（项目：${rows[0].project_name}）被财务驳回${reason ? '：' + reason : ''}，请重新上传`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '已驳回' });
+  } catch (err) {
+    console.error('purchase-requests finance-reject error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// POST /api/purchase-requests/:id/finance-accept — 财务受理（输入金额，进入受理中）
+app.post('/api/purchase-requests/:id/finance-accept', async (req, res) => {
   try {
     const { userId, userName } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
@@ -4529,30 +4619,79 @@ app.put('/api/purchase-requests/:id/finance-confirm', async (req, res) => {
 
     const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
-    if (rows[0].status !== 'reimbursing') return res.status(400).json({ error: '状态不允许财务确认' });
+    if (rows[0].status !== 'reimbursing') return res.status(400).json({ error: '状态不允许财务受理' });
 
-    const { actual_amount, financial_notes } = req.body;
+    const { actual_amount = 0, financial_notes = '' } = req.body;
+    const amount = req.body.finance_amount ?? actual_amount;
 
     // 更新报销记录
     await pool.query(
       `UPDATE purchase_reimbursements SET actual_amount=?, financial_notes=?, confirmed_by=?, confirmed_by_name=?, confirmed_at=NOW() WHERE request_id=?`,
-      [actual_amount || 0, financial_notes || '', userId, userName, req.params.id]
+      [amount, financial_notes, userId, userName, req.params.id]
     );
 
-    // 更新申请状态为已报销
-    await pool.query(`UPDATE purchase_requests SET status='reimbursed', actual_amount=?, updated_at=NOW() WHERE id=?`, [actual_amount || 0, req.params.id]);
+    // 更新申请状态为财务受理中
+    await pool.query(`UPDATE purchase_requests SET status='finance_confirmed', actual_amount=?, updated_at=NOW() WHERE id=?`, [amount, req.params.id]);
 
-    await addLog(userId, '', '财务确认', '采购管理', req.params.id, rows[0].project_name || '', `财务确认报销，实付：${actual_amount || 0}`, req.ip);
+    await addLog(userId, '', '财务受理', '采购管理', req.params.id, rows[0].project_name || '', `财务受理报销申请，实付：${amount}`, req.ip);
 
-    // 通知申请人 + 原审核人
-    const notifyIds = new Set([rows[0].applicant_id, ...await getUserIdsByPermission('purchase:approve')]);
+    // 通知申请人 + 订阅了 purchase_finance_confirmed 的角色成员
+    const subscribedIds = await getUserIdsByNotificationType('purchase_finance_confirmed');
+    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds]);
+    for (const uid of allNotifyIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '采购报销已受理',
+          content: `采购申请（项目：${rows[0].project_name}）已受理，等待上传报销回执`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '财务受理成功' });
+  } catch (err) {
+    console.error('purchase-requests finance-accept error:', err);
+    res.status(500).json({ error: '受理失败' });
+  }
+});
+
+// POST /api/purchase-requests/:id/finance-confirm — 财务最终确认（上传回执，完结）
+app.post('/api/purchase-requests/:id/finance-confirm', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:finance') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无财务确认权限' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].status !== 'finance_confirmed') return res.status(400).json({ error: '状态不允许财务确认' });
+
+    const { images = '' } = req.body;
+
+    // 更新报销回执图片
+    await pool.query(
+      `UPDATE purchase_requests SET status='reimbursed', finance_images=?, updated_at=NOW() WHERE id=?`,
+      [images, req.params.id]
+    );
+
+    await addLog(userId, '', '财务确认', '采购管理', req.params.id, rows[0].project_name || '', `财务确认报销完成，回执图片已上传`, req.ip);
+
+    // 通知申请人 + 原审核人 + 订阅了 purchase_reimbursed 的角色成员
+    const subscribedIds = await getUserIdsByNotificationType('purchase_reimbursed');
+    const notifyIds = new Set([rows[0].applicant_id, ...await getUserIdsByPermission('purchase:approve'), ...subscribedIds]);
     for (const uid of notifyIds) {
       if (uid !== userId) {
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
           title: '采购已报销完成',
-          content: `采购申请（项目：${rows[0].project_name}）已报销完成，实付金额：${actual_amount || 0}`,
+          content: `采购申请（项目：${rows[0].project_name}）已报销完成，实付金额：${rows[0].actual_amount}`,
           type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
         });
       }
