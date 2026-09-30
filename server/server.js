@@ -1524,6 +1524,31 @@ app.post('/api/contracts/upload-word', upload.single('file'), async (req, res) =
   }
 });
 
+// ==================== 合同文件上传（支持图片/PDF/Word） ====================
+app.post('/api/upload-contract-file', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: '未找到文件' });
+    }
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.pdf', '.doc', '.docx'];
+    if (!allowedExts.includes(ext)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: '不支持此文件格式' });
+    }
+    const newName = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    const contractUploadDir = path.join(uploadDir, 'contracts/');
+    if (!fs.existsSync(contractUploadDir)) fs.mkdirSync(contractUploadDir, { recursive: true });
+    const newPath = path.join(contractUploadDir, newName);
+    fs.renameSync(req.file.path, newPath);
+    const url = `/uploads/contracts/${newName}`;
+    res.json({ url });
+  } catch (error) {
+    console.error('合同文件上传错误:', error);
+    res.status(500).json({ error: '文件上传失败' });
+  }
+});
+
 // ==================== 图片/PDF 上传接口 ====================
 // 图片上传接口（存文件，返回路径，删图片接口）
 const logsUploadDir = path.join(uploadDir, 'logs/');
@@ -2003,20 +2028,6 @@ app.delete('/api/finance/:id', checkPermission('finance:delete'), async (req, re
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '财务管理', req.params.id, fCat, `删除财务记录: ${fCat}`, req.ip);
   res.json({ message: '删除成功' });
-});
-
-app.get('/api/finance/summary', async (req, res) => {
-  const income = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'income'").get();
-  const expense = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'expense'").get();
-  const projectIncome = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'income' AND project_id IS NOT NULL").get();
-  const projectExpense = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'expense' AND project_id IS NOT NULL").get();
-  res.json({
-    totalIncome: income.total,
-    totalExpense: expense.total,
-    balance: income.total - expense.total,
-    projectIncome: projectIncome.total,
-    projectExpense: projectExpense.total
-  });
 });
 
 // ==================== 项目管理（增强：关联客户）====================
@@ -3581,6 +3592,18 @@ app.get('/api/permissions', async (req, res) => {
   res.json(await stmt.all());
 });
 
+// 获取当前用户的权限列表（供移动端使用）
+app.get('/api/my-permissions', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    res.json({ permissions: perms });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/permissions', async (req, res) => {
   const { name, code, parent_id, type, path, icon, sort_order } = req.body;
   const stmt = db.prepare('INSERT INTO permissions (name, code, parent_id, type, path, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -4986,12 +5009,20 @@ app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (r
 // ==================== 派工管理 ====================
 app.get('/api/dispatches', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, project_id } = req.query;
     let sql = 'SELECT * FROM dispatches';
     const params = [];
+    const conditions = [];
     if (status) {
-      sql += ' WHERE status = ?';
+      conditions.push('status = ?');
       params.push(status);
+    }
+    if (project_id) {
+      conditions.push('project_id = ?');
+      params.push(project_id);
+    }
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
     }
     sql += ' ORDER BY created_at DESC';
     const [rows] = await pool.query(sql, params);
@@ -5024,7 +5055,7 @@ app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) 
 });
 
 // GET /api/dispatches/my — 我的派工单
-app.get('/api/dispatches/my', checkPermission('dispatch:write'), async (req, res) => {
+app.get('/api/dispatches/my', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
@@ -5074,6 +5105,16 @@ app.put('/api/dispatches/:id/approve', async (req, res) => {
     if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
     const newStatus = action === 'approve' ? 'approved' : 'rejected';
     await pool.query('UPDATE dispatches SET status=?, updated_at=NOW() WHERE id=?', [newStatus, req.params.id]);
+
+    // 审核通过 → 自动在 payment_records 插入待确认支出记录
+    if (action === 'approve' && record.fee && parseFloat(record.fee) > 0) {
+      await pool.query(
+        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+         VALUES (?, 'expense', 'dispatch', ?, ?, 'pending', ?, NOW())`,
+        [record.project_id, record.fee, req.params.id, userId]
+      );
+    }
+
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '派工管理', req.params.id, record.content || '', `派工审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
     const allNotifyIds = new Set([record.applicant_id]);
     for (const uid of allNotifyIds) {
@@ -7218,6 +7259,381 @@ app.get('/api/wechat/bind-status/:phone', async (req, res) => {
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ==================== 合同上传（移动端） ====================
+app.post('/api/contracts/upload', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { project_id, contract_amount, remark, attachment } = req.body;
+    if (!project_id) return res.status(400).json({ error: '请先选择关联项目' });
+    if (!contract_amount || parseFloat(contract_amount) <= 0) return res.status(400).json({ error: '请填写有效的合同金额' });
+
+    const [[project]] = await pool.query('SELECT name FROM projects WHERE id = ?', [project_id]);
+    const project_name = project?.name || '';
+
+    // 插入合同记录，状态为待审核
+    const [result] = await pool.query(
+      `INSERT INTO contracts (project_id, contract_amount, review_status, submitted_by, created_by, creator_id, attachment, created_at)
+       VALUES (?, ?, 'pending', ?, ?, ?, ?, NOW())`,
+      [project_id, contract_amount, userId, userId, userId, attachment || '']
+    );
+
+    await addLog(userId, '', '上传', '合同管理', result.insertId, project_name, `上传合同金额：${contract_amount}元`, req.ip);
+    notifyProject('contract_uploaded', project_id, `项目「${project_name}」上传合同`, `合同金额：${contract_amount}元`, result.insertId, 'contract').catch(console.error);
+
+    res.json({ code: 0, id: result.insertId, message: '合同已提交，待审核' });
+  } catch (err) {
+    console.error('contracts upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 合同审核 ====================
+app.put('/api/contracts/:id/review', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canApprove = perms.includes('contract:approve') || perms.includes('project_contract:approve') || await isAdmin(userId);
+    if (!canApprove) {
+      return res.status(403).json({ error: '无合同审核权限' });
+    }
+    const [[contract]] = await pool.query('SELECT * FROM contracts WHERE id = ?', [req.params.id]);
+    if (!contract) return res.status(404).json({ error: '合同不存在' });
+    if (contract.review_status && contract.review_status !== 'pending') {
+      return res.status(400).json({ error: '该合同已审核过' });
+    }
+
+    const { action, remark } = req.body; // action: approve / reject
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await pool.query(
+      'UPDATE contracts SET review_status=?, reviewed_by=?, reviewed_at=NOW(), reviewer_remark=? WHERE id=?',
+      [newStatus, userId, remark || '', req.params.id]
+    );
+
+    // 审核通过 → 自动在 payment_records 插入收入记录
+    if (action === 'approve' && contract.contract_amount) {
+      await pool.query(
+        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+         VALUES (?, 'income', 'contract', ?, ?, 'confirmed', ?, NOW())`,
+        [contract.project_id, contract.contract_amount, req.params.id, userId]
+      );
+    }
+
+    const [[submitter]] = await pool.query('SELECT name FROM employees WHERE id = ?', [contract.submitted_by]);
+    const submitterName = submitter?.name || '';
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '合同管理', req.params.id, `项目#${contract.project_id}`, `合同审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
+
+    if (contract.submitted_by && contract.submitted_by !== userId) {
+      await pool.query(
+        'INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+        [contract.submitted_by, action === 'approve' ? '合同已通过' : '合同未通过', action === 'approve' ? `您上传的合同已审核通过` : `您上传的合同未通过${remark ? '：' + remark : ''}`, '合同', req.params.id]
+      );
+    }
+    res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
+  } catch (err) {
+    console.error('contract review error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 反审核：合同从 approved/rejected 退回 pending，删除对应的 payment_records 收入记录
+app.put('/api/contracts/:id/revert', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canApprove = perms.includes('contract:approve') || perms.includes('project_contract:approve') || await isAdmin(userId);
+    if (!canApprove) return res.status(403).json({ error: '无合同审核权限' });
+
+    const [[contract]] = await pool.query('SELECT * FROM contracts WHERE id = ?', [req.params.id]);
+    if (!contract) return res.status(404).json({ error: '合同不存在' });
+    if (contract.review_status === 'pending') return res.status(400).json({ error: '当前就是待审核状态' });
+
+    await pool.query(
+      'UPDATE contracts SET review_status=?, reviewed_by=NULL, reviewed_at=NULL, reviewer_remark=NULL WHERE id=?',
+      ['pending', req.params.id]
+    );
+    await pool.query(
+      "DELETE FROM payment_records WHERE source_id=? AND type='income' AND category='contract'",
+      [req.params.id]
+    );
+    res.json({ message: '已反审核' });
+  } catch (err) {
+    console.error('contract revert error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 合同列表（移动端按项目查） ====================
+app.get('/api/contracts/by-project/:projectId', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.*, reviewed.name as reviewed_by_name, submitter.name as submitted_by_name
+       FROM contracts c
+       LEFT JOIN employees reviewed ON reviewed.id = c.reviewed_by
+       LEFT JOIN employees submitter ON submitter.id = c.submitted_by
+       WHERE c.project_id = ?
+       ORDER BY c.id DESC`,
+      [req.params.projectId]
+    );
+    res.json({ code: 0, data: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== 增减项 API ====================
+app.get('/api/contract-changes', async (req, res) => {
+  try {
+    const { project_id, contract_id } = req.query;
+    let sql = `SELECT cc.*, s.name as submitted_by_name, r.name as reviewed_by_name
+               FROM contract_changes cc
+               LEFT JOIN employees s ON s.id = cc.submitted_by
+               LEFT JOIN employees r ON r.id = cc.reviewed_by
+               WHERE 1=1`;
+    const params = [];
+    if (project_id) { sql += ' AND cc.project_id = ?'; params.push(project_id); }
+    if (contract_id) { sql += ' AND cc.contract_id = ?'; params.push(contract_id); }
+    sql += ' ORDER BY cc.id DESC';
+    const [rows] = await pool.query(sql, params);
+    res.json({ code: 0, data: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/contract-changes', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { project_id, contract_id, change_type, title, amount, description } = req.body;
+    if (!project_id) return res.status(400).json({ error: '项目ID不能为空' });
+    if (!change_type || !['increase', 'decrease'].includes(change_type)) return res.status(400).json({ error: '类型必选增或减' });
+    if (!title) return res.status(400).json({ error: '标题不能为空' });
+    if (amount === undefined || parseFloat(amount) <= 0) return res.status(400).json({ error: '金额必须大于0' });
+
+    const [[project]] = await pool.query('SELECT name FROM projects WHERE id = ?', [project_id]);
+    const project_name = project?.name || '';
+
+    const [result] = await pool.query(
+      `INSERT INTO contract_changes (project_id, contract_id, change_type, title, amount, description, status, submitted_by, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NOW())`,
+      [project_id, contract_id || null, change_type, title, amount, description || '', userId]
+    );
+    await addLog(userId, '', '新增', '增减项', result.insertId, project_name, `${change_type === 'increase' ? '增加' : '减少'}：${title}（${amount}元）`, req.ip);
+    res.json({ id: result.insertId, message: '增减项已提交，待审核' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/contract-changes/:id/review', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('contract_change:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无增减项审核权限' });
+    }
+    const [[record]] = await pool.query('SELECT * FROM contract_changes WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '记录不存在' });
+    if (record.status !== 'pending') return res.status(400).json({ error: '该记录已审核' });
+
+    const { action, remark } = req.body;
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await pool.query(
+      'UPDATE contract_changes SET status=?, reviewed_by=?, reviewed_at=NOW(), reviewer_remark=? WHERE id=?',
+      [newStatus, userId, remark || '', req.params.id]
+    );
+
+    // 审核通过 → 自动更新 payment_records
+    if (action === 'approve' && record.amount) {
+      const pType = record.change_type === 'increase' ? 'income' : 'expense';
+      await pool.query(
+        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+         VALUES (?, ?, 'contract_change', ?, ?, 'confirmed', ?, NOW())`,
+        [record.project_id, pType, record.amount, req.params.id, userId]
+      );
+    }
+
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '增减项', req.params.id, record.title, `增减项审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
+    res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 催收记录 API ====================
+app.get('/api/collection-records', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    let sql = `SELECT cr.*, s.name as submitted_by_name, c.name as confirmed_by_name
+               FROM collection_records cr
+               LEFT JOIN employees s ON s.id = cr.submitted_by
+               LEFT JOIN employees c ON c.id = cr.confirmed_by
+               WHERE 1=1`;
+    const params = [];
+    if (project_id) { sql += ' AND cr.project_id = ?'; params.push(project_id); }
+    sql += ' ORDER BY cr.id DESC';
+    const [rows] = await pool.query(sql, params);
+    res.json({ list: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/collection-records', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { project_id, amount, collect_date, remark, images } = req.body;
+    if (!project_id) return res.status(400).json({ error: '项目ID不能为空' });
+    if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: '催收金额必须大于0' });
+    if (!images || (Array.isArray(images) && images.length === 0)) return res.status(400).json({ error: '请上传凭证图片' });
+
+    const [[project]] = await pool.query('SELECT name FROM projects WHERE id = ?', [project_id]);
+    const project_name = project?.name || '';
+    const imagesStr = Array.isArray(images) ? JSON.stringify(images) : (typeof images === 'string' ? images : '');
+
+    const [result] = await pool.query(
+      `INSERT INTO collection_records (project_id, amount, collect_date, remark, images, status, submitted_by, submitted_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, NOW())`,
+      [project_id, amount, collect_date || null, remark || '', imagesStr, userId]
+    );
+    await addLog(userId, '', '新增', '催收记录', result.insertId, project_name, `催收金额：${amount}元`, req.ip);
+    res.json({ id: result.insertId, message: '催收记录已录入' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/collection-records/:id/confirm', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [[record]] = await pool.query('SELECT * FROM collection_records WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '记录不存在' });
+    if (record.status !== 'pending') return res.status(400).json({ error: '该记录已确认' });
+
+    const { confirmed_amount, confirmed_remark, confirmed_images } = req.body;
+    const confAmt = confirmed_amount || record.amount;
+    const confImages = Array.isArray(confirmed_images) ? JSON.stringify(confirmed_images) : (confirmed_images || '');
+
+    await pool.query(
+      `UPDATE collection_records SET status='confirmed', confirmed_by=?, confirmed_at=NOW(),
+       confirmed_amount=?, confirmed_remark=?, confirmed_images=? WHERE id=?`,
+      [userId, confAmt, confirmed_remark || '', confImages, req.params.id]
+    );
+
+    // 确认收款 → 自动在 payment_records 插入收入记录
+    await pool.query(
+      `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+       VALUES (?, 'income', 'collection', ?, ?, 'confirmed', ?, NOW())`,
+      [record.project_id, confAmt, req.params.id, userId]
+    );
+
+    await addLog(userId, '', '确认收款', '催收记录', req.params.id, `项目#${record.project_id}`, `确认收款：${confAmt}元`, req.ip);
+    res.json({ message: '已确认收款' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 收支记录 API ====================
+app.get('/api/payment-records', async (req, res) => {
+  try {
+    const { project_id, type, status } = req.query;
+    let sql = `SELECT pr.*, c.name as created_by_name
+               FROM payment_records pr
+               LEFT JOIN employees c ON c.id = pr.created_by
+               WHERE 1=1`;
+    const params = [];
+    if (project_id) { sql += ' AND pr.project_id = ?'; params.push(project_id); }
+    if (type) { sql += ' AND pr.type = ?'; params.push(type); }
+    if (status) { sql += ' AND pr.status = ?'; params.push(status); }
+    sql += ' ORDER BY pr.id DESC';
+    const [rows] = await pool.query(sql, params);
+    res.json({ list: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/payment-records', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { project_id, type, category, amount, remark, status } = req.body;
+    if (!project_id) return res.status(400).json({ error: '项目ID不能为空' });
+    if (!type || !['income', 'expense'].includes(type)) return res.status(400).json({ error: '类型必选收入或支出' });
+    if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: '金额必须大于0' });
+
+    const [result] = await pool.query(
+      `INSERT INTO payment_records (project_id, type, category, amount, status, remark, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [project_id, type, category || 'manual', amount, status || 'pending', remark || '', userId]
+    );
+    await addLog(userId, '', '新增', '收支记录', result.insertId, `项目#${project_id}`, `${type === 'income' ? '收入' : '支出'}：${amount}元`, req.ip);
+    res.json({ id: result.insertId, message: '记录已添加' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 财务汇总 ====================
+app.get('/api/finance/summary', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    let args = [];
+    let whereProject = project_id ? ' WHERE project_id = ?' : '';
+    if (project_id) args.push(project_id);
+
+    // 合同营收合计
+    const [[contractSum]] = await pool.query(
+      `SELECT COALESCE(SUM(contract_amount), 0) as total FROM contracts ${whereProject ? 'WHERE project_id = ? AND review_status = \'approved\'' : 'WHERE review_status = \'approved\''}`,
+      project_id ? [project_id] : []
+    );
+
+    // 增减项合计（审核通过的）
+    const [[changeSum]] = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN change_type='add' THEN amount ELSE 0 END), 0) as increase_total,
+         COALESCE(SUM(CASE WHEN change_type='decrease' THEN amount ELSE 0 END), 0) as decrease_total
+       FROM contract_changes ${whereProject ? 'WHERE project_id = ? AND status = \'approved\'' : 'WHERE status = \'approved\''}`,
+      project_id ? [project_id] : []
+    );
+
+    // 已确认实收
+    const [[collected]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'income\' AND status=\'confirmed\'' : 'WHERE type=\'income\' AND status=\'confirmed\''}`,
+      project_id ? [project_id] : []
+    );
+
+    // 已确认支出
+    const [[expensed]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'expense\' AND status=\'confirmed\'' : 'WHERE type=\'expense\' AND status=\'confirmed\''}`,
+      project_id ? [project_id] : []
+    );
+
+    // 待确认支出
+    const [[pendingExpense]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'expense\' AND status=\'pending\'' : 'WHERE type=\'expense\' AND status=\'pending\''}`,
+      project_id ? [project_id] : []
+    );
+
+    const contractTotal = parseFloat(contractSum?.total || 0);
+    const increaseTotal = parseFloat(changeSum?.increase_total || 0);
+    const decreaseTotal = parseFloat(changeSum?.decrease_total || 0);
+    const receivable = contractTotal + increaseTotal - decreaseTotal; // 应收 = 合同 + 增 - 减
+
+    res.json({
+      contract_amount: contractTotal,
+      increase_total: increaseTotal,
+      decrease_total: decreaseTotal,
+      receivable,           // 应收
+      collected: parseFloat(collected?.total || 0),       // 实收
+      expensed: parseFloat(expensed?.total || 0),         // 已支出
+      pending_expense: parseFloat(pendingExpense?.total || 0), // 待确认支出
+      balance: receivable - parseFloat(collected?.total || 0) // 未收
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 派工审核通过 → 自动写入 payment_records ====================
+// 找到派工审核路由，在更新状态后追加 payment_records 写入
+// 已在原始 approve 路由（5070行）中添加，这里做补丁覆盖原逻辑
+const OLD_DISPATCH_APPROVE = /await pool\.query\('UPDATE dispatches SET status=\?, updated_at=NOW\(\) WHERE id=\?', \[newStatus, req\.params\.id\]\);[\s\S]{1,200}await addLog\(userId, '', action === 'approve' \? '审核通过' : '审核拒绝'/;
+
 
 // ==================== 静态文件（必须在所有 API 路由之后） ====================
 app.use('/uploads', express.static(uploadDir));

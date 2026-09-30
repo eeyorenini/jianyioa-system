@@ -151,9 +151,6 @@
           </div>
           <span v-if="managerPhone" style="margin-left:12px;color:#909399;font-size:13px">电话: {{ managerPhone }}</span>
         </el-form-item>
-        <el-form-item label="预算金额">
-          <el-input-number v-model="form.budget" :min="0" :precision="2" />
-        </el-form-item>
         <el-form-item label="节点模板">
           <el-select v-model="form.template_id" placeholder="不选择则不生成默认节点" clearable style="width: 100%">
             <el-option
@@ -1088,7 +1085,6 @@ const form = reactive({
   designer_id: null,
   supervisor_id: null,
   manager_id: null,
-  budget: 0,
   status: '开工准备',
   start_date: '',
   end_date: '',
@@ -1766,7 +1762,6 @@ const resetForm = () => {
   form.designer_id = null
   form.supervisor_id = null
   form.manager_id = null
-  form.budget = 0
   form.status = '开工准备'
   form.start_date = ''
   form.end_date = ''

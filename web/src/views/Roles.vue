@@ -114,6 +114,14 @@
                 />
               </template>
             </el-table-column>
+            <el-table-column label="审核" width="70">
+              <template #default="scope">
+                <el-checkbox
+                  v-model="scope.row.approve"
+                  :disabled="isAllPermission || !scope.row.hasApprove"
+                />
+              </template>
+            </el-table-column>
           </el-table>
           <div style="margin-top: 10px; color: #909399; font-size: 12px;">
             注：admin角色拥有全部权限，无需单独设置
@@ -283,7 +291,8 @@ const presetRoles = [
 // 模块列表
 const moduleList = ref([
   { key: 'customer', name: '客户管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'contract', name: '合同管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'project_contract', name: '项目合同', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
   { key: 'project', name: '项目管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'inspection', name: '巡检验房', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'acceptance', name: '验收管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
@@ -296,7 +305,8 @@ const moduleList = ref([
   { key: 'settings', name: '系统设置', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
   { key: 'sms', name: '短信模板', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
   { key: 'role', name: '角色管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
+  { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
   { key: 'purchase', name: '采购管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'invoice', name: '发票管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'supplier', name: '供应商管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false }
@@ -488,6 +498,7 @@ const handleSave = async () => {
       if (module.write) permissions.push(`${module.key}:write`);
       if (module.delete) permissions.push(`${module.key}:delete`);
       if (module.reset_password) permissions.push(`${module.key}:reset_password`);
+      if (module.approve) permissions.push(`${module.key}:approve`);
     });
   }
 
