@@ -4,7 +4,7 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">录入催收</text>
-      <text class="nav-btn" @click="submit" :class="{ disabled: submitting }">提交</text>
+      <text class="nav-btn" @click="submit" :class="{ disabled: submitting || loadingCollected }">提交</text>
     </view>
 
     <!-- 项目信息横幅 -->
@@ -34,7 +34,12 @@
       <!-- 备注 -->
       <view class="form-item form-item-top">
         <text class="form-label">备注</text>
-        <textarea class="form-textarea" v-model="form.remark" placeholder="补充催收说明..." rows="3" />
+        <view class="remark-wrap">
+          <textarea class="form-textarea" v-model="form.remark" placeholder="一句话描述..." rows="2" />
+          <view class="quick-chips">
+            <text class="chip" v-for="c in quickChips" :key="c" @click="appendRemark(c)">{{ c }}</text>
+          </view>
+        </view>
       </view>
 
       <!-- 图片上传 -->
@@ -46,13 +51,23 @@
               <image class="image-thumb" :src="img" mode="aspectFill" />
               <text class="image-remove" @click="removeImage(idx)">✕</text>
             </view>
-            <view v-if="images.length < 3" class="image-add" @click="chooseImages">
+            <view v-if="images.length < 3 && !uploading" class="image-add" @click="chooseImages">
               <text class="image-add-icon">+</text>
               <text class="image-add-text">添加图片</text>
             </view>
           </view>
           <text class="image-hint">最多上传3张图片</text>
         </view>
+      </view>
+
+    </view>
+
+    <!-- 上传中遮罩 -->
+    <view v-if="uploading" class="upload-overlay">
+      <view class="upload-overlay-box">
+        <view class="upload-spinner"></view>
+        <text class="upload-overlay-text">{{ uploadText }}</text>
+        <text class="upload-overlay-sub">{{ uploadDone }}/{{ uploadTotal }} 张</text>
       </view>
     </view>
 
@@ -75,12 +90,25 @@ const projectId = ref('')
 const projectName = ref('')
 const submitting = ref(false)
 const images = ref([])
+const uploading = ref(false)
+const uploadText = ref('上传中，请稍候')
+const uploadDone = ref(0)
+const uploadTotal = ref(0)
+const collectedTotal = ref(0) // 该项目已确认实收总额
+const actualReceivable = ref(0) // 项目应收金额（从上个页面传入）
+const loadingCollected = ref(false) // 是否正在加载已确认催收总额
 
 const form = ref({
   amount: '',
-  collect_date: '',
+  collect_date: formatDate(new Date()),
   remark: '',
 })
+
+const quickChips = ['首付款', '中期款', '尾款', '增项款', '进度款']
+
+function appendRemark(text) {
+  form.value.remark = form.value.remark ? form.value.remark + ' ' + text : text
+}
 
 const datePicker = ref({ visible: false, title: '选择催收日期', items: [] })
 
@@ -92,14 +120,33 @@ onMounted(() => {
 
   if (options.projectId) {
     projectId.value = parseInt(options.projectId)
+    loadCollectedTotal()
   }
   if (options.projectName) {
     projectName.value = decodeURIComponent(options.projectName)
+  }
+  if (options.actualReceivable) {
+    actualReceivable.value = parseFloat(options.actualReceivable) || 0
   }
 
   // 初始化日期选择器：未来30天
   initDatePicker()
 })
+
+async function loadCollectedTotal() {
+  loadingCollected.value = true
+  const userId = uni.getStorageSync('userInfo')?.id || ''
+  const res = await uni.request({
+    url: `/api/collection-records?project_id=${projectId.value}`,
+    header: { 'x-user-id': userId },
+  })
+  const list = Array.isArray(res.data) ? res.data : (res.data?.list || [])
+  // 只统计已确认的
+  collectedTotal.value = list
+    .filter(r => r.status === 'confirmed')
+    .reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
+  loadingCollected.value = false
+}
 
 function initDatePicker() {
   const items = []
@@ -146,38 +193,38 @@ function chooseImages() {
   uni.chooseImage({
     count: remain,
     success: async (res) => {
-      for (const tempPath of res.tempFilePaths) {
-        await uploadImage(tempPath)
-      }
-    },
-  })
-}
+      const paths = res.tempFilePaths
+      uploading.value = true
+      uploadText.value = '图片上传中，请稍候'
+      uploadDone.value = 0
+      uploadTotal.value = paths.length
 
-function uploadImage(tempPath) {
-  return new Promise((resolve, reject) => {
-    uni.uploadFile({
-      url: '/api/upload-image',
-      filePath: tempPath,
-      name: 'file',
-      success: (uploadRes) => {
+      const userInfo = uni.getStorageSync('userInfo') || {}
+      for (const tempPath of paths) {
         try {
-          const data = JSON.parse(uploadRes.data)
-          // 兼容多种返回格式
-          const url = data.url || data.data?.url || data.data || ''
+          const url = await new Promise((resolve) => {
+            uni.uploadFile({
+              url: '/api/upload-image',
+              filePath: tempPath,
+              name: 'file',
+              header: { 'x-user-id': userInfo.id },
+              success: (uploadRes) => {
+                try {
+                  const data = JSON.parse(uploadRes.data)
+                  resolve(data.url || data.data?.url || data.data || '')
+                } catch { resolve('') }
+              },
+              fail: () => resolve(''),
+            })
+          })
           if (url) {
             images.value.push(url)
           }
-        } catch (e) {
-          console.error('解析上传返回数据失败', e)
-        }
-        resolve(uploadRes)
-      },
-      fail: (err) => {
-        console.error('图片上传失败', err)
-        uni.showToast({ title: '图片上传失败', icon: 'none' })
-        reject(err)
-      },
-    })
+        } catch {}
+        uploadDone.value++
+      }
+      uploading.value = false
+    },
   })
 }
 
@@ -189,7 +236,7 @@ function goBack() {
   uni.navigateBack()
 }
 
-function submit() {
+async function submit() {
   if (!form.value.amount) {
     uni.showToast({ title: '请输入催收金额', icon: 'none' })
     return
@@ -199,8 +246,31 @@ function submit() {
     return
   }
 
-  submitting.value = true
+  // 每次提交前重新拉最新的已确认催收总额
+  await loadCollectedTotal()
 
+  const inputAmount = parseFloat(form.value.amount) || 0
+  const totalAfter = collectedTotal.value + inputAmount
+
+  // 超出应收，弹窗警告
+  if (actualReceivable.value > 0 && totalAfter > actualReceivable.value) {
+    uni.showModal({
+      title: '⚠️ 金额超出应收',
+      content: `项目应收金额：¥${actualReceivable.value.toLocaleString()}\n已确认实收：¥${collectedTotal.value.toLocaleString()}\n本次录入：¥${inputAmount.toLocaleString()}\n\n催收总额将达 ¥${totalAfter.toLocaleString()}，超出 ¥${(totalAfter - actualReceivable.value).toLocaleString()}，是否确认提交？`,
+      confirmText: '确认提交',
+      cancelText: '取消',
+      success: (res) => {
+        if (res.confirm) doSubmit(inputAmount)
+      },
+    })
+    return
+  }
+
+  doSubmit(inputAmount)
+}
+
+function doSubmit(amount) {
+  submitting.value = true
   const userId = uni.getStorageSync('userInfo')?.id || ''
 
   uni.request({
@@ -209,7 +279,7 @@ function submit() {
     header: { 'x-user-id': userId },
     data: {
       project_id: projectId.value,
-      amount: parseFloat(form.value.amount),
+      amount: amount,
       collect_date: form.value.collect_date,
       remark: form.value.remark,
       images: JSON.stringify(images.value),
@@ -283,14 +353,34 @@ function submit() {
   color: #333;
 }
 
+.remark-wrap {
+  flex: 1;
+}
+
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 12rpx;
+}
+
+.chip {
+  font-size: 22rpx;
+  color: #1e3a5f;
+  background: #dbeafe;
+  padding: 6rpx 18rpx;
+  border-radius: 20rpx;
+}
+
 .form-textarea {
   flex: 1;
   font-size: 28rpx;
   color: #333;
   border: 1rpx solid #eee;
   border-radius: 8rpx;
-  padding: 16rpx;
+  padding: 12rpx;
   resize: none;
+  min-height: 80rpx;
 }
 
 .picker-value {
@@ -423,5 +513,46 @@ function submit() {
   font-size: 22rpx;
   color: #999;
   margin-top: 12rpx;
+}
+
+/* 上传中遮罩 */
+.upload-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.upload-overlay-box {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 40rpx 60rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  min-width: 320rpx;
+}
+.upload-spinner {
+  width: 60rpx;
+  height: 60rpx;
+  border: 4rpx solid #E5E7EB;
+  border-top-color: #3B82F6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.upload-overlay-text {
+  font-size: 28rpx;
+  color: #1F2937;
+  font-weight: 600;
+}
+.upload-overlay-sub {
+  font-size: 24rpx;
+  color: #6B7280;
 }
 </style>

@@ -378,7 +378,7 @@
               </view>
             </view>
             <view class="contract-card-actions">
-              <text v-if="canApproveContract" class="cc-btn" @click="openApproveDialog(c)">审核</text>
+              <text v-if="canApproveContract && c.review_status === 'pending'" class="cc-btn" @click="openApproveDialog(c)">审核</text>
               <text v-else class="cc-btn" @click="goContractChangeDetail(c)">查看详情</text>
               <text class="cc-btn" @click="goCollection(c)">录入催收</text>
             </view>
@@ -397,8 +397,8 @@
             <view v-for="ch in changeList" :key="ch.id" class="change-card">
               <view class="change-card-header">
                 <text class="change-title">{{ ch.title }}</text>
-                <text class="contract-status" :class="'s-' + ch.review_status">
-                  {{ ch.review_status === 'approved' ? '✅ 已通过' : ch.review_status === 'rejected' ? '❌ 已驳回' : '⏳ 待审核' }}
+                <text class="contract-status" :class="'s-' + ch.status">
+                  {{ ch.status === 'approved' ? '✅ 已通过' : ch.status === 'rejected' ? '❌ 已驳回' : '⏳ 待审核' }}
                 </text>
               </view>
               <view class="cc-row">
@@ -413,7 +413,11 @@
               </view>
               <view class="cc-row">
                 <text class="cc-label">申请人</text>
-                <text class="cc-value">{{ ch.applicant_name || '—' }}</text>
+                <text class="cc-value">{{ ch.submitted_by_name || '—' }}</text>
+              </view>
+              <view class="contract-card-actions">
+                <text v-if="ch.status === 'approved'" class="cc-btn approved-static">✅ 已通过</text>
+                <text v-else-if="canApproveChange && ch.status === 'pending'" class="cc-btn" @click="openApproveChangeDialog(ch)">审核</text>
               </view>
             </view>
           </view>
@@ -435,28 +439,153 @@
               <text class="cs-value">¥{{ contractSummary.total.toLocaleString() }}</text>
             </view>
           </view>
+
+
         </view>
       </view>
 
       <!-- 财务收支 -->
       <view v-if="curTab === 'finance'" class="tab-panel">
-        <view class="panel-toolbar">
-          <text class="panel-title">收支记录</text>
-          <text class="tool-btn" @click="goFinance">+ 新增</text>
-        </view>
-        <view class="finance-summary">
-          <view class="finance-card income">
-            <text class="finance-card-label">已收款</text>
-            <text class="finance-card-num">¥{{ financeData.income.toLocaleString() }}</text>
+        <!-- 子Tab -->
+        <view class="finance-sub-tabs">
+          <view class="sub-tab" :class="{ active: financeSubTab === 'records' }" @click="financeSubTab = 'records'">
+            <text>收支记录</text>
           </view>
-          <view class="finance-card expense">
-            <text class="finance-card-label">已支出</text>
-            <text class="finance-card-num">¥{{ financeData.expense.toLocaleString() }}</text>
+          <view class="sub-tab" :class="{ active: financeSubTab === 'receivable' }" @click="financeSubTab = 'receivable'">
+            <text>应收统计</text>
+          </view>
+          <view class="sub-tab" :class="{ active: financeSubTab === 'collected' }" @click="financeSubTab = 'collected'">
+            <text>实收统计</text>
           </view>
         </view>
-        <view class="empty-state" v-if="financeData.records.length === 0">
-          <text class="empty-icon">💰</text>
-          <text class="empty-text">暂无收支记录</text>
+
+        <!-- 收支记录列表 -->
+        <view v-if="financeSubTab === 'records'">
+          <view class="finance-summary">
+            <view class="finance-card income">
+              <text class="finance-card-label">已收款</text>
+              <text class="finance-card-num">¥{{ financeIncome.toLocaleString() }}</text>
+            </view>
+            <view class="finance-card expense">
+              <text class="finance-card-label">已支出</text>
+              <text class="finance-card-num">¥{{ financeExpense.toLocaleString() }}</text>
+            </view>
+          </view>
+          <view v-if="financeRecords.length === 0 && collectionRecords.filter(r=>r.status!=='confirmed').length === 0" class="empty-state">
+            <text class="empty-icon">💰</text>
+            <text class="empty-text">暂无收支记录</text>
+          </view>
+          <view v-else class="finance-list">
+            <!-- 主材采购/派工支出 -->
+            <view v-for="item in financeRecords" :key="item.type + '-' + item.id" class="finance-record-card">
+              <view class="fr-header">
+                <text class="fr-type">{{ item.type === 'purchase' ? '🏭 主材采购' : '👷 派工' }}</text>
+                <text class="fr-amount">-¥{{ Number(item.amount).toLocaleString() }}</text>
+              </view>
+              <view class="fr-info">
+                <text class="fr-desc">{{ item.desc }}</text>
+                <text class="fr-date">{{ item.date }}</text>
+              </view>
+            </view>
+            <!-- 待确认的催收记录（财务可见） -->
+            <view v-for="item in collectionRecords.filter(r=>r.status!=='confirmed')" :key="'cr-'+item.id" class="finance-record-card pending" @click="openCollectionRecord(item)">
+              <view class="fr-header">
+                <text class="fr-type">📋 催收录入</text>
+                <text class="fr-amount" style="color:#D97706;">待确认 ¥{{ Number(item.amount).toLocaleString() }}</text>
+              </view>
+              <view class="fr-info">
+                <text class="fr-desc">{{ item.remark || '待财务确认' }}</text>
+                <text class="fr-date">{{ item.record_date || item.submitted_at }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+        <!-- 应收统计 -->
+        <view v-if="financeSubTab === 'receivable'" class="sub-tab-content">
+          <view class="finance-summary">
+            <view class="finance-card income">
+              <text class="finance-card-label">合同金额</text>
+              <text class="finance-card-num">¥{{ financeSummary.contract_amount.toLocaleString() }}</text>
+            </view>
+            <view class="finance-card expense">
+              <text class="finance-card-label">增减项</text>
+              <text class="finance-card-num">¥{{ (financeSummary.change_total >= 0 ? '+' : '') + financeSummary.change_total.toLocaleString() }}</text>
+            </view>
+          </view>
+          <view class="finance-summary" style="margin-top:12px;">
+            <view class="finance-card" style="background:#DBEAFE;">
+              <text class="finance-card-label">实际应收</text>
+              <text class="finance-card-num">¥{{ financeSummary.actual_receivable.toLocaleString() }}</text>
+            </view>
+          </view>
+          <view class="empty-state" v-if="financeSummary.contract_amount === 0">
+            <text class="empty-icon">📋</text>
+            <text class="empty-text">暂无合同信息</text>
+          </view>
+        </view>
+        <!-- 实收统计 -->
+        <view v-if="financeSubTab === 'collected'" class="sub-tab-content">
+          <view class="finance-summary">
+            <view class="finance-card income">
+              <text class="finance-card-label">已收款</text>
+              <text class="finance-card-num">¥{{ financeIncome.toLocaleString() }}</text>
+            </view>
+            <view class="finance-card expense">
+              <text class="finance-card-label">已支出</text>
+              <text class="finance-card-num">¥{{ financeExpense.toLocaleString() }}</text>
+            </view>
+          </view>
+          <view class="finance-list">
+            <view v-for="item in collectionRecords.filter(r => r.status === 'confirmed')" :key="item.id" class="finance-record-card">
+              <view class="fr-header">
+                <text class="fr-type">💰 收款</text>
+                <text class="fr-amount" style="color:#059669;">+¥{{ Number(item.amount).toLocaleString() }}</text>
+              </view>
+              <view class="fr-info">
+                <text class="fr-desc">{{ item.remark || '催款收款' }}</text>
+                <text class="fr-date">{{ item.record_date || item.created_at }}</text>
+              </view>
+            </view>
+          </view>
+          <view class="empty-state" v-if="collectionRecords.filter(r => r.status === 'confirmed').length === 0">
+            <text class="empty-icon">💰</text>
+            <text class="empty-text">暂无收款记录</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 催收记录确认弹窗 -->
+      <view v-if="collectionModal.visible" class="modal-mask" @click.self="collectionModal.visible = false">
+        <view class="modal-box">
+          <view class="modal-title">催收确认</view>
+          <view class="modal-info-grid">
+            <view class="modal-info-row">
+              <text class="modal-info-label">收款金额</text>
+              <text class="modal-info-value accent">¥{{ Number(collectionModal.data.amount || 0).toLocaleString() }}</text>
+            </view>
+            <view class="modal-info-row">
+              <text class="modal-info-label">收款日期</text>
+              <text class="modal-info-value">{{ collectionModal.data.collect_date || collectionModal.data.record_date || '—' }}</text>
+            </view>
+            <view class="modal-info-row">
+              <text class="modal-info-label">提交人</text>
+              <text class="modal-info-value">{{ collectionModal.data.submitted_name || collectionModal.data.submitted_by || '—' }}</text>
+            </view>
+            <view class="modal-info-row" v-if="collectionModal.data.remark">
+              <text class="modal-info-label">备注</text>
+              <text class="modal-info-value">{{ collectionModal.data.remark }}</text>
+            </view>
+            <view class="modal-info-row" v-if="collectionModal.data.images">
+              <text class="modal-info-label">凭证图片</text>
+            </view>
+          </view>
+          <view v-if="collectionModal.data.images" class="modal-images">
+            <image v-for="(img, idx) in JSON.parse(collectionModal.data.images)" :key="idx" :src="img" class="modal-img" mode="aspectFill" @click="previewImage(JSON.parse(collectionModal.data.images), idx)" />
+          </view>
+          <view class="modal-actions">
+            <button class="modal-btn cancel" @click="collectionModal.visible = false">取消</button>
+            <button class="modal-btn confirm" @click="confirmCollection">确认收款</button>
+          </view>
         </view>
       </view>
 
@@ -469,7 +598,7 @@
           <view class="gallery-cat" v-for="cat in galleryCats" :key="cat.name" @click="goGallery(cat.key)">
             <text class="gallery-cat-icon">{{ cat.icon }}</text>
             <text class="gallery-cat-name">{{ cat.name }}</text>
-            <text class="gallery-cat-count">{{ cat.count }}张</text>
+            <text class="gallery-cat-count">{{ galleryStats[cat.key] || 0 }}张</text>
           </view>
         </view>
       </view>
@@ -505,6 +634,7 @@ const projectId = ref(0);
 const project = ref({});
 const userStore = useUserStore();
 const curTab = ref('nodes');
+const financeSubTab = ref('records');
 
 const tabs = computed(() => [
   { key: 'nodes', label: '进度节点' },
@@ -514,7 +644,7 @@ const tabs = computed(() => [
   { key: 'material', label: '材料' },
   { key: 'purchase', label: '采购' },
   { key: 'contract', label: '合同' },
-  { key: 'finance', label: '财务' },
+  { key: 'finance', label: '财务', badge: collectionRecords.value.filter(r => r.status !== 'confirmed').length || null },
   { key: 'gallery', label: '图库' },
 ]);
 
@@ -532,22 +662,74 @@ const purchaseList = ref([]);
 const contractList = ref([]);
 const changeList = ref([]);
 
-const financeData = ref({
-  income: 58000,
-  expense: 32100,
-  records: [],
+const financeRecords = computed(() => {
+  const records = [];
+  // 主材采购
+  purchaseList.value.forEach(p => {
+    if (p.actual_amount > 0) {
+      records.push({
+        type: 'purchase',
+        id: p.id,
+        amount: p.actual_amount,
+        desc: p.remark || '主材采购',
+        date: p.updated_at || p.created_at,
+      });
+    }
+  });
+  // 派工
+  dispatches.value.forEach(d => {
+    if (d.fee > 0) {
+      records.push({
+        type: 'dispatch',
+        id: d.id,
+        amount: d.fee,
+        desc: d.content || '派工',
+        date: d.updated_at || d.created_at,
+      });
+    }
+  });
+  return records.sort((a, b) => new Date(b.date) - new Date(a.date));
 });
 
+const financeIncome = computed(() =>
+  collectionRecords.value
+    .filter(r => r.status === 'confirmed')
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+);
+
+const financeExpense = computed(() =>
+  financeRecords.value.reduce((s, r) => s + Number(r.amount || 0), 0)
+);
+
+const financeSummary = ref({ contract_amount: 0, change_total: 0, actual_receivable: 0 });
+const collectionRecords = ref([]);
+const collectionModal = ref({ visible: false, data: {} });
+
 const galleryCats = ref([
-  { key: '开工', name: '开工', icon: '🎉', count: 5 },
-  { key: '水电', name: '水电', icon: '⚡', count: 12 },
-  { key: '防水', name: '防水', icon: '💧', count: 8 },
-  { key: '泥瓦', name: '泥瓦', icon: '🧱', count: 20 },
-  { key: '木工', name: '木工', icon: '🪚', count: 15 },
-  { key: '油漆', name: '油漆', icon: '🎨', count: 10 },
-  { key: '安装', name: '安装', icon: '🔧', count: 6 },
-  { key: '验收', name: '验收', icon: '✅', count: 3 },
+  { key: '开工', name: '开工', icon: '🎉' },
+  { key: '水电', name: '水电', icon: '⚡' },
+  { key: '防水', name: '防水', icon: '💧' },
+  { key: '泥瓦', name: '泥瓦', icon: '🧱' },
+  { key: '木工', name: '木工', icon: '🪚' },
+  { key: '油漆', name: '油漆', icon: '🎨' },
+  { key: '安装', name: '安装', icon: '🔧' },
+  { key: '验收', name: '验收', icon: '✅' },
 ]);
+
+const galleryStats = ref({});
+const loadGalleryStats = async () => {
+  if (!projectId.value) return;
+  try {
+    const res = await uni.request({ url: `/api/project-gallery?project_id=${projectId.value}` });
+    if (res.data?.list) {
+      const stats = {};
+      for (const item of res.data.list) {
+        stats[item.category] = (stats[item.category] || 0) + item.count;
+      }
+      galleryStats.value = stats;
+    }
+  } catch (e) { console.error('loadGalleryStats', e); }
+};
 
 const getStatusClass = (status) => {
   if (!status) return 's-default';
@@ -721,7 +903,7 @@ const contractSummary = computed(() => {
     .filter(c => c.review_status === 'approved')
     .reduce((s, c) => s + Number(c.contract_amount || 0), 0);
   const changeAmt = changeList.value
-    .filter(ch => ch.review_status === 'approved')
+    .filter(ch => ch.status === 'approved')
     .reduce((s, ch) => {
       return s + (ch.change_type === 'add' ? Number(ch.amount || 0) : -Number(ch.amount || 0));
     }, 0);
@@ -783,45 +965,150 @@ const checkContractApprovePermission = async () => {
     const token = uni.getStorageSync('token');
     const res = await uni.request({ url: '/api/my-permissions', header: { Authorization: token } });
     const perms = res.data?.permissions || [];
-    canApproveContract.value = perms.includes('contract:approve');
+    canApproveContract.value = perms.includes('contract:approve') || perms.includes('project_contract:approve');
   } catch {
     // 读取本地缓存
     canApproveContract.value = userStore.hasPermission('contract:approve');
   }
 };
 
-const goContractChangeDetail = (contract) => {
-  const statusMap = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
-  const status = statusMap[contract.review_status] || contract.review_status;
+const canApproveChange = ref(false);
+
+const checkChangeApprovePermission = async () => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({ url: '/api/my-permissions', header: { Authorization: token } });
+    const perms = res.data?.permissions || [];
+    canApproveChange.value = perms.includes('contract_change:approve');
+  } catch {
+    canApproveChange.value = userStore.hasPermission('contract_change:approve');
+  }
+};
+
+const openApproveChangeDialog = (change) => {
   uni.showModal({
-    title: '合同详情',
-    content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n审核状态：${status}\n备注：${contract.remark || '无'}`,
-    showCancel: false,
+    title: '审核增减项',
+    content: `「${change.title}」${change.change_type === 'add' ? '增加' : '减少'} ¥${Number(change.amount || 0).toLocaleString()}，确认通过？`,
+    confirmText: '确认通过',
+    cancelText: '取消',
+    success: async (res) => {
+      if (!res.confirm) return;
+      await approveChange(change.id);
+    },
   });
 };
 
-const openApproveDialog = (contract) => {
+const goFinanceStats = (type) => {
+  const name = encodeURIComponent(project.value?.name || '');
+  if (type === 'receivable') {
+    uni.navigateTo({ url: `/pages/finance/finance-receivable?projectId=${projectId.value}&projectName=${name}` });
+  } else {
+    uni.navigateTo({ url: `/pages/finance/finance-collected?projectId=${projectId.value}&projectName=${name}` });
+  }
+};
+
+const approveChange = async (id) => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      method: 'PUT',
+      url: `/api/contract-changes/${id}/review`,
+      header: { Authorization: token, 'Content-Type': 'application/json' },
+      data: { action: 'approve' },
+    });
+    if (res.data.code === 0 || res.data.message) {
+      uni.showToast({ title: '审核成功', icon: 'success' });
+      loadChanges();
+    } else {
+      uni.showToast({ title: (res.data.error || '审核失败'), icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '审核异常', icon: 'none' });
+  }
+};
+
+const goContractChangeDetail = (contract) => {
   const statusMap = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
   const status = statusMap[contract.review_status] || contract.review_status;
+  if (contract.review_status === 'approved') {
+    // 已通过 → 显示详情 + 反审核按钮
+    uni.showModal({
+      title: '合同详情',
+      content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n审核状态：${status}\n备注：${contract.reviewer_remark || '无'}`,
+      confirmText: '反审核',
+      cancelText: '关闭',
+      success: async (res) => {
+        if (res.confirm) {
+          await revertContract(contract.id);
+        }
+      },
+    });
+  } else {
+    // 待审核/已驳回 → 显示详情 + 编辑/删除按钮
+    uni.showModal({
+      title: '合同详情',
+      content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n审核状态：${status}\n备注：${contract.remark || '无'}`,
+      confirmText: '编辑',
+      cancelText: '删除',
+      success: async (res) => {
+        if (res.confirm) {
+          // 跳转到合同上传页编辑
+          uni.navigateTo({ url: `/pages/contracts/contract-upload?projectId=${projectId.value}&editId=${contract.id}` });
+        } else if (res.cancel) {
+          await deleteContract(contract.id);
+        }
+      },
+    });
+  }
+};
+
+const revertContract = async (contractId) => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      url: `/api/contracts/${contractId}/revert`,
+      method: 'PUT',
+      header: { Authorization: token, 'Content-Type': 'application/json' },
+    });
+    if (res.data.code === 0 || res.data.message) {
+      uni.showToast({ title: '已反审核', icon: 'success' });
+      loadContracts();
+    } else {
+      uni.showToast({ title: res.data.error || '操作失败', icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '操作失败', icon: 'none' });
+  }
+};
+
+const deleteContract = async (contractId) => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      url: `/api/contracts/${contractId}`,
+      method: 'DELETE',
+      header: { Authorization: token },
+    });
+    if (res.data.code === 0 || res.data.message) {
+      uni.showToast({ title: '已删除', icon: 'success' });
+      loadContracts();
+    } else {
+      uni.showToast({ title: res.data.error || '删除失败', icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '删除失败', icon: 'none' });
+  }
+};
+
+const openApproveDialog = (contract) => {
   uni.showModal({
     title: '合同审核',
-    content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n当前状态：${status}`,
-    confirmText: '通过',
-    cancelText: '驳回',
+    content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n点击确认后此合同将审核通过。`,
+    confirmText: '确认通过',
+    cancelText: '取消',
     success: async (res) => {
       if (res.confirm) {
-        await approveContract(contract.id, 'approved');
-      } else if (res.cancel) {
-        uni.showModal({
-          title: '驳回原因',
-          editable: true,
-          placeholderText: '请输入驳回原因（选填）',
-          success: async (res2) => {
-            if (res2.confirm) {
-              await approveContract(contract.id, 'rejected', res2.content);
-            }
-          },
-        });
+        await approveContract(contract.id, 'approve');
       }
     },
   });
@@ -837,7 +1124,7 @@ const approveContract = async (contractId, action, remark = '') => {
       data: { action, remark },
     });
     if (res.data.code === 0 || res.data.message) {
-      uni.showToast({ title: action === 'approved' ? '已通过' : '已驳回', icon: 'success' });
+      uni.showToast({ title: action === 'approve' ? '已通过' : '已驳回', icon: 'success' });
       loadContracts();
     } else {
       uni.showToast({ title: res.data.error || '操作失败', icon: 'none' });
@@ -848,7 +1135,7 @@ const approveContract = async (contractId, action, remark = '') => {
 };
 
 const goCollection = (contract) => {
-  uni.navigateTo({ url: `/pages/contracts/collection-add?projectId=${projectId.value}&contractId=${contract.id}&projectName=${encodeURIComponent(project.value.name || '')}` });
+  uni.navigateTo({ url: `/pages/contracts/collection-add?projectId=${projectId.value}&contractId=${contract.id}&projectName=${encodeURIComponent(project.value.name || '')}&actualReceivable=${financeSummary.value.actual_receivable}` });
 };
 
 const previewFile = (url) => {
@@ -975,6 +1262,61 @@ const reportComplete = (node) => {
   });
 };
 
+const loadFinanceData = async () => {
+  if (!projectId.value) return;
+  try {
+    const token = uni.getStorageSync('token');
+    // 加载应收统计
+    const summaryRes = await uni.request({ url: `/api/finance/summary?project_id=${projectId.value}`, header: { Authorization: token } });
+    if (summaryRes.data) {
+      financeSummary.value = {
+        contract_amount: Number(summaryRes.data.contract_amount || 0),
+        change_total: Number(summaryRes.data.increase_total || 0) - Number(summaryRes.data.decrease_total || 0),
+        actual_receivable: Number(summaryRes.data.receivable || 0),
+      };
+    }
+    const collectionRes = await uni.request({ url: `/api/collection-records?project_id=${projectId.value}`, header: { Authorization: token } });
+    if (Array.isArray(collectionRes.data)) {
+      collectionRecords.value = collectionRes.data;
+    } else if (collectionRes.data?.list) {
+      collectionRecords.value = collectionRes.data.list;
+    }
+  } catch (e) {
+    console.error('加载财务数据失败:', e);
+  }
+};
+
+const openCollectionRecord = (item) => {
+  collectionModal.value = { visible: true, data: item };
+};
+
+const confirmCollection = async () => {
+  const item = collectionModal.value.data;
+  if (!item?.id) return;
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      method: 'PUT',
+      url: `/api/collection-records/${item.id}/confirm`,
+      header: { Authorization: token, 'Content-Type': 'application/json' },
+      data: { confirmed_amount: item.amount },
+    });
+    if (res.data.code === 0 || !res.data.error) {
+      uni.showToast({ title: '确认成功', icon: 'success' });
+      collectionModal.value.visible = false;
+      loadFinanceData();
+    } else {
+      uni.showToast({ title: res.data.error || '确认失败', icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '确认失败', icon: 'none' });
+  }
+};
+
+const previewImage = (images, index) => {
+  uni.previewImage({ urls: images, current: index });
+};
+
 const fetchDetail = async () => {
   try {
     uni.showLoading({ title: "加载中..." });
@@ -999,6 +1341,7 @@ const fetchDetail = async () => {
     fetchInspections();
     loadPurchase();
     loadDispatches();
+    loadFinanceData();
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: "加载失败", icon: "none" });
@@ -1084,15 +1427,16 @@ onMounted(() => {
     loadContracts();
     loadChanges();
     checkContractApprovePermission();
+    checkChangeApprovePermission();
   }
 });
 
-// 监听页面显示（从子页面返回时刷新数据）
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && projectId.value) {
     loadContracts();
     loadChanges();
     checkContractApprovePermission();
+    checkChangeApprovePermission();
   }
 });
 
@@ -1103,6 +1447,9 @@ watch(curTab, (val) => {
   if (val === 'contract' && projectId.value) {
     loadContracts();
     loadChanges();
+  }
+  if (val === 'gallery' && projectId.value) {
+    loadGalleryStats();
   }
 });
 
@@ -1728,6 +2075,14 @@ const goBack = () => {
 .contract-status.s-approved { background: #D1FAE5; color: #065F46; }
 .contract-status.s-rejected { background: #FEE2E2; color: #991B1B; }
 .contract-status.s-pending { background: #FEF3C7; color: #92400E; }
+.approved-static {
+  background: #D1FAE5;
+  color: #065F46;
+  font-size: 13px;
+  text-align: center;
+  padding: 8px 0;
+  border-radius: 8px;
+}
 .contract-card-body {
   margin-bottom: 10px;
 }
@@ -1825,6 +2180,8 @@ const goBack = () => {
   font-weight: 600;
   color: #fff;
 }
+
+/* 财务子Tab */
 .cs-value.accent { color: #FCA5A5; }
 .cs-value.decrease { color: #6EE7B7; }
 
@@ -1904,6 +2261,58 @@ const goBack = () => {
 }
 
 .finance-card.expense .finance-card-num { color: #991B1B; }
+
+/* 财务子Tab */
+.finance-sub-tabs {
+  display: flex;
+  background: #F1F5F9;
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.sub-tab {
+  flex: 1;
+  text-align: center;
+  padding: 7px 0;
+  font-size: 14px;
+  color: #64748B;
+  border-radius: 8px;
+}
+.sub-tab.active {
+  background: #fff;
+  color: #1E40AF;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.sub-tab-content { padding-top: 4px; }
+
+/* 收支记录卡片 */
+.finance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.finance-record-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.fr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.fr-type { font-size: 14px; font-weight: 600; color: #1E293B; }
+.fr-amount { font-size: 15px; font-weight: 700; color: #991B1B; }
+.fr-info { display: flex; justify-content: space-between; }
+.fr-desc { font-size: 12px; color: #64748B; }
+.fr-date { font-size: 12px; color: #94A3B8; }
+.finance-record-card.pending {
+  border-left: 3px solid #D97706;
+}
 
 /* 图库分类 */
 .gallery-cats {
@@ -2136,5 +2545,42 @@ const goBack = () => {
 .dispatch-label { color: #999; width: 80px; flex-shrink: 0; }
 .dispatch-val { color: #333; flex: 1; }
 .dispatch-val.amount { color: #1E3A5F; font-weight: 600; }
+
+/* 催收确认弹窗 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.modal-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  width: 88%;
+  max-width: 600px;
+  box-sizing: border-box;
+}
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1A1F36;
+  text-align: center;
+  margin-bottom: 18px;
+}
+.modal-info-grid { display: flex; flex-direction: column; gap: 10px; }
+.modal-info-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.modal-info-label { font-size: 14px; color: #64748B; flex-shrink: 0; }
+.modal-info-value { font-size: 14px; color: #1A1F36; font-weight: 500; text-align: right; }
+.modal-info-value.accent { color: #059669; font-size: 16px; font-weight: 700; }
+.modal-images { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.modal-img { width: 80px; height: 80px; border-radius: 8px; object-fit: cover; }
+.modal-actions { display: flex; gap: 12px; margin-top: 20px; }
+.modal-btn { flex: 1; height: 44px; line-height: 44px; border-radius: 10px; font-size: 15px; font-weight: 600; border: none; }
+.modal-btn.cancel { background: #F1F5F9; color: #64748B; }
+.modal-btn.confirm { background: #059669; color: #fff; }
 
 </style>

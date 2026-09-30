@@ -30,14 +30,14 @@
       </view>
 
       <view class="form-item">
-        <view class="form-label">施工工种</view>
-        <input class="form-input" v-model="form.work_type" placeholder="如：水电工、泥瓦工" />
+        <view class="form-label">分类</view>
         <view class="work-type-tags">
           <text
             class="work-type-tag"
+            :class="{ active: form.category === t }"
             v-for="t in workTypeOptions"
             :key="t"
-            @click="selectWorkType(t)"
+            @click="form.category = t"
           >{{ t }}</text>
         </view>
       </view>
@@ -156,20 +156,9 @@ const uploadProgress = reactive({
   percent: 0,
 });
 
-const workTypeOptions = ['水电工', '泥瓦工', '木工', '油漆工', '钢筋工', '杂工'];
+const workTypeOptions = ['水电', '防水', '泥瓦', '木工', '油漆', '安装', '验收', '开工'];
 
-// 选择施工工种（追加到输入框）
-const selectWorkType = (t) => {
-  if (form.work_type) {
-    // 已有时去重再追加
-    const existing = form.work_type.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-    if (!existing.includes(t)) {
-      form.work_type = [...existing, t].join('、');
-    }
-  } else {
-    form.work_type = t;
-  }
-};
+
 
 // 人数滚轮变化
 const onWorkerChange = (e) => {
@@ -193,7 +182,7 @@ const handleAiOrganize = (text, field) => {
 const form = reactive({
   content: '',
   worker_count: '',
-  work_type: '',
+  category: '',
   tomorrow_plan: '',
   note: '',
 });
@@ -284,6 +273,7 @@ const delPhoto = (idx) => {
 };
 
 const submit = async () => {
+  if (submitting.value) return;
   if (!form.content.trim()) {
     uni.showToast({ title: '请填写施工内容', icon: 'none' });
     return;
@@ -291,14 +281,6 @@ const submit = async () => {
   submitting.value = true;
   try {
     const userInfo = uni.getStorageSync('userInfo');
-    console.log('提交日志 - userInfo:', userInfo);
-    console.log('提交日志 - projectId:', projectId.value);
-    console.log('提交日志 - content:', form.content);
-    console.log('提交日志 - photos:', photos.value);
-
-    // photos.value 里已经是上传后的服务器URL，无需再上传
-    console.log('上传完成，photoUrls:', photos.value);
-    console.log('准备提交到 /api/project-logs');
     const res = await uni.request({
       url: "/api/project-logs",
       method: "POST",
@@ -308,20 +290,19 @@ const submit = async () => {
         operator: userInfo?.name || userInfo?.username || '未知',
         images: JSON.stringify(photos.value),
         worker_count: form.worker_count,
-        work_type: form.work_type,
+        category: form.category,
         tomorrow_plan: form.tomorrow_plan,
         note: form.note,
       },
     });
-    console.log('提交结果:', res);
-
+    if (res.data?.error) {
+      throw new Error(res.data.error);
+    }
     uni.showToast({ title: '日志已提交', icon: 'success' });
     setTimeout(() => uni.navigateBack(), 1500);
   } catch (e) {
     console.error('提交失败:', e);
-    uni.showToast({ title: '提交失败: ' + (e.message || e), icon: 'none' });
-  } finally {
-    submitting.value = false;
+    uni.showToast({ title: '提交失败: ' + (e.message || '网络错误'), icon: 'none', duration: 2000 });
   }
 };
 
@@ -456,6 +437,11 @@ const goBack = () => {
   padding: 4px 12px;
   border-radius: 14px;
   cursor: pointer;
+}
+
+.work-type-tag.active {
+  background: #1E3A5F;
+  color: #fff;
 }
 
 /* 到场人数选择器 */
