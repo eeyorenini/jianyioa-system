@@ -79,15 +79,6 @@
         </picker>
       </view>
 
-      <!-- 预算金额 -->
-      <view class="form-item">
-        <view class="form-label">预算金额</view>
-        <view class="budget-wrap">
-          <text class="budget-symbol">¥</text>
-          <input class="form-input budget-input" type="digit" v-model="form.budget" placeholder="0.00" />
-        </view>
-      </view>
-
       <!-- 状态 -->
       <view class="form-item">
         <view class="form-label">状态</view>
@@ -169,7 +160,6 @@ const form = reactive({
   designer_id: null,
   supervisor_id: null,
   manager_id: null,
-  budget: '',
   status: '开工准备',
   start_date: '',
   end_date: '',
@@ -272,7 +262,6 @@ const handleSubmit = async () => {
         designer_id: form.designer_id,
         supervisor_id: form.supervisor_id,
         manager_id: form.manager_id,
-        budget: form.budget ? parseFloat(form.budget) : null,
         status: form.status,
         start_date: form.start_date || null,
         end_date: form.end_date || null,

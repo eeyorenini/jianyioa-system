@@ -3,11 +3,12 @@ import { reactive } from "vue";
 interface UserInfo {
   id: number;
   username: string;
-  name: string;      // 后端返回的是 name 不是 nickname
+  name: string;
   role_name: string;
   position: string;
   phone: string;
   token: string;
+  permissions: string[];
 }
 
 const state = reactive<UserInfo>({
@@ -18,6 +19,7 @@ const state = reactive<UserInfo>({
   position: "",
   phone: "",
   token: "",
+  permissions: [],
 });
 
 export const useUserStore = () => {
@@ -29,8 +31,17 @@ export const useUserStore = () => {
     state.position = user.position || "";
     state.phone = user.phone || "";
     state.token = user.token;
+    // 解析权限列表（可能是 JSON 字符串或数组）
+    let perms: string[] = [];
+    if (user.permissions) {
+      if (typeof user.permissions === 'string') {
+        try { perms = JSON.parse(user.permissions); } catch { perms = []; }
+      } else if (Array.isArray(user.permissions)) {
+        perms = user.permissions;
+      }
+    }
+    state.permissions = perms;
     uni.setStorageSync("token", user.token);
-    // 同时缓存用户信息
     uni.setStorageSync("userInfo", {
       id: user.id,
       username: user.username,
@@ -38,6 +49,7 @@ export const useUserStore = () => {
       role_name: user.role_name,
       position: user.position,
       phone: user.phone,
+      permissions: perms,
     });
   };
 
@@ -51,6 +63,15 @@ export const useUserStore = () => {
       state.position = info.position;
       state.phone = info.phone;
       state.token = uni.getStorageSync("token") || "";
+      let perms: string[] = [];
+      if (info.permissions) {
+        if (typeof info.permissions === 'string') {
+          try { perms = JSON.parse(info.permissions); } catch { perms = []; }
+        } else if (Array.isArray(info.permissions)) {
+          perms = info.permissions;
+        }
+      }
+      state.permissions = perms;
     }
   };
 
@@ -71,9 +92,14 @@ export const useUserStore = () => {
     state.position = "";
     state.phone = "";
     state.token = "";
+    state.permissions = [];
     uni.removeStorageSync("token");
     uni.removeStorageSync("userInfo");
     uni.reLaunch({ url: "/pages/login/login" });
+  };
+
+  const hasPermission = (perm: string) => {
+    return state.permissions.includes(perm);
   };
 
   return {
@@ -82,5 +108,6 @@ export const useUserStore = () => {
     loadUser,
     checkAuth,
     logout,
+    hasPermission,
   };
 };

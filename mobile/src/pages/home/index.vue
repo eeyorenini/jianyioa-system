@@ -218,6 +218,7 @@ const quickEntries = [
   { label: '验收管理', icon: '✅', bg: '#D1FAE5', action: 'newAccept' },
   { label: '变更单', icon: '📄', bg: '#FEF3C7', action: 'newChange' },
   { label: '收支记录', icon: '💰', bg: '#DBEAFE', action: 'newFinance' },
+  { label: '催收记录', icon: '💰', bg: '#DBEAFE', action: 'newCollection' },
   { label: '通讯录', icon: '📒', bg: '#EDE9FE', action: 'addressbook' },
   { label: '甘特图', icon: '📊', bg: '#FEE2E2', action: 'gantt' },
   { label: '客户', icon: '👤', bg: '#DBEAFE', action: 'customer' },
@@ -311,6 +312,9 @@ const handleQuick = (item) => {
     case 'newChange': uni.navigateTo({ url: '/pages/change/list' }); break;
     case 'newFinance': openProjectPicker('选择项目后添加收支记录', (p) => {
       uni.navigateTo({ url: `/pages/finance/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
+    case 'newCollection': openProjectPicker('选择项目后添加催收记录', (p) => {
+      uni.navigateTo({ url: `/pages/contracts/collection-add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'addressbook': uni.navigateTo({ url: '/pages/addressbook/addressbook' }); break;
     case 'customer': uni.navigateTo({ url: '/pages/customers/customers' }); break;

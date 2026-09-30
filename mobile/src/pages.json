@@ -253,6 +253,48 @@
       }
     },
     {
+      "path": "pages/finance/finance-records",
+      "style": {
+        "navigationBarTitleText": "收支记录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/finance/finance-receivable",
+      "style": {
+        "navigationBarTitleText": "应收统计",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/finance/finance-collected",
+      "style": {
+        "navigationBarTitleText": "实收统计",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contracts/contract-upload",
+      "style": {
+        "navigationBarTitleText": "上传合同",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contracts/contract-change-add",
+      "style": {
+        "navigationBarTitleText": "增减项",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/contracts/collection-add",
+      "style": {
+        "navigationBarTitleText": "录入催收",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/gallery/index",
       "style": {
         "navigationBarTitleText": "项目图库",

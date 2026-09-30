@@ -32,8 +32,8 @@
           <text class="info-value">{{ project.customer_name || '未关联' }}</text>
         </view>
         <view class="info-item">
-          <text class="info-label">预算</text>
-          <text class="info-value accent">{{ project.budget ? '¥' + project.budget.toLocaleString() : '未设置' }}</text>
+          <text class="info-label">合同总造价</text>
+          <text class="info-value accent">¥{{ contractSummary.total.toLocaleString() }}</text>
         </view>
         <view class="info-item">
           <text class="info-label">开工</text>
@@ -281,9 +281,26 @@
           <text class="panel-title">派工单</text>
           <text class="tool-btn" @click="goDispatchAdd">+ 新建派工</text>
         </view>
-        <view class="empty-state" v-if="dispatches.length === 0">
+        <view v-if="dispatches.length === 0" class="empty-state">
           <text class="empty-icon">👷</text>
           <text class="empty-text">暂无派工单</text>
+        </view>
+        <view v-else>
+          <view v-for="d in dispatches" :key="d.id" class="dispatch-card">
+            <view class="dispatch-header">
+              <text class="dispatch-content">{{ d.content }}</text>
+              <view class="dispatch-status" :style="{ background: dispatchStatusBg(d.status), color: dispatchStatusColor(d.status) }">
+                {{ dispatchStatusLabel(d.status) }}
+              </view>
+            </view>
+            <view class="dispatch-info">
+              <view class="dispatch-row"><text class="dispatch-label">施工地点</text><text class="dispatch-val">{{ d.location || '-' }}</text></view>
+              <view class="dispatch-row"><text class="dispatch-label">工人/班组</text><text class="dispatch-val">{{ d.worker || '-' }}</text></view>
+              <view class="dispatch-row"><text class="dispatch-label">约定工费</text><text class="dispatch-val amount">¥{{ d.fee || 0 }}</text></view>
+              <view class="dispatch-row"><text class="dispatch-label">开始时间</text><text class="dispatch-val">{{ d.start_date || '-' }}</text></view>
+              <view class="dispatch-row"><text class="dispatch-label">申请人</text><text class="dispatch-val">{{ d.applicant_name || '-' }}</text></view>
+            </view>
+          </view>
         </view>
       </view>
 
@@ -312,15 +329,15 @@
         <view v-else>
           <view v-for="item in purchaseList" :key="item.id" class="purchase-card" @click="goPurchaseDetail(item)">
             <view class="purchase-card-header">
-              <text class="purchase-name">{{ item.material_name }}</text>
+              <text class="purchase-name">{{ item.items?.[0]?.material_name || item.supplier_name || '材料采购' }}</text>
               <view class="purchase-status" :style="{ color: purchaseStatusColor(item.status) }">
                 {{ purchaseStatusLabel(item.status) }}
               </view>
             </view>
             <view class="purchase-info">
-              <text>供应商：{{ item.supplier_name }}</text>
-              <text>数量：{{ item.quantity }}{{ item.unit }}</text>
-              <text>金额：¥{{ item.amount || 0 }}</text>
+              <text>供应商：{{ item.supplier_name || '-' }}</text>
+              <text>数量：{{ item.items?.[0]?.quantity || '-' }}{{ item.items?.[0]?.unit || '' }}</text>
+              <text>金额：¥{{ item.total_amount || 0 }}</text>
             </view>
           </view>
         </view>
@@ -330,24 +347,94 @@
       <view v-if="curTab === 'contract'" class="tab-panel">
         <view class="panel-toolbar">
           <text class="panel-title">合同与变更</text>
-        </view>
-        <view class="contract-info">
-          <view class="contract-item">
-            <text class="contract-label">合同金额</text>
-            <text class="contract-value">¥{{ project.budget ? project.budget.toLocaleString() : '0' }}</text>
-          </view>
-          <view class="contract-item">
-            <text class="contract-label">变更金额</text>
-            <text class="contract-value accent">+¥0</text>
-          </view>
-          <view class="contract-item total">
-            <text class="contract-label">合同总造价</text>
-            <text class="contract-value">¥{{ project.budget ? project.budget.toLocaleString() : '0' }}</text>
+          <view class="toolbar-actions">
+            <text class="tool-btn" @click="goContractUpload">上传合同</text>
+            <text class="tool-btn primary" @click="goContractChange">+ 增减项</text>
           </view>
         </view>
-        <view class="empty-state">
+
+        <!-- 无合同时 -->
+        <view v-if="!contractList.length" class="empty-state">
           <text class="empty-icon">📄</text>
-          <text class="empty-text">暂无变更记录</text>
+          <text class="empty-text">暂未上传合同</text>
+          <text class="empty-btn" @click="goContractUpload">上传合同</text>
+        </view>
+
+        <!-- 合同列表 -->
+        <view v-else>
+          <view v-for="c in contractList" :key="c.id" class="contract-card">
+            <view class="contract-card-header">
+              <text class="contract-card-title">合同</text>
+              <text class="contract-status" :class="'s-' + c.review_status">{{ c.review_status === 'approved' ? '✅ 已审核' : c.review_status === 'rejected' ? '❌ 已驳回' : '⏳ 待审核' }}</text>
+            </view>
+            <view class="contract-card-body">
+              <view class="cc-row">
+                <text class="cc-label">合同金额</text>
+                <text class="cc-value">¥{{ Number(c.contract_amount || 0).toLocaleString() }}</text>
+              </view>
+              <view class="cc-row" v-if="c.attachment">
+                <text class="cc-label">附件</text>
+                <text class="cc-value link" @click="previewFile(c.attachment)">查看文件</text>
+              </view>
+            </view>
+            <view class="contract-card-actions">
+              <text v-if="canApproveContract" class="cc-btn" @click="openApproveDialog(c)">审核</text>
+              <text v-else class="cc-btn" @click="goContractChangeDetail(c)">查看详情</text>
+              <text class="cc-btn" @click="goCollection(c)">录入催收</text>
+            </view>
+          </view>
+
+          <!-- 增减项列表 -->
+          <view class="section-divider">
+            <text class="section-divider-text">增减项记录</text>
+            <text class="tool-btn small" @click="goContractChange">+ 新增减项</text>
+          </view>
+
+          <view v-if="!changeList.length" class="empty-state small">
+            <text class="empty-text">暂无增减项</text>
+          </view>
+          <view v-else>
+            <view v-for="ch in changeList" :key="ch.id" class="change-card">
+              <view class="change-card-header">
+                <text class="change-title">{{ ch.title }}</text>
+                <text class="contract-status" :class="'s-' + ch.review_status">
+                  {{ ch.review_status === 'approved' ? '✅ 已通过' : ch.review_status === 'rejected' ? '❌ 已驳回' : '⏳ 待审核' }}
+                </text>
+              </view>
+              <view class="cc-row">
+                <text class="cc-label">类型</text>
+                <text class="cc-value">{{ ch.change_type === 'add' ? '➕ 增加' : '➖ 减少' }}</text>
+              </view>
+              <view class="cc-row">
+                <text class="cc-label">金额</text>
+                <text class="cc-value" :class="ch.change_type === 'add' ? 'accent' : 'decrease'">
+                  {{ ch.change_type === 'add' ? '+' : '-' }}¥{{ Number(ch.amount || 0).toLocaleString() }}
+                </text>
+              </view>
+              <view class="cc-row">
+                <text class="cc-label">申请人</text>
+                <text class="cc-value">{{ ch.applicant_name || '—' }}</text>
+              </view>
+            </view>
+          </view>
+
+          <!-- 合同总造价 -->
+          <view class="contract-summary">
+            <view class="contract-summary-row">
+              <text class="cs-label">合同金额</text>
+              <text class="cs-value">¥{{ contractSummary.contract.toLocaleString() }}</text>
+            </view>
+            <view class="contract-summary-row">
+              <text class="cs-label">增减项合计</text>
+              <text class="cs-value" :class="contractSummary.change >= 0 ? 'accent' : 'decrease'">
+                {{ contractSummary.change >= 0 ? '+' : '' }}¥{{ contractSummary.change.toLocaleString() }}
+              </text>
+            </view>
+            <view class="contract-summary-row total">
+              <text class="cs-label">合同总造价</text>
+              <text class="cs-value">¥{{ contractSummary.total.toLocaleString() }}</text>
+            </view>
+          </view>
         </view>
       </view>
 
@@ -411,7 +498,7 @@
 </template>
 
 <script setup >
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useUserStore } from "@/stores/user";
 
 const projectId = ref(0);
@@ -423,7 +510,7 @@ const tabs = computed(() => [
   { key: 'nodes', label: '进度节点' },
   { key: 'logs', label: '施工日志', badge: logs.value.length || null },
   { key: 'inspect', label: '巡检', badge: issues.value.length || null },
-  { key: 'dispatch', label: '派工' },
+  { key: 'dispatch', label: '派工', badge: dispatches.value.length || null },
   { key: 'material', label: '材料' },
   { key: 'purchase', label: '采购' },
   { key: 'contract', label: '合同' },
@@ -442,6 +529,8 @@ const issuesLoading = ref(false);
 const dispatches = ref([]);
 const materials = ref([]);
 const purchaseList = ref([]);
+const contractList = ref([]);
+const changeList = ref([]);
 
 const financeData = ref({
   income: 58000,
@@ -626,6 +715,154 @@ const goPurchaseAdd = () => {
   uni.navigateTo({ url: `/pages/purchase/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
 };
 
+const contractSummary = computed(() => {
+  // 只统计已审核通过的合同
+  const contractAmt = contractList.value
+    .filter(c => c.review_status === 'approved')
+    .reduce((s, c) => s + Number(c.contract_amount || 0), 0);
+  const changeAmt = changeList.value
+    .filter(ch => ch.review_status === 'approved')
+    .reduce((s, ch) => {
+      return s + (ch.change_type === 'add' ? Number(ch.amount || 0) : -Number(ch.amount || 0));
+    }, 0);
+  return {
+    contract: contractAmt,
+    change: changeAmt,
+    total: contractAmt + changeAmt,
+  };
+});
+
+const loadContracts = async () => {
+  if (!projectId.value) return;
+  contractList.value = []; // 清空旧数据，确保返回后看到刷新
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/contracts/by-project/${projectId.value}`,
+      header: { Authorization: token },
+    });
+    if (res.data.code === 0) {
+      contractList.value = res.data.data || [];
+    }
+  } catch (e) {
+    console.error('加载合同失败:', e);
+  }
+};
+
+const loadChanges = async () => {
+  if (!projectId.value) return;
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/contract-changes?project_id=${projectId.value}&page_size=100`,
+      header: { Authorization: token },
+    });
+    if (res.data.code === 0) {
+      changeList.value = res.data.data?.list || res.data.data || [];
+    }
+  } catch (e) {
+    console.error('加载增减项失败:', e);
+  }
+};
+
+const goContractUpload = () => {
+  uni.navigateTo({ url: `/pages/contracts/contract-upload?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
+};
+
+const goContractChange = (change) => {
+  const id = change?.id ? `&id=${change.id}` : '';
+  const view = change?.id ? `&view=1` : '';
+  uni.navigateTo({ url: `/pages/contracts/contract-change-add?projectId=${projectId.value}${id}${view}` });
+};
+
+// 合同卡片操作：有无 contract:approve 权限决定显示审核还是详情
+const canApproveContract = ref(false);
+
+const checkContractApprovePermission = async () => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({ url: '/api/my-permissions', header: { Authorization: token } });
+    const perms = res.data?.permissions || [];
+    canApproveContract.value = perms.includes('contract:approve');
+  } catch {
+    // 读取本地缓存
+    canApproveContract.value = userStore.hasPermission('contract:approve');
+  }
+};
+
+const goContractChangeDetail = (contract) => {
+  const statusMap = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
+  const status = statusMap[contract.review_status] || contract.review_status;
+  uni.showModal({
+    title: '合同详情',
+    content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n审核状态：${status}\n备注：${contract.remark || '无'}`,
+    showCancel: false,
+  });
+};
+
+const openApproveDialog = (contract) => {
+  const statusMap = { pending: '待审核', approved: '已通过', rejected: '已驳回' };
+  const status = statusMap[contract.review_status] || contract.review_status;
+  uni.showModal({
+    title: '合同审核',
+    content: `合同金额：¥${Number(contract.contract_amount || 0).toLocaleString()}\n当前状态：${status}`,
+    confirmText: '通过',
+    cancelText: '驳回',
+    success: async (res) => {
+      if (res.confirm) {
+        await approveContract(contract.id, 'approved');
+      } else if (res.cancel) {
+        uni.showModal({
+          title: '驳回原因',
+          editable: true,
+          placeholderText: '请输入驳回原因（选填）',
+          success: async (res2) => {
+            if (res2.confirm) {
+              await approveContract(contract.id, 'rejected', res2.content);
+            }
+          },
+        });
+      }
+    },
+  });
+};
+
+const approveContract = async (contractId, action, remark = '') => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      url: `/api/contracts/${contractId}/review`,
+      method: 'PUT',
+      header: { Authorization: token, 'Content-Type': 'application/json' },
+      data: { action, remark },
+    });
+    if (res.data.code === 0 || res.data.message) {
+      uni.showToast({ title: action === 'approved' ? '已通过' : '已驳回', icon: 'success' });
+      loadContracts();
+    } else {
+      uni.showToast({ title: res.data.error || '操作失败', icon: 'none' });
+    }
+  } catch (e) {
+    uni.showToast({ title: '网络错误', icon: 'none' });
+  }
+};
+
+const goCollection = (contract) => {
+  uni.navigateTo({ url: `/pages/contracts/collection-add?projectId=${projectId.value}&contractId=${contract.id}&projectName=${encodeURIComponent(project.value.name || '')}` });
+};
+
+const previewFile = (url) => {
+  if (!url) return;
+  const base = import.meta.env.DEV ? 'http://localhost:3002' : '';
+  const fullUrl = base + url;
+  // 优先用 uni 跨平台 API（H5 不支持，小程序支持）
+  if (uni.previewMedia) {
+    uni.previewMedia({ sources: [{ url: fullUrl, type: url.endsWith('.pdf') ? 'pdf' : 'image' }] });
+  } else {
+    window.open(fullUrl, '_blank');
+  }
+};
+
 const goPurchaseDetail = (item) => {
   uni.navigateTo({ url: `/pages/purchase/detail?id=${item.id}` });
 };
@@ -757,10 +994,11 @@ const fetchDetail = async () => {
       const found = data.find((p) => p.id === projectId.value);
       if (found) project.value = found;
     }
-    // 加载日志和巡检
+    // 加载日志、巡检、派工
     fetchLogs();
     fetchInspections();
     loadPurchase();
+    loadDispatches();
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: "加载失败", icon: "none" });
@@ -815,6 +1053,27 @@ const fetchInspections = async () => {
   }
 };
 
+// 加载派工单
+const loadDispatches = async () => {
+  if (!projectId.value) return;
+  try {
+    const userId = uni.getStorageSync('userInfo')?.id || '';
+    const res = await uni.request({
+      url: `/api/dispatches?project_id=${projectId.value}&page_size=100`,
+      header: { 'x-user-id': userId },
+    });
+    if (res.data.code === 0 || res.data.code === undefined || Array.isArray(res.data)) {
+      dispatches.value = Array.isArray(res.data) ? res.data : (res.data.list || []);
+    }
+  } catch (e) {
+    console.error('加载派工单失败:', e);
+  }
+};
+
+const dispatchStatusLabel = (s) => ({ pending: '待审核', approved: '进行中', rejected: '已驳回', completed: '已完成' })[s] || s;
+const dispatchStatusBg = (s) => ({ pending: '#fff3e0', approved: '#DBEAFE', rejected: '#ffebee', completed: '#D1FAE5' })[s] || '#f5f5f5';
+const dispatchStatusColor = (s) => ({ pending: '#ff9800', approved: '#1E40AF', rejected: '#f44336', completed: '#065F46' })[s] || '#999';
+
 onMounted(() => {
   const pages = getCurrentPages();
   const current = pages[pages.length - 1];
@@ -822,6 +1081,28 @@ onMounted(() => {
   projectId.value = parseInt(options.id || '0');
   if (projectId.value) {
     fetchDetail();
+    loadContracts();
+    loadChanges();
+    checkContractApprovePermission();
+  }
+});
+
+// 监听页面显示（从子页面返回时刷新数据）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && projectId.value) {
+    loadContracts();
+    loadChanges();
+    checkContractApprovePermission();
+  }
+});
+
+watch(curTab, (val) => {
+  if (val === 'dispatch' && projectId.value) {
+    loadDispatches();
+  }
+  if (val === 'contract' && projectId.value) {
+    loadContracts();
+    loadChanges();
   }
 });
 
@@ -1419,8 +1700,170 @@ const goBack = () => {
 }
 
 .contract-value.accent { color: #EF4444; }
+.contract-value.decrease { color: #10B981; }
 
-/* 财务 */
+/* 合同卡片 */
+.contract-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+.contract-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.contract-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1A1F36;
+}
+.contract-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.contract-status.s-approved { background: #D1FAE5; color: #065F46; }
+.contract-status.s-rejected { background: #FEE2E2; color: #991B1B; }
+.contract-status.s-pending { background: #FEF3C7; color: #92400E; }
+.contract-card-body {
+  margin-bottom: 10px;
+}
+.cc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+.cc-label {
+  font-size: 13px;
+  color: #6B7280;
+}
+.cc-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1A1F36;
+}
+.cc-value.link { color: #3B82F6; text-decoration: underline; }
+.cc-value.accent { color: #EF4444; }
+.cc-value.decrease { color: #10B981; }
+.contract-card-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #F9FAFB;
+}
+.cc-btn {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  color: #3B82F6;
+  padding: 8px 0;
+  background: #EFF6FF;
+  border-radius: 8px;
+}
+
+/* 区块分割 */
+.section-divider {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 4px 8px;
+}
+.section-divider-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B7280;
+}
+
+/* 增减项卡片 */
+.change-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.change-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.change-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1A1F36;
+}
+
+/* 合同汇总 */
+.contract-summary {
+  background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 14px;
+  color: #fff;
+}
+.contract-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+.contract-summary-row.total {
+  border-top: 1px solid rgba(255,255,255,0.2);
+  margin-top: 8px;
+  padding-top: 12px;
+}
+.cs-label {
+  font-size: 13px;
+  color: rgba(255,255,255,0.7);
+}
+.cs-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.cs-value.accent { color: #FCA5A5; }
+.cs-value.decrease { color: #6EE7B7; }
+
+/* 空状态按钮 */
+.empty-btn {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #3B82F6;
+  padding: 8px 20px;
+  background: #EFF6FF;
+  border-radius: 20px;
+}
+
+/* 工具栏按钮 */
+.toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tool-btn {
+  font-size: 12px;
+  color: #3B82F6;
+  padding: 4px 10px;
+  background: #EFF6FF;
+  border-radius: 6px;
+}
+.tool-btn.primary {
+  background: #3B82F6;
+  color: #fff;
+}
+.tool-btn.small {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.empty-state.small {
+  padding: 20px 0;
+}
+
+
 .finance-summary {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1676,5 +2119,22 @@ const goBack = () => {
   color: #6B7280;
   line-height: 1.4;
 }
+
+/* 派工卡片 */
+.dispatch-card {
+  background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.dispatch-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 10px;
+}
+.dispatch-content { font-size: 15px; font-weight: 600; color: #1A1F36; flex: 1; margin-right: 10px; }
+.dispatch-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.dispatch-info { display: flex; flex-direction: column; gap: 4px; }
+.dispatch-row { display: flex; font-size: 13px; }
+.dispatch-label { color: #999; width: 80px; flex-shrink: 0; }
+.dispatch-val { color: #333; flex: 1; }
+.dispatch-val.amount { color: #1E3A5F; font-weight: 600; }
 
 </style>
