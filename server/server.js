@@ -166,6 +166,7 @@ async function initDatabase() {
         'ALTER TABLE project_logs ADD COLUMN work_type VARCHAR(100) DEFAULT NULL',
         'ALTER TABLE project_logs ADD COLUMN tomorrow_plan TEXT DEFAULT NULL',
         'ALTER TABLE project_logs ADD COLUMN note TEXT DEFAULT NULL',
+        'ALTER TABLE project_logs ADD COLUMN category VARCHAR(50) DEFAULT NULL',
       ];
       for (const sql of projectLogMigrations) {
         try { await pool.query(sql); console.log('✅ 迁移成功'); } catch (_) { /* 忽略 */ }
@@ -2362,13 +2363,59 @@ app.get('/api/project-logs/:projectId', async (req, res) => {
   res.json(await stmt.all(req.params.projectId));
 });
 
+// 按分类获取项目图库（从 project_logs.images 聚合）
+app.get('/api/project-gallery', async (req, res) => {
+  const { project_id, category } = req.query;
+  const cats = ['开工', '水电', '防水', '泥瓦', '木工', '油漆', '安装', '验收'];
+
+  if (project_id) {
+    // 指定项目：单个或全部分类
+    let sql = `SELECT id, category, content, images, created_at FROM project_logs WHERE project_id = ? AND images IS NOT NULL AND images != '' AND images != '[]'`;
+    const params = [project_id];
+    if (category && category !== '全部') {
+      sql += ` AND category = ?`;
+      params.push(category);
+    }
+    sql += ` ORDER BY created_at DESC`;
+    const logs = await db.prepare(sql).all(...params);
+
+    const photos = [];
+    for (const log of logs) {
+      let imgs = [];
+      try {
+        const raw = log.images || '[]';
+        const first = JSON.parse(raw);
+        imgs = typeof first === 'string' ? JSON.parse(first) : first;
+      } catch (_) {}
+      for (const url of imgs) {
+        photos.push({ url, category: log.category, date: log.created_at?.split('T')[0], desc: log.content?.substring(0, 30) });
+      }
+    }
+    return res.json({ list: photos });
+  }
+
+  // 全项目聚合：按分类统计
+  const allCats = cats.map(c => ({ category: c, count: 0 }));
+  const logs = await db.prepare(`
+    SELECT category, COUNT(*) as cnt
+    FROM project_logs
+    WHERE images IS NOT NULL AND images != '' AND images != '[]'
+    GROUP BY category
+  `).all();
+  for (const row of logs) {
+    const idx = allCats.findIndex(c => c.category === row.category);
+    if (idx !== -1) allCats[idx].count = row.cnt;
+  }
+  res.json({ list: allCats });
+});
+
 app.post('/api/project-logs', async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
-  const { project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note } = req.body;
-  const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
-  const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []), worker_count || null, work_type || null, tomorrow_plan || null, note || null, userId);
+  const { project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note, category } = req.body;
+  const stmt = db.prepare('INSERT INTO project_logs (project_id, content, operator, images, worker_count, work_type, tomorrow_plan, note, category, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+  const result = await stmt.run(project_id, content, operator, JSON.stringify(images || []), worker_count || null, work_type || null, tomorrow_plan || null, note || null, category || null, userId);
   const logId = result.lastInsertRowid;
 
   // ✅ 新增项目进展时，通知项目成员和客户
