@@ -756,13 +756,14 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
           );
           console.log(`[notifyProject] ✅ 通知已写入 id=${r.insertId} phone=${t.phone} name=${t.name}`);
 
-          // 同时写 messages 表（员工消息页面读的是这个表）
+          // 同时写 messages 表（员工消息页面读的是 MySQL messages 表）
           if (t.user_id) {
             try {
-              await db.prepare(
-                'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-              ).run(t.user_id, t.name || '', title, content, type, sourceId || 0, sourceType || '', 0, 'sent', new Date().toISOString());
-              console.log(`[notifyProject] ✅ messages已写入 phone=${t.phone} user_id=${t.user_id}`);
+              await pool.query(
+                'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [t.user_id, t.name || '', title, content, type, sourceId || 0, sourceType || '', 0, 'sent', new Date().toISOString()]
+              );
+              console.log(`[notifyProject] ✅ messages已写入 MySQL phone=${t.phone} user_id=${t.user_id}`);
             } catch(e2) {
               console.error(`[notifyProject] ❌ messages写入失败 phone=${t.phone} user_id=${t.user_id} error=${e2.message}`);
             }
@@ -5057,7 +5058,7 @@ app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (r
 app.get('/api/dispatches', async (req, res) => {
   try {
     const { status, project_id } = req.query;
-    let sql = 'SELECT * FROM dispatches';
+    let sql = `SELECT d.*, e.name as applicant_name FROM dispatches d LEFT JOIN employees e ON d.applicant_id = e.id`;
     const params = [];
     const conditions = [];
     if (status) {
@@ -5071,7 +5072,7 @@ app.get('/api/dispatches', async (req, res) => {
     if (conditions.length > 0) {
       sql += ' WHERE ' + conditions.join(' AND ');
     }
-    sql += ' ORDER BY created_at DESC';
+    sql += ' ORDER BY d.created_at DESC';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
   } catch (err) {
@@ -5108,7 +5109,7 @@ app.get('/api/dispatches/my', async (req, res) => {
     if (!userId) return res.status(401).json({ error: '未登录' });
     const { page = 1, page_size = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(page_size);
-    const [rows] = await pool.query('SELECT * FROM dispatches WHERE applicant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?', [userId, parseInt(page_size), offset]);
+    const [rows] = await pool.query('SELECT d.*, e.name as applicant_name FROM dispatches d LEFT JOIN employees e ON d.applicant_id = e.id WHERE d.applicant_id = ? ORDER BY d.created_at DESC LIMIT ? OFFSET ?', [userId, parseInt(page_size), offset]);
     const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM dispatches WHERE applicant_id = ?', [userId]);
     res.json({ list: rows, total });
   } catch (err) {
@@ -5128,7 +5129,7 @@ app.get('/api/dispatches/pending', async (req, res) => {
     }
     const { page = 1, page_size = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(page_size);
-    const [rows] = await pool.query('SELECT * FROM dispatches WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?', ['pending', parseInt(page_size), offset]);
+    const [rows] = await pool.query('SELECT d.*, e.name as applicant_name FROM dispatches d LEFT JOIN employees e ON d.applicant_id = e.id WHERE d.status = ? ORDER BY d.created_at DESC LIMIT ? OFFSET ?', ['pending', parseInt(page_size), offset]);
     const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM dispatches WHERE status = ?', ['pending']);
     res.json({ list: rows, total });
   } catch (err) {
@@ -7370,9 +7371,23 @@ app.put('/api/contracts/:id/review', async (req, res) => {
       );
     }
 
+    const [[proj]] = await pool.query('SELECT name FROM projects WHERE id = ?', [contract.project_id]);
+    const project_name = proj?.name || `项目#${contract.project_id}`;
     const [[submitter]] = await pool.query('SELECT name FROM employees WHERE id = ?', [contract.submitted_by]);
     const submitterName = submitter?.name || '';
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '合同管理', req.params.id, `项目#${contract.project_id}`, `合同审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
+
+    // 通知：合同审核结果
+    notifyProject(
+      action === 'approve' ? 'contract_approved' : 'contract_rejected',
+      contract.project_id,
+      action === 'approve' ? `合同审核通过` : `合同审核未通过`,
+      action === 'approve'
+        ? `您上传的合同（项目：${project_name}）已审核通过`
+        : `您上传的合同（项目：${project_name}）未通过${remark ? '：' + remark : ''}`,
+      req.params.id,
+      'contract'
+    ).catch(console.error);
 
     if (contract.submitted_by && contract.submitted_by !== userId) {
       await pool.query(
@@ -7470,6 +7485,17 @@ app.post('/api/contract-changes', async (req, res) => {
       [project_id, contract_id || null, change_type, title, amount, description || '', userId]
     );
     await addLog(userId, '', '新增', '增减项', result.insertId, project_name, `${change_type === 'increase' ? '增加' : '减少'}：${title}（${amount}元）`, req.ip);
+
+    // 通知：新增增减项
+    notifyProject(
+      'contract_change_created',
+      project_id,
+      `新增减项申请：${change_type === 'increase' ? '增加' : '减少'}¥${amount}`,
+      `项目「${project_name}」新增${change_type === 'increase' ? '增加' : '减少'}项「${title}」，金额：${amount}元，请及时审核。`,
+      result.insertId,
+      'contract_change'
+    ).catch(console.error);
+
     res.json({ id: result.insertId, message: '增减项已提交，待审核' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7506,6 +7532,19 @@ app.put('/api/contract-changes/:id/review', async (req, res) => {
     }
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '增减项', req.params.id, record.title, `增减项审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
+
+    // 通知：增减项审核结果
+    notifyProject(
+      action === 'approve' ? 'contract_change_approved' : 'contract_change_rejected',
+      record.project_id,
+      action === 'approve' ? `增减项审核通过` : `增减项审核未通过`,
+      action === 'approve'
+        ? `您提交的增减项「${record.title}」（${record.change_type === 'increase' ? '增加' : '减少'}¥${record.amount}）已审核通过`
+        : `您提交的增减项「${record.title}」未通过${remark ? '：' + remark : ''}`,
+      record.project_id,
+      'contract_change'
+    ).catch(console.error);
+
     res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7546,6 +7585,17 @@ app.post('/api/collection-records', async (req, res) => {
       [project_id, amount, collect_date || null, remark || '', imagesStr, userId]
     );
     await addLog(userId, '', '新增', '催收记录', result.insertId, project_name, `催收金额：${amount}元`, req.ip);
+
+    // 通知：新增催收记录
+    notifyProject(
+      'collection_created',
+      project_id,
+      `催收录入：¥${amount}`,
+      `项目「${project_name}」录入催收记录，金额：${amount}元，请财务及时确认收款。`,
+      result.insertId,
+      'collection'
+    ).catch(console.error);
+
     res.json({ id: result.insertId, message: '催收记录已录入' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7575,7 +7625,21 @@ app.put('/api/collection-records/:id/confirm', async (req, res) => {
       [record.project_id, confAmt, req.params.id, userId]
     );
 
+    const [[proj]] = await pool.query('SELECT name FROM projects WHERE id = ?', [record.project_id]);
+    const project_name = proj?.name || `项目#${record.project_id}`;
+
     await addLog(userId, '', '确认收款', '催收记录', req.params.id, `项目#${record.project_id}`, `确认收款：${confAmt}元`, req.ip);
+
+    // 通知：催收已确认收款
+    notifyProject(
+      'collection_confirmed',
+      record.project_id,
+      `催收已确认收款：¥${confAmt}`,
+      `项目「${project_name}」的催收记录已确认收款，金额：${confAmt}元。`,
+      req.params.id,
+      'collection'
+    ).catch(console.error);
+
     res.json({ message: '已确认收款' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
