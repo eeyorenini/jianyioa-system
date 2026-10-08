@@ -2190,9 +2190,33 @@ app.delete('/api/projects/:id', checkPermission('project:delete'), async (req, r
     if (!proj) return res.status(404).json({ error: '记录不存在' });
     if (proj.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除他人的数据' });
     const projName = proj.name;
+    const pid = req.params.id;
+
+    // 级联删除所有关联数据（按依赖顺序）
+    const tables = [
+      // 先删子表（被引用）
+      'contract_changes',
+      'contracts',
+      'project_logs',
+      'inspections',
+      'rectification_issues',
+      'dispatches',
+      'quotes',
+      'customer_follow',
+      'materials',
+      'material_orders',
+      'purchase_orders',
+      'finance_records',
+      'project_progress_nodes',
+      'notifications',
+    ];
+    for (const tbl of tables) {
+      try { await pool.query(`DELETE FROM ${tbl} WHERE project_id = ?`, [pid]); } catch (_) {}
+    }
+
     const stmt = db.prepare('DELETE FROM projects WHERE id = ?');
-    await stmt.run(req.params.id);
-    await addLog(userId, '', '删除', '项目管理', req.params.id, projName, `删除项目: ${projName}`, req.ip);
+    await stmt.run(pid);
+    await addLog(userId, '', '删除', '项目管理', pid, projName, `删除项目: ${projName}`, req.ip);
     res.json({ message: '删除成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -7497,6 +7521,22 @@ app.post('/api/contract-changes', async (req, res) => {
     ).catch(console.error);
 
     res.json({ id: result.insertId, message: '增减项已提交，待审核' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/contract-changes/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [[record]] = await pool.query('SELECT * FROM contract_changes WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '记录不存在' });
+    const perms = await getUserPermissions(userId);
+    if (record.submitted_by !== userId && !perms.includes('contract_change:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无权删除此记录' });
+    }
+    await pool.query('DELETE FROM contract_changes WHERE id = ?', [req.params.id]);
+    await addLog(userId, '', '删除', '增减项', req.params.id, '', `删除增减项: ${record.title}`, req.ip);
+    res.json({ message: '删除成功' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
