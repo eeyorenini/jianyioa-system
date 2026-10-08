@@ -569,7 +569,7 @@
             </view>
             <view class="modal-info-row">
               <text class="modal-info-label">提交人</text>
-              <text class="modal-info-value">{{ collectionModal.data.submitted_name || collectionModal.data.submitted_by || '—' }}</text>
+              <text class="modal-info-value">{{ collectionModal.data.submitted_by_name || collectionModal.data.submitted_by || '—' }}</text>
             </view>
             <view class="modal-info-row" v-if="collectionModal.data.remark">
               <text class="modal-info-label">备注</text>

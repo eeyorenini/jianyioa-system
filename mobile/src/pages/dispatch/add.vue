@@ -111,7 +111,7 @@ const form = ref({
   location: '',
   worker: '',
   fee: '',
-  start_date: '',
+  start_date: new Date().toISOString().split('T')[0],
   requirement: '',
 })
 
