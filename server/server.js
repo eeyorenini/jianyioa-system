@@ -4444,6 +4444,40 @@ app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'),
   }
 });
 
+// GET /api/purchase-requests/to-reimburse — 申请人待上传报销列表（status=approved + 未上传报销）
+app.get('/api/purchase-requests/to-reimburse', checkPermission('purchase:write'), async (req, res) => {
+  const { page, page_size } = req.query;
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: '未登录' });
+  const p = parseInt(page) || 1;
+  const l = parseInt(page_size) || 50;
+  const offset = (p - 1) * l;
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
+       FROM purchase_requests pr
+       LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
+       WHERE pr.applicant_id = ?
+         AND pr.status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM purchase_reimbursements WHERE request_id = pr.id)
+       ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
+      [userId, l, offset]
+    );
+    const [countResult] = await pool.query(
+      `SELECT COUNT(*) as total FROM purchase_requests pr
+       WHERE pr.applicant_id = ?
+         AND pr.status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM purchase_reimbursements WHERE request_id = pr.id)`,
+      [userId]
+    );
+    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+  } catch (err) {
+    console.error('purchase-requests to-reimburse error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
 // GET /api/purchase-requests/finance — 财务确认列表（finance_confirmed + reimbursed）
 app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), async (req, res) => {
   const { page, page_size } = req.query;
@@ -4538,7 +4572,7 @@ app.put('/api/purchase-requests/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/purchase-requests/:id — 删除申请（仅申请人+待审核）
+// DELETE /api/purchase-requests/:id — 删除申请（仅申请人；pending/rejected/未上传报销的 approved 可删）
 app.delete('/api/purchase-requests/:id', async (req, res) => {
   try {
     const { userId } = await getCurrentUser(req);
@@ -4546,8 +4580,31 @@ app.delete('/api/purchase-requests/:id', async (req, res) => {
 
     const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
-    if (!['pending', 'rejected'].includes(rows[0].status)) return res.status(400).json({ error: '只有待审核或已驳回的申请可以删除' });
     if (rows[0].applicant_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除' });
+
+    // 读取报销记录，状态 approved 但已上传报销则禁止删除（避免误删财务凭证）
+    const [reimRows] = await pool.query('SELECT id, images FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
+    const allowedStatuses = ['pending', 'rejected', 'approved'];
+    if (!allowedStatuses.includes(rows[0].status)) {
+      return res.status(400).json({ error: `当前状态（${rows[0].status}）不可删除` });
+    }
+    if (rows[0].status === 'approved' && reimRows.length > 0) {
+      return res.status(400).json({ error: '已上传报销凭证的申请不可删除' });
+    }
+
+    // 删前 unlink 报销凭证物理文件
+    for (const r of reimRows) {
+      let arr = [];
+      try { arr = Array.isArray(r.images) ? r.images : JSON.parse(r.images || '[]'); } catch {}
+      for (const p of arr) {
+        if (!p) continue;
+        const m = String(p).match(/\/uploads\/logs\/([^/?#]+)$/);
+        if (m) {
+          const abs = path.join(__dirname, 'uploads', 'logs', m[1]);
+          fs.unlink(abs, (e) => { if (e && e.code !== 'ENOENT') console.error('unlink fail:', abs, e.message); });
+        }
+      }
+    }
 
     await pool.query('DELETE FROM purchase_request_items WHERE request_id = ?', [req.params.id]);
     await pool.query('DELETE FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
@@ -4616,6 +4673,49 @@ app.put('/api/purchase-requests/:id/approve', async (req, res) => {
   } catch (err) {
     console.error('purchase-requests approve error:', err);
     res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// PUT /api/purchase-requests/:id/unapprove — 反审核（仅申请人，状态 approved 且未上传报销时回退到 pending）
+app.put('/api/purchase-requests/:id/unapprove', async (req, res) => {
+  try {
+    const { userId, userName } = await getCurrentUser(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [rows] = await pool.query('SELECT * FROM purchase_requests WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '申请不存在' });
+    if (rows[0].applicant_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '只能反审核自己的申请' });
+    if (rows[0].status !== 'approved') return res.status(400).json({ error: '只有已通过的申请可以反审核' });
+
+    // 已上传报销凭证则禁止反审核（避免漏单）
+    const [reimRows] = await pool.query('SELECT id FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
+    if (reimRows.length > 0) return res.status(400).json({ error: '已上传报销凭证，不可反审核' });
+
+    await pool.query(
+      `UPDATE purchase_requests SET status='pending', rejection_reason=NULL, updated_at=NOW() WHERE id=?`,
+      [req.params.id]
+    );
+
+    await addLog(userId, '', '反审核', '采购管理', req.params.id, rows[0].project_name || '', `反审核，状态从 approved 回退到 pending`, req.ip);
+
+    // 通知有 purchase:approve 权限的人
+    const approverIds = await getUserIdsByPermission('purchase:approve');
+    for (const uid of approverIds) {
+      if (uid !== userId) {
+        const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
+        await sendPurchaseNotification({
+          userId: uid, userName: emp[0]?.name || '',
+          title: '采购申请反审核待重审',
+          content: `${userName} 撤回了项目：${rows[0].project_name} 的采购申请（已通过），已退回待审核队列`,
+          type: '采购', relatedId: parseInt(req.params.id), relatedType: 'purchase_request'
+        });
+      }
+    }
+
+    res.json({ message: '已反审核，状态回到待审核' });
+  } catch (err) {
+    console.error('purchase-requests unapprove error:', err);
+    res.status(500).json({ error: '反审核失败' });
   }
 });
 
