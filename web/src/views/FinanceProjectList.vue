@@ -54,7 +54,7 @@
     </el-card>
 
     <!-- 项目详情弹窗 -->
-    <el-dialog v-model="detailVisible" :title="currentProject?.name + ' — 财务详情'" width="900px" top="3vh">
+    <el-dialog v-model="detailVisible" :title="(currentProject?.project_name || currentProject?.name) + ' — 财务详情'" width="900px" top="3vh">
       <div v-if="currentProject">
         <!-- 统计卡片 -->
         <el-row :gutter="12" style="margin-bottom: 16px;">
@@ -330,10 +330,40 @@ const formatNumber = (num) => {
 const fetchProjects = async () => {
   loading.value = true
   try {
-    const res = await axios.get('/api/finance/receivable-by-project')
-    const list = res.data?.list || []
-    projects.value = list
+    // 先获取所有项目列表
+    const projRes = await axios.get('/api/projects?page=1&pageSize=1000')
+    const list = projRes.data?.list || projRes.data || []
+    // 并行加载每个项目的财务汇总（手机端同款API）
+    const results = await Promise.all(
+      list.map(p =>
+        Promise.all([
+          axios.get(`/api/finance/summary?project_id=${p.id}`).catch(() => ({ data: {} })),
+          axios.get(`/api/collection-records?project_id=${p.id}`).catch(() => ({ data: [] }))
+        ]).then(([summaryRes, collectionRes]) => {
+          const summary = summaryRes.data?.data || summaryRes.data || {}
+          const collections = Array.isArray(collectionRes.data) ? collectionRes.data : (collectionRes.data?.list || [])
+          const collected = collections
+            .filter(r => r.status === 'confirmed')
+            .reduce((s, r) => s + Number(r.amount || 0), 0)
+          const receivable = Number(summary.receivable || summary.contract_amount || 0)
+          return {
+            project_id: p.id,
+            project_name: p.name,
+            customer_name: p.customer_name || '',
+            contract_amount: Number(summary.contract_amount || 0),
+            change_net: (Number(summary.increase_total || 0) - Number(summary.decrease_total || 0)),
+            receivable,
+            collected,
+            uncollected: receivable - collected,
+            unpaid: receivable - collected,
+            _pending: collections.filter(r => r.status !== 'confirmed').reduce((s, r) => s + Number(r.amount || 0), 0)
+          }
+        })
+      )
+    )
+    projects.value = results
   } catch (e) {
+    console.error('fetchProjects error:', e)
     projects.value = []
   } finally {
     loading.value = false

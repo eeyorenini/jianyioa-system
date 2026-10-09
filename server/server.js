@@ -635,6 +635,8 @@ function getDefaultNotificationRules() {
 // 5. 消息写入 notifications 表（receiver_phone=员工phone）
 // 6. 按通知规则的 channels 决定发送渠道（inapp写库 / sms发短信 / wechat发微信）
 async function notifyProject(type, projectId, title, content, sourceId, sourceType, templateId) {
+  // 2026-10-09 修复：收集短信发送结果，函数末尾返回给调用方
+  const smsResults = [];
   try {
     // 0. 读取通知规则
     let notifRules = {};
@@ -775,7 +777,12 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
 
       // 短信渠道
       if (enabledChannels.includes('sms') && templateId) {
-        sendSmsFromNotify(t.phone, t.name, title, content, templateId).catch(console.error);
+        try {
+          const smsRes = await sendSmsFromNotify(t.phone, t.name, title, content, templateId);
+          smsResults.push({ phone: t.phone, name: t.name, ...smsRes });
+        } catch (e) {
+          smsResults.push({ phone: t.phone, name: t.name, success: false, error: e.message });
+        }
       }
 
       // 微信渠道（调用 push）
@@ -794,6 +801,7 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
   } catch (err) {
     console.error('notifyProject error:', err);
   }
+  return smsResults;
 }
 
 // 内部函数：通过手机号推送微信模板消息
@@ -925,14 +933,16 @@ async function sendAppNotification(type, title, content, sourceId, sourceType, t
 // ==================== 通知短信发送函数（被 notifyProject 调用）====================
 // templateId 可选：指定则优先用该模板的 aliyun_template_code，否则用默认模板
 async function sendSmsFromNotify(phone, name, title, content, templateId) {
-  if (!phone) return;
+  // 2026-10-09 修复：返回 { success, count, error, reason }，让调用方知道发送结果
+  const result = { success: false, count: 0, error: null, reason: null };
+  if (!phone) { result.reason = 'no_phone'; return result; }
 
   // 读取阿里云短信配置（SQLite system_settings，category='sms'）
   const [smsSettings] = await db.prepare("SELECT setting_value FROM system_settings WHERE category='sms'").all();
   let smsConfig = smsSettings ? JSON.parse(smsSettings.setting_value) : null;
   if (smsConfig && smsConfig.setting_value) smsConfig = smsConfig.setting_value;
-  if (!smsConfig || smsConfig.provider !== 'aliyun') return;
-  if (!smsConfig.access_key_id || !smsConfig.access_key_secret) return;
+  if (!smsConfig || smsConfig.provider !== 'aliyun') { result.reason = 'sms_not_configured'; return result; }
+  if (!smsConfig.access_key_id || !smsConfig.access_key_secret) { result.reason = 'sms_config_incomplete'; return result; }
 
   let signName = smsConfig.sign_name || '简逸装饰';
   let templateCode = smsConfig.template_code || '';
@@ -954,24 +964,38 @@ async function sendSmsFromNotify(phone, name, title, content, templateId) {
       signName = tmpl.sign_name || signName;
     }
   }
-  if (!templateCode) return;
+  if (!templateCode) { result.reason = 'sms_template_not_found'; return result; }
 
   // 提取项目名称（title格式：XXX：项目名）
   const projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：|项目节点进行中：|项目节点待处理：|项目节点已跳过：)/, '');
 
-  await sendAliyunSms({
-    accessKeyId: smsConfig.access_key_id,
-    accessKeySecret: smsConfig.access_key_secret,
-    signName,
-    templateCode,
-    phone: phone.startsWith('+') ? phone : '+86' + phone,
-    templateParam: JSON.stringify({
-      name: name || '业主',
-      project: projectName,
-      content: content.length > 50 ? content.substring(0, 50) + '…' : content,
-      date: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-    })
-  });
+  try {
+    const aliyunResp = await sendAliyunSms({
+      accessKeyId: smsConfig.access_key_id,
+      accessKeySecret: smsConfig.access_key_secret,
+      signName,
+      templateCode,
+      phone: phone.startsWith('+') ? phone : '+86' + phone,
+      templateParam: JSON.stringify({
+        name: name || '业主',
+        project: projectName,
+        content: content.length > 50 ? content.substring(0, 50) + '…' : content,
+        date: new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+      })
+    });
+    // 阿里云返回 { Code, Message, RequestId, BizId }
+    if (aliyunResp && aliyunResp.Code === 'OK') {
+      result.success = true;
+      result.count = 1;
+      return result;
+    } else {
+      result.error = (aliyunResp && (aliyunResp.Message || aliyunResp.Code)) || 'unknown';
+      return result;
+    }
+  } catch (e) {
+    result.error = e.message || 'send_failed';
+    return result;
+  }
 }
 
 app.get('/api/health', (req, res) => {
@@ -2137,17 +2161,8 @@ app.post('/api/projects', checkPermission('project:write'), async (req, res) => 
     const result = await stmt.run(name, customer_id || null, status || '开工准备', start_date || null, end_date || null, budget || null, description || null, designer_id || null, supervisor_id || null, manager_id || null, template_id || null, userId);
     const projectId = result.lastInsertRowid;
 
-    // 如果选了节点模板，从模板复制节点到项目
-    if (template_id) {
-      const templateNodes = await db.prepare(
-        'SELECT node_name, node_key, sort_order, default_sms_template_id FROM progress_node_template_nodes WHERE template_id = ? ORDER BY sort_order'
-      ).all([template_id]);
-      for (const node of templateNodes) {
-        await db.prepare(
-          'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(projectId, node.node_name, node.node_key, node.sort_order, 'pending', node.default_sms_template_id || null);
-      }
-    }
+    // 注意：节点模板的初始化由前端在 handleSave 里调 /api/progress-nodes/init/:projectId 完成
+    // 这里不再 INSERT 节点，避免双重插入导致节点重复（2026-10-09 修复）
 
     await addLog(userId, '', '新增', '项目管理', projectId, name, `项目名称: ${name}`, req.ip);
     // 通知：新增项目
@@ -2188,31 +2203,26 @@ app.put('/api/projects/:id', checkPermission('project:write'), async (req, res) 
 });
 
 app.delete('/api/projects/:id', checkPermission('project:delete'), async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const userId = getUserId(req);
-    const [proj] = await db.prepare('SELECT name, creator_id FROM projects WHERE id = ?').all(req.params.id);
-    if (!proj) return res.status(404).json({ error: '记录不存在' });
-    if (proj.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除他人的数据' });
-    const projName = proj.name;
+    const [proj] = await conn.query('SELECT name, creator_id FROM projects WHERE id = ?', [req.params.id]);
+    if (!proj.length) return res.status(404).json({ error: '记录不存在' });
+    if (proj[0].creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除他人的数据' });
+    const projName = proj[0].name;
     const pid = req.params.id;
 
-    // 级联删除所有关联数据（按依赖顺序）
-    const tables = [
-      // 先删子表（被引用）
+    await conn.beginTransaction();
+
+    const tablesWithProjectId = [
       'contract_changes',
       'contracts',
       'project_logs',
       'inspections',
       'rectification_issues',
       'dispatches',
-      'quotes',
-      'customer_follow',
-      'materials',
       'material_orders',
-      'purchase_orders',
-      'finance_records',
       'project_progress_nodes',
-      'notifications',
       'collection_records',
       'payment_records',
       'project_stages',
@@ -2225,16 +2235,19 @@ app.delete('/api/projects/:id', checkPermission('project:delete'), async (req, r
       'purchases',
       'warranties',
     ];
-    for (const tbl of tables) {
-      try { await pool.query(`DELETE FROM ${tbl} WHERE project_id = ?`, [pid]); } catch (_) {}
+    for (const tbl of tablesWithProjectId) {
+      await conn.query(`DELETE FROM ${tbl} WHERE project_id = ?`, [pid]);
     }
+    await conn.query('DELETE FROM projects WHERE id = ?', [pid]);
+    await conn.commit();
 
-    const stmt = db.prepare('DELETE FROM projects WHERE id = ?');
-    await stmt.run(pid);
     await addLog(userId, '', '删除', '项目管理', pid, projName, `删除项目: ${projName}`, req.ip);
     res.json({ message: '删除成功' });
   } catch (err) {
+    await conn.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
@@ -2308,6 +2321,7 @@ app.put('/api/project-stages/:id', async (req, res) => {
     await addLog(userId, '', '编辑', '项目节点', parseInt(req.params.id), updated.node_name || row.node_name, `更新节点: ${updated.node_name || row.node_name}`, req.ip);
 
     // ✅ 节点状态变化时，通知项目成员和客户（任意状态变化都通知）
+    let smsResults = null;  // 2026-10-09：把短信结果返回给前端
     if (row.status !== updated.status) {
       const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
       const typeMap = { pending: 'node_pending', in_progress: 'node_in_progress', completed: 'node_completed', skipped: 'node_skipped' };
@@ -2317,13 +2331,14 @@ app.put('/api/project-stages/:id', async (req, res) => {
       const smsNotify = parseInt(req.body.sms_notify || 0);
       if (smsNotify) {
         // 用户选择发送短信：用节点绑定的模板发短信
-        await notifyProject(type, row.project_id, title, content, row.id, 'node', null, updated.sms_template_id);
+        smsResults = await notifyProject(type, row.project_id, title, content, row.id, 'node', null, updated.sms_template_id);
       }
       // 无论是否发短信，都写一条应用内消息记录状态变更
       await insertInAppNotification(row.project_id, title, content, row.id, 'node');
     }
 
-    res.json({ message: '更新成功' });
+    // 2026-10-09：返回短信结果（数组），前端可显示每条的成功/失败
+    res.json({ message: '更新成功', sms: smsResults });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3255,9 +3270,10 @@ app.post('/api/material/purchase', async (req, res) => {
   if (!material_name) return res.status(400).json({ code: 1, msg: '请填写材料名称' });
   if (!quantity) return res.status(400).json({ code: 1, msg: '请填写数量' });
   const stmt = db.prepare(
-    'INSERT INTO material_orders (project_id, material_name, spec, quantity, unit, supplier, amount, note, status, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO material_orders (project_id, applicant_id, material_name, spec, quantity, unit, supplier, amount, note, status, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
-  const result = await stmt.run(project_id, material_name, spec || '', quantity, unit || '', supplier || '', amount || 0, remark || '', '待采购', userId);
+  // 2026-10-10：申请单状态统一改为 'pending'（待审核），审核通过后改 'approved'（进行中）
+  const result = await stmt.run(project_id, userId, material_name, spec || '', quantity, unit || '', supplier || '', amount || 0, remark || '', 'pending', userId);
   const newPurchaseId = result.lastInsertRowid;
   await addLog(userId, '', '新增', '采购申请', newPurchaseId, 0, `采购申请：${material_name}`, req.ip);
 
@@ -5101,11 +5117,12 @@ app.get('/api/dispatches', async (req, res) => {
     const params = [];
     const conditions = [];
     if (status) {
-      conditions.push('status = ?');
+      // 2026-10-10 修复：加 d. 表前缀，避免与 employees.status 冲突（ambiguous）
+      conditions.push('d.status = ?');
       params.push(status);
     }
     if (project_id) {
-      conditions.push('project_id = ?');
+      conditions.push('d.project_id = ?');
       params.push(project_id);
     }
     if (conditions.length > 0) {
@@ -5232,6 +5249,30 @@ app.put('/api/dispatches/:id/complete', async (req, res) => {
     res.json({ message: '已确认完工' });
   } catch (err) {
     console.error('dispatches complete error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// POST /api/dispatches/:id/revert — 反审核（2026-10-10 新增）
+// 把派工单状态从 approved/rejected/completed 改回 pending（仅限审核员/管理员）
+app.post('/api/dispatches/:id/revert', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('dispatch:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const [[record]] = await pool.query('SELECT * FROM dispatches WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '派工单不存在' });
+    if (record.status === 'pending') {
+      return res.status(400).json({ error: '已经是待审核状态' });
+    }
+    await pool.query("UPDATE dispatches SET status='pending', updated_at=NOW() WHERE id=?", [req.params.id]);
+    await addLog(userId, '', '反审核', '派工管理', req.params.id, record.content || '', `反审核：派工单从 ${record.status} 改回待审核`, req.ip);
+    res.json({ message: '已反审核' });
+  } catch (err) {
+    console.error('dispatches revert error:', err);
     res.status(500).json({ error: '操作失败' });
   }
 });
@@ -6261,12 +6302,24 @@ app.get('/api/progress-nodes/:projectId', async (req, res) => {
 // POST 用模板初始化项目节点（同时自动分配计划日期）
 app.post('/api/progress-nodes/init/:projectId', async (req, res) => {
   try {
-    const { template_id } = req.body;
+    const { template_id, force } = req.body;
     const userId = getUserId(req);
 
     // 获取项目信息（用于计算日期范围）
     const [project] = await db.prepare('SELECT * FROM projects WHERE id = ?').all([req.params.projectId]);
     if (!project) return res.status(404).json({ error: '项目不存在' });
+
+    // 保护：项目已有节点时拒绝重复初始化（除非显式传 force=true）（2026-10-09 加）
+    const existingCount = (await db.prepare(
+      'SELECT COUNT(*) as count FROM project_progress_nodes WHERE project_id = ?'
+    ).get([req.params.projectId]))?.count || 0;
+    if (existingCount > 0 && !force) {
+      return res.status(409).json({
+        error: '项目已有节点，禁止重复初始化',
+        existingCount,
+        hint: '如需重新初始化，请传 force=true（会先清空已有节点）'
+      });
+    }
 
     const templateNodes = await db.prepare(
       'SELECT * FROM progress_node_template_nodes WHERE template_id=? ORDER BY sort_order'
@@ -7352,9 +7405,18 @@ app.post('/api/contracts/upload', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
-    const { project_id, contract_amount, remark, attachment } = req.body;
+    let { project_id, contract_amount, remark, attachment } = req.body;
     if (!project_id) return res.status(400).json({ error: '请先选择关联项目' });
     if (!contract_amount || parseFloat(contract_amount) <= 0) return res.status(400).json({ error: '请填写有效的合同金额' });
+
+    // 2026-10-09 修复：附件统一存 JSON 数组（兼容老数据：如果是逗号分隔字符串则转 JSON 数组）
+    if (attachment && typeof attachment === 'string' && !attachment.startsWith('[')) {
+      attachment = JSON.stringify(attachment.split(',').filter(Boolean));
+    } else if (Array.isArray(attachment)) {
+      attachment = JSON.stringify(attachment);
+    } else if (!attachment) {
+      attachment = JSON.stringify([]);
+    }
 
     const [[project]] = await pool.query('SELECT name FROM projects WHERE id = ?', [project_id]);
     const project_name = project?.name || '';
@@ -7363,7 +7425,7 @@ app.post('/api/contracts/upload', async (req, res) => {
     const [result] = await pool.query(
       `INSERT INTO contracts (project_id, contract_amount, review_status, submitted_by, created_by, creator_id, attachment, created_at)
        VALUES (?, ?, 'pending', ?, ?, ?, ?, NOW())`,
-      [project_id, contract_amount, userId, userId, userId, attachment || '']
+      [project_id, contract_amount, userId, userId, userId, attachment]
     );
 
     await addLog(userId, '', '上传', '合同管理', result.insertId, project_name, `上传合同金额：${contract_amount}元`, req.ip);
@@ -7889,11 +7951,16 @@ app.get('/api/finance/receivable-by-project', async (req, res) => {
         `SELECT COALESCE(SUM(amount), 0) as total FROM collection_records WHERE project_id = ? AND status = 'confirmed'`,
         [p.id]
       );
+      const [[pendingUnconfirmed]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM collection_records WHERE project_id = ? AND status = 'pending'`,
+        [p.id]
+      );
       const contractAmount = parseFloat(p.contract_amount || 0);
       const increaseTotal = parseFloat(changeSum?.increase_total || 0);
       const decreaseTotal = parseFloat(changeSum?.decrease_total || 0);
       const receivable = contractAmount + increaseTotal - decreaseTotal;
       const collectedAmt = parseFloat(collected?.total || 0);
+      const pendingAmt = parseFloat(pendingUnconfirmed?.total || 0);
       result.push({
         project_id: p.id,
         project_name: p.project_name,
@@ -7903,6 +7970,7 @@ app.get('/api/finance/receivable-by-project', async (req, res) => {
         decrease_total: decreaseTotal,
         receivable,
         collected: collectedAmt,
+        pending_unconfirmed: pendingAmt,
         unpaid: receivable - collectedAmt
       });
     }
@@ -7953,6 +8021,234 @@ app.get('/api/debug-perms', async (req, res) => {
     }));
     res.json(result);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ================================================================
+// 采购单审核流程（2026-10-10 新增，仿派工审核）
+// ================================================================
+
+// GET /api/material-orders/my — 我的采购单（按 applicant_id 过滤）
+app.get('/api/material-orders/my', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { page = 1, page_size = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+    const [rows] = await pool.query(
+      `SELECT m.*, p.name as project_name, e.name as applicant_name
+       FROM material_orders m
+       LEFT JOIN projects p ON m.project_id = p.id
+       LEFT JOIN employees e ON m.applicant_id = e.id
+       WHERE m.applicant_id = ?
+       ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
+      [userId, parseInt(page_size), offset]
+    );
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM material_orders WHERE applicant_id = ?', [userId]);
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('material-orders my error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/material-orders/pending — 待审核采购单（需 purchase:approve 权限）
+app.get('/api/material-orders/pending', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const { page = 1, page_size = 20 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+    const [rows] = await pool.query(
+      `SELECT m.*, p.name as project_name, e.name as applicant_name
+       FROM material_orders m
+       LEFT JOIN projects p ON m.project_id = p.id
+       LEFT JOIN employees e ON m.applicant_id = e.id
+       WHERE m.status = 'pending'
+       ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
+      [parseInt(page_size), offset]
+    );
+    const [[{ total }]] = await pool.query("SELECT COUNT(*) as total FROM material_orders WHERE status = 'pending'");
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('material-orders pending error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// GET /api/material-orders/by-status?status=approved — 按状态查询（前端"进行中/已完成"用）
+app.get('/api/material-orders/by-status', async (req, res) => {
+  try {
+    const { status, page = 1, page_size = 20 } = req.query;
+    if (!status) return res.status(400).json({ error: '缺少 status 参数' });
+    const offset = (parseInt(page) - 1) * parseInt(page_size);
+    const [rows] = await pool.query(
+      `SELECT m.*, p.name as project_name, e.name as applicant_name
+       FROM material_orders m
+       LEFT JOIN projects p ON m.project_id = p.id
+       LEFT JOIN employees e ON m.applicant_id = e.id
+       WHERE m.status = ?
+       ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
+      [status, parseInt(page_size), offset]
+    );
+    const [[{ total }]] = await pool.query('SELECT COUNT(*) as total FROM material_orders WHERE status = ?', [status]);
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('material-orders by-status error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// PUT /api/material-orders/:id/approve — 审核通过/驳回
+app.put('/api/material-orders/:id/approve', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    if (!perms.includes('purchase:approve') && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const [[record]] = await pool.query('SELECT * FROM material_orders WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '采购单不存在' });
+    const { action, reason } = req.body;
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json({ error: '无效操作' });
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await pool.query(
+      'UPDATE material_orders SET status=?, reject_reason=?, updated_at=NOW() WHERE id=?',
+      [newStatus, action === 'reject' ? (reason || '') : null, req.params.id]
+    );
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '采购管理', req.params.id, record.material_name || '', `采购审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
+    // 通知申请人
+    if (record.applicant_id && record.applicant_id !== userId) {
+      const msg = action === 'approve'
+        ? `您的采购申请（${record.material_name}）已审核通过。`
+        : `您的采购申请（${record.material_name}）未通过${reason ? '：' + reason : ''}。`;
+      await pool.query(
+        'INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+        [record.applicant_id, action === 'approve' ? '采购申请已通过' : '采购申请未通过', msg, '采购', req.params.id]
+      );
+    }
+    res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
+  } catch (err) {
+    console.error('material-orders approve error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+// PUT /api/material-orders/:id/complete — 确认到货/完成
+app.put('/api/material-orders/:id/complete', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [[record]] = await pool.query('SELECT * FROM material_orders WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '采购单不存在' });
+    await pool.query("UPDATE material_orders SET status='completed', updated_at=NOW() WHERE id=?", [req.params.id]);
+    await addLog(userId, '', '确认到货', '采购管理', req.params.id, record.material_name || '', '采购到货确认', req.ip);
+    res.json({ message: '已确认到货' });
+  } catch (err) {
+    console.error('material-orders complete error:', err);
+    res.status(500).json({ error: '操作失败' });
+  }
+});
+
+
+app.get('/api/mobile/home-stats', async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 1. 进行中项目数
+    const inProgress = Number((await db.prepare(
+      "SELECT COUNT(*) as count FROM projects WHERE status = '进行中'"
+    ).get())?.count) || 0;
+
+    // 2. 逾期节点数（end_date < 今天 且 status != 'completed'）
+    const overdue = Number((await db.prepare(
+      "SELECT COUNT(*) as count FROM project_stages WHERE plan_end_date IS NOT NULL AND plan_end_date < ? AND status NOT IN ('completed', '已完成')"
+    ).get(today))?.count) || 0;
+
+    // 3. 待整改巡检（inspections 表 rectify_status='待整改'）
+    const pendingInspect = Number((await db.prepare(
+      "SELECT COUNT(*) as count FROM inspections WHERE rectify_status = '待整改'"
+    ).get())?.count) || 0;
+
+    // 4. 待回款金额 = 已签订合同的总金额 - 已收款（payment1+payment2+payment3）
+    const payRow = (await db.prepare(
+      "SELECT COALESCE(SUM(total_amount - COALESCE(payment1,0) - COALESCE(payment2,0) - COALESCE(payment3,0)), 0) as total FROM contracts WHERE status = '已签订'"
+    ).get()) || { total: 0 };
+    const pendingPay = Number(payRow.total) || 0;
+
+    // 5. 待办事项（按优先级混合：节点待审核 + 巡检待整改 + 财务待审核，最多 5 条）
+    const todos = [];
+    // 节点待审核
+    try {
+      const stages = await db.prepare(
+        "SELECT ps.id, ps.stage_name, ps.project_id, p.name as project_name FROM project_stages ps LEFT JOIN projects p ON ps.project_id = p.id WHERE ps.status = 'pending' OR ps.status = 'in_progress' ORDER BY ps.created_at DESC LIMIT 5"
+      ).all();
+      for (const s of stages.slice(0, 2)) {
+        todos.push({
+          id: 'stage-' + s.id,
+          title: `项目「${s.project_name || '未知'}」${s.stage_name}待审核`,
+          project: s.project_name || '',
+          time: '待处理',
+          priority: 'warning',
+          type: 'node',
+        });
+      }
+    } catch (_) {}
+    // 巡检待整改
+    try {
+      const inspects = await db.prepare(
+        "SELECT id, project_name, issues FROM inspections WHERE rectify_status = '待整改' ORDER BY created_at DESC LIMIT 3"
+      ).all();
+      for (const i of inspects.slice(0, 2)) {
+        todos.push({
+          id: 'inspect-' + i.id,
+          title: `巡检问题待整改：${(i.issues || '').substring(0, 20) || '需检查'}`,
+          project: i.project_name || '',
+          time: '今天',
+          priority: 'danger',
+          type: 'inspect',
+        });
+      }
+    } catch (_) {}
+
+    // 6. 逾期预警（project_stages 里 end_date < today 的节点 + 项目名 + 逾期天数）
+    let warnings = [];
+    try {
+      const warns = await db.prepare(
+        `SELECT ps.id, ps.stage_name, p.name as project_name, p.id as project_id,
+                DATEDIFF(?, ps.plan_end_date) as days
+         FROM project_stages ps
+         LEFT JOIN projects p ON ps.project_id = p.id
+         WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date < ? AND ps.status NOT IN ('completed', '已完成')
+         ORDER BY ps.plan_end_date ASC LIMIT 5`
+      ).all(today, today);
+      warnings = warns.map(w => ({
+        id: w.project_id,
+        name: w.project_name || '未知项目',
+        node: w.stage_name || '',
+        days: w.days || 0,
+      }));
+    } catch (_) {}
+
+    res.json({
+      stats: {
+        inProgress,
+        overdue,
+        pendingInspect,
+        pendingPay: '¥' + (pendingPay >= 10000 ? (pendingPay / 10000).toFixed(1) + '万' : String(Math.round(pendingPay))),
+        pendingPayRaw: pendingPay,
+      },
+      todos: todos.slice(0, 5),
+      warnings,
+    });
+  } catch (err) {
+    console.error('[mobile/home-stats] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

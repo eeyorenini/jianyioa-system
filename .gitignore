@@ -7,8 +7,11 @@ web/dist/
 
 # 备份文件
 *.backup
+*.bak
+*.bak*
 *.broken_backup
 web_backup_20260902/
+server/check_*.js
 
 # node_modules
 web/node_modules/
