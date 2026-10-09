@@ -17,7 +17,7 @@
       >
         <view class="item-header">
           <view class="item-name">{{ item.name }}</view>
-          <view class="tag" :class="getStatusClass(item.status)">{{ item.status || '未知' }}</view>
+          <view class="tag" :class="getStatusClass(item.status)">{{ item.current_node_name || item.status || '未知' }}</view>
         </view>
         <view class="item-body">
           <text class="item-customer">👤 {{ item.customer_name || '无关联客户' }}</text>

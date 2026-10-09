@@ -403,12 +403,12 @@
               </view>
               <view class="cc-row">
                 <text class="cc-label">类型</text>
-                <text class="cc-value">{{ ch.change_type === 'add' ? '➕ 增加' : '➖ 减少' }}</text>
+                <text class="cc-value">{{ ch.change_type === 'increase' ? '➕ 增加' : '➖ 减少' }}</text>
               </view>
               <view class="cc-row">
                 <text class="cc-label">金额</text>
-                <text class="cc-value" :class="ch.change_type === 'add' ? 'accent' : 'decrease'">
-                  {{ ch.change_type === 'add' ? '+' : '-' }}¥{{ Number(ch.amount || 0).toLocaleString() }}
+                <text class="cc-value" :class="ch.change_type === 'increase' ? 'accent' : 'decrease'">
+                  {{ ch.change_type === 'increase' ? '+' : '-' }}¥{{ Number(ch.amount || 0).toLocaleString() }}
                 </text>
               </view>
               <view class="cc-row">
@@ -905,7 +905,7 @@ const contractSummary = computed(() => {
   const changeAmt = changeList.value
     .filter(ch => ch.status === 'approved')
     .reduce((s, ch) => {
-      return s + (ch.change_type === 'add' ? Number(ch.amount || 0) : -Number(ch.amount || 0));
+      return s + (ch.change_type === 'increase' ? Number(ch.amount || 0) : -Number(ch.amount || 0));
     }, 0);
   return {
     contract: contractAmt,

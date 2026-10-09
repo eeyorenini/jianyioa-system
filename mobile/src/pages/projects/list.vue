@@ -71,7 +71,7 @@
           <view class="card-title-row">
             <text class="card-name">{{ p.name }}</text>
             <view class="status-badge" :class="getStatusClass(p.status)">
-              {{ p.status || '未知' }}
+              {{ p.current_node_name || p.status || '未知' }}
             </view>
           </view>
           <view class="card-meta">
