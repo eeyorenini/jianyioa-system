@@ -80,19 +80,21 @@
               <text class="info-value">{{ item.created_at }}</text>
             </view>
           </view>
-          <!-- 我的派工：待审核/已驳回显示删除按钮 -->
-          <view v-if="activeTab === 'my' && (item.status === 'pending' || item.status === 'rejected')" class="card-actions" @click.stop>
+          <!-- 2026-10-10：我的派工：所有状态都显示删除按钮（按大王要求） -->
+          <view v-if="activeTab === 'my'" class="card-actions" @click.stop>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
           </view>
-          <!-- 待审核：显示通过/驳回按钮 -->
+          <!-- 待审核：显示反审核 + 驳回 + 通过 按钮 -->
           <view v-else-if="activeTab === 'pending' && item.status === 'pending'" class="card-actions" @click.stop>
+            <view class="action-btn danger" @click="handleRevert(item)">反审核</view>
             <view class="action-btn reject" @click="handleReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleApprove(item)">通过</view>
           </view>
-          <!-- 进行中：显示确认完工按钮 -->
+          <!-- 进行中：显示确认完工按钮（不显示删除） -->
           <view v-else-if="activeTab === 'progress' && item.status === 'approved'" class="card-actions" @click.stop>
             <view class="action-btn approve" @click="handleComplete(item)">确认完工</view>
           </view>
+          <!-- 已完成：不能删除/操作（按大王要求） -->
         </view>
       </view>
       <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
@@ -314,6 +316,37 @@ function handleComplete(item) {
   showDialog.value = true
 }
 
+// 2026-10-10：反审核（从已通过/已驳回改回待审核）
+function handleRevert(item) {
+  uni.showModal({
+    title: '反审核',
+    content: '确定要将此派工单反审核回"待审核"状态吗？',
+    confirmText: '反审核',
+    confirmColor: '#f44336',
+    success: (res) => {
+      if (res.confirm) {
+        const token = uni.getStorageSync('userInfo')?.id || ''
+        uni.request({
+          url: `/api/dispatches/${item.id}/revert`,
+          method: 'POST',
+          header: { 'x-user-id': token },
+          success: (res) => {
+            if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
+              uni.showToast({ title: '已反审核', icon: 'success' })
+              page.value = 1
+              loadData()
+              loadCounts()
+            } else {
+              uni.showToast({ title: res.data.error || '操作失败', icon: 'none' })
+            }
+          },
+          fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+        })
+      }
+    }
+  })
+}
+
 function handleDelete(item) {
   uni.showModal({
     title: '确认删除',
@@ -363,6 +396,8 @@ function submitAction() {
         if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
           uni.showToast({ title: '已确认完工', icon: 'success' })
           showDialog.value = false
+          // 2026-10-10：完工后跳到"已完成" tab，让用户看到结果
+          activeTab.value = 'completed'
           page.value = 1
           loadData()
           loadCounts()
@@ -391,6 +426,10 @@ function submitAction() {
       if (res.data.code === 0 || res.data.code === undefined) {
         uni.showToast({ title: dialogAction.value === 'approve' ? '已通过' : '已驳回', icon: 'success' })
         showDialog.value = false
+        // 2026-10-10：审核后跳到对应 tab：
+        //  - approve → "进行中"（approved 派工单）
+        //  - reject  → "我的"（用户能看到自己被驳回的派工单）
+        activeTab.value = dialogAction.value === 'approve' ? 'progress' : 'my'
         page.value = 1
         loadData()
         loadCounts()

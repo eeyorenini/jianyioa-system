@@ -90,8 +90,12 @@
               </view>
             </view>
           </view>
-          <!-- 我的申请 显示删除按钮（待审核/已驳回可删） -->
+          <!-- 我的申请：待审核/已驳回显示删除；已通过显示"上传报销" -->
           <view v-if="activeTab === 'my' && (item.status === 'pending' || item.status === 'rejected')" class="card-actions" @click.stop>
+            <view class="action-btn danger" @click="handleDelete(item)">删除</view>
+          </view>
+          <view v-else-if="activeTab === 'my' && item.status === 'approved'" class="card-actions" @click.stop>
+            <view class="action-btn approve" @click="showReimburseDialog(item)">上传报销</view>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
           </view>
           <!-- 待我审核 显示操作按钮 -->
@@ -136,6 +140,27 @@
         </view>
       </view>
     </view>
+
+    <!-- 上传报销单弹窗（2026-10-10 新增） -->
+    <view v-if="reimburseDialogVisible" class="dialog-mask" @click="reimburseDialogVisible = false">
+      <view class="dialog-content" @click.stop>
+        <view class="dialog-header">上传报销单</view>
+        <view class="dialog-body">
+          <view class="form-row">
+            <text class="form-label">实付金额 *</text>
+            <input class="form-input" v-model="reimburseForm.actual_amount" type="digit" placeholder="¥0.00" />
+          </view>
+          <view class="form-row">
+            <text class="form-label">财务备注</text>
+            <textarea class="comment-input" v-model="reimburseForm.financial_notes" placeholder="选填：发票号/付款方式/其他说明" />
+          </view>
+        </view>
+        <view class="dialog-footer">
+          <view class="dialog-btn cancel" @click="reimburseDialogVisible = false">取消</view>
+          <view class="dialog-btn confirm" @click="submitReimburse">确定上传</view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -153,6 +178,8 @@ const noMore = ref(false)
 const pendingCount = ref(0)
 const reimburseCount = ref(0)
 const showDialog = ref(false)
+const reimburseDialogVisible = ref(false)  // 2026-10-10
+const reimburseForm = ref({ actual_amount: '', financial_notes: '' })  // 2026-10-10
 const dialogAction = ref('approve') // 'approve' | 'reject'
 const dialogComment = ref('')
 const currentItem = ref(null)
@@ -367,6 +394,45 @@ function handleDelete(item) {
 // 财务确认 — 跳转到财务受理页
 function handleFinanceConfirm(item) {
   uni.navigateTo({ url: `/pages/purchase/finance-accept?id=${item.id}` })
+}
+
+// 2026-10-10：上传报销单（申请人）
+function showReimburseDialog(item) {
+  currentItem.value = item
+  reimburseForm.value = { actual_amount: item.total_amount || '', financial_notes: '' }
+  reimburseDialogVisible.value = true
+}
+
+function submitReimburse() {
+  if (!reimburseForm.value.actual_amount) {
+    uni.showToast({ title: '请填写实付金额', icon: 'none' })
+    return
+  }
+  const id = currentItem.value.id
+  const token = uni.getStorageSync('userInfo')?.id || ''
+  uni.request({
+    url: `/api/purchase-requests/${id}/reimburse`,
+    method: 'POST',
+    header: { 'x-user-id': token, 'Content-Type': 'application/json' },
+    data: {
+      actual_amount: reimburseForm.value.actual_amount,
+      financial_notes: reimburseForm.value.financial_notes,
+    },
+    success: (res) => {
+      if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
+        uni.showToast({ title: '已上传报销单', icon: 'success' })
+        reimburseDialogVisible.value = false
+        // 2026-10-10：上传后跳到"待报销" tab
+        activeTab.value = 'reimburse'
+        page.value = 1
+        loadData()
+        loadCounts()
+      } else {
+        uni.showToast({ title: res.data.error || res.data.message || '上传失败', icon: 'none' })
+      }
+    },
+    fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+  })
 }
 
 // 财务上传回执 — 跳转到财务确认页

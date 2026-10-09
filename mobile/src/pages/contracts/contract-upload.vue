@@ -4,7 +4,7 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">上传合同</text>
-      <text class="nav-btn" @click="submit" :class="{ disabled: submitting }">提交</text>
+      <text class="nav-btn" @click="submit" :class="{ disabled: submitting || uploadingFile }">提交</text>
     </view>
 
     <!-- 项目信息横幅 -->
@@ -19,7 +19,7 @@
       <!-- 项目选择 -->
       <view class="form-item">
         <text class="form-label">项目</text>
-        <view class="picker-value" :class="{ placeholder: !selectedProject }" @click="showProjectPicker">
+        <view class="picker-value" :class="{ placeholder: !selectedProject, disabled: uploadingFile }" @click="showProjectPicker">
           {{ selectedProject?.name || '请选择项目' }}
           <text class="arrow">›</text>
         </view>
@@ -47,9 +47,9 @@
           </view>
           <!-- 上传按钮 -->
           <view class="upload-btns">
-            <view class="upload-btn" @click="chooseFile">
+            <view class="upload-btn" :class="{ disabled: uploadingFile }" @click="chooseFile">
               <text class="upload-btn-icon">📎</text>
-              <text class="upload-btn-text">上传合同附件</text>
+              <text class="upload-btn-text">{{ uploadingFile ? '上传中...' : '上传合同附件' }}</text>
             </view>
           </view>
           <text class="upload-hint">支持 jpg、png、pdf、doc、docx，单个文件不超过20MB</text>
@@ -71,6 +71,19 @@
       @select="onProjectSelect"
       @cancel="projectPicker.visible = false"
     />
+
+    <!-- 上传中蒙版（防止用户误操作） -->
+    <view class="upload-mask" v-if="uploadingFile" @touchmove.stop.prevent="noop">
+      <view class="upload-mask-box">
+        <view class="upload-spinner"></view>
+        <text class="upload-mask-title">上传中...</text>
+        <text class="upload-mask-file">{{ uploadFileName }}</text>
+        <view class="upload-progress-bar">
+          <view class="upload-progress-fill" :style="{ width: uploadProgress + '%' }"></view>
+        </view>
+        <text class="upload-mask-percent">{{ uploadProgress }}%</text>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -83,6 +96,8 @@ const projectName = ref('')
 const submitting = ref(false)
 const uploadedFiles = ref([])
 const uploadingFile = ref(false)
+const uploadProgress = ref(0)
+const uploadFileName = ref('')
 
 const form = ref({
   project_id: '',
@@ -94,6 +109,9 @@ const projectPicker = ref({ visible: false, title: '选择项目', items: [] })
 
 let projectList = []
 
+// 防穿透：蒙版下阻止滚动
+const noop = () => {}
+
 // 选择图片（H5用原生input，非H5用uni.chooseImage）
 const chooseImage = () => {
   // #ifdef H5
@@ -104,7 +122,12 @@ const chooseImage = () => {
   input.onchange = (e) => {
     const files = Array.from(e.target.files)
     if (!files.length) return
-    files.forEach(file => doUpload(file))
+    // 2026-10-09 优化：先 push 占位
+    files.forEach(file => {
+      const pendingUrl = 'pending://' + (file.name || '图片_' + Date.now())
+      uploadedFiles.value.push(pendingUrl)
+      doUpload(file, pendingUrl)
+    })
     e.target.value = '' // 清空，允许重复选择同一文件
   }
   input.click()
@@ -117,7 +140,12 @@ const chooseImage = () => {
     success: (res) => {
       const paths = res.tempFilePaths
       if (!paths.length) return
-      paths.forEach(path => doUpload(path))
+      // 2026-10-09 优化：先 push 占位
+      paths.forEach((path, i) => {
+        const pendingUrl = 'pending://图片_' + Date.now() + '_' + i
+        uploadedFiles.value.push(pendingUrl)
+        doUpload(path, pendingUrl)
+      })
     },
     fail: () => {
       uni.showToast({ title: '请允许访问相册或相机', icon: 'none' })
@@ -136,7 +164,12 @@ const chooseFile = () => {
   input.onchange = (e) => {
     const files = Array.from(e.target.files)
     if (!files.length) return
-    files.forEach(file => doUpload(file))
+    // 2026-10-09 优化：先 push 占位项，用户立刻看到文件名
+    files.forEach(file => {
+      const pendingUrl = 'pending://' + (file.name || '附件_' + Date.now())
+      uploadedFiles.value.push(pendingUrl)
+      doUpload(file, pendingUrl)
+    })
     e.target.value = '' // 清空，允许重复选择同一文件
   }
   input.click()
@@ -145,35 +178,71 @@ const chooseFile = () => {
   uni.chooseMessageFile({
     count: 5,
     success: (res) => {
-      res.tempFiles.forEach(f => doUpload(f.path || f.filePath))
+      // 2026-10-09 优化：先 push 占位项
+      res.tempFiles.forEach(f => {
+        const pendingUrl = 'pending://' + (f.name || '附件_' + Date.now())
+        uploadedFiles.value.push(pendingUrl)
+        doUpload(f.path || f.filePath, pendingUrl)
+      })
     },
   })
   // #endif
 }
 
 // 上传文件（统一入口，H5用fetch，非H5用uni.uploadFile）
-const doUpload = (file) => {
+// 参数：pendingUrl 可选——上传前已 push 的占位项，上传成功后用真实 url 替换
+const doUpload = (file, pendingUrl) => {
   if (uploadingFile.value) return
   uploadingFile.value = true
+  uploadProgress.value = 0
+  uploadFileName.value = (file && (file.name || file.fileName)) || '附件'
 
   // H5: 用 fetch + FormData 直接上传 File 对象
   // #ifdef H5
   const formData = new FormData()
   formData.append('file', file) // file 可以是 File 对象或 blob URL
-  fetch('/api/upload-contract-file', {
-    method: 'POST',
-    body: formData,
-  }).then(res => res.json()).then(data => {
-    if (data.url) {
-      uploadedFiles.value.push(data.url)
-    } else {
-      uni.showToast({ title: data.error || '上传失败', icon: 'none' })
+  // H5 fetch 无 onprogress，用 XMLHttpRequest 才能拿到进度
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', '/api/upload-contract-file')
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      uploadProgress.value = Math.round((e.loaded / e.total) * 100)
     }
-  }).catch(() => {
-    uni.showToast({ title: '上传失败', icon: 'none' })
-  }).finally(() => {
+  }
+  xhr.onload = () => {
+    try {
+      const data = JSON.parse(xhr.responseText)
+      if (data.url) {
+        // 2026-10-09 优化：替换占位项
+        const idx = pendingUrl ? uploadedFiles.value.indexOf(pendingUrl) : -1
+        if (idx >= 0) {
+          uploadedFiles.value[idx] = data.url
+        } else {
+          uploadedFiles.value.push(data.url)
+        }
+      } else {
+        if (pendingUrl) {
+          const idx = uploadedFiles.value.indexOf(pendingUrl)
+          if (idx >= 0) uploadedFiles.value.splice(idx, 1)
+        }
+        uni.showToast({ title: data.error || '上传失败', icon: 'none' })
+      }
+    } catch (e) {
+      if (pendingUrl) {
+        const idx = uploadedFiles.value.indexOf(pendingUrl)
+        if (idx >= 0) uploadedFiles.value.splice(idx, 1)
+      }
+      uni.showToast({ title: '上传失败', icon: 'none' })
+    }
     uploadingFile.value = false
-  })
+    uploadProgress.value = 0
+  }
+  xhr.onerror = () => {
+    uni.showToast({ title: '上传失败', icon: 'none' })
+    uploadingFile.value = false
+    uploadProgress.value = 0
+  }
+  xhr.send(formData)
   return
   // #endif
 
@@ -187,19 +256,41 @@ const doUpload = (file) => {
     url: '/api/upload-contract-file',
     filePath,
     name: 'file',
+    // 小程序/APP 平台进度回调（uni.uploadFile 原生支持）
+    onProgressUpdate: (res) => {
+      if (res && typeof res.progress === 'number') {
+        uploadProgress.value = Math.round(res.progress)
+      }
+    },
     success: (res) => {
       try {
         const data = JSON.parse(res.data)
         if (data.url) {
-          uploadedFiles.value.push(data.url)
+          // 2026-10-09 优化：替换占位
+          const idx = pendingUrl ? uploadedFiles.value.indexOf(pendingUrl) : -1
+          if (idx >= 0) uploadedFiles.value[idx] = data.url
+          else uploadedFiles.value.push(data.url)
+        } else if (pendingUrl) {
+          const idx = uploadedFiles.value.indexOf(pendingUrl)
+          if (idx >= 0) uploadedFiles.value.splice(idx, 1)
         }
-      } catch (e) {}
+      } catch (e) {
+        if (pendingUrl) {
+          const idx = uploadedFiles.value.indexOf(pendingUrl)
+          if (idx >= 0) uploadedFiles.value.splice(idx, 1)
+        }
+      }
     },
     fail: () => {
+      if (pendingUrl) {
+        const idx = uploadedFiles.value.indexOf(pendingUrl)
+        if (idx >= 0) uploadedFiles.value.splice(idx, 1)
+      }
       uni.showToast({ title: '上传失败', icon: 'none' })
     },
     complete: () => {
       uploadingFile.value = false
+      uploadProgress.value = 0
       if (typeof file === 'object' && file instanceof File) {
         URL.revokeObjectURL(filePath)
       }
@@ -226,6 +317,7 @@ const previewFile = (url) => {
 // 获取文件图标
 const getFileIcon = (url) => {
   if (!url) return '📄'
+  // 2026-10-09：占位项 pending://文件名 也按扩展名给图标
   if (/\.pdf$/i.test(url)) return '📕'
   if (/\.doc|\.docx$/i.test(url)) return '📘'
   if (/\.jpg|\.jpeg|\.png|\.gif$/i.test(url)) return '🖼'
@@ -235,6 +327,10 @@ const getFileIcon = (url) => {
 // 获取文件名
 const getFileName = (url) => {
   if (!url) return '文件'
+  // 2026-10-09：占位项 pending://文件名 直接返回
+  if (url.startsWith('pending://')) {
+    return url.replace('pending://', '').substring(0, 20) + ' (上传中...)'
+  }
   const parts = url.split('/')
   const name = parts[parts.length - 1]
   // 去掉时间戳前缀
@@ -304,7 +400,8 @@ function submit() {
       project_id: form.value.project_id,
       contract_amount: form.value.contract_amount,
       remark: form.value.remark,
-      attachment: uploadedFiles.value.join(','),
+      // 2026-10-09 修复：附件改用 JSON 数组存储（之前是逗号字符串，preview 会出错）
+      attachment: JSON.stringify(uploadedFiles.value),
     },
     success: function(res) {
       console.log('请求成功, statusCode:', res.statusCode, 'data:', JSON.stringify(res.data))
@@ -386,4 +483,59 @@ function submit() {
 .upload-btn-icon { font-size: 18px; }
 .upload-btn-text { font-size: 24rpx; }
 .upload-hint { font-size: 20rpx; color: #9CA3AF; }
+
+/* ====== 上传中蒙版（防止用户误操作） ====== */
+.upload-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+}
+.upload-mask-box {
+  background: #fff; border-radius: 16rpx;
+  padding: 60rpx 80rpx;
+  min-width: 480rpx;
+  display: flex; flex-direction: column; align-items: center;
+  box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.2);
+}
+.upload-spinner {
+  width: 64rpx; height: 64rpx;
+  border: 6rpx solid #E5E7EB;
+  border-top-color: #3B82F6;
+  border-radius: 50%;
+  animation: upload-spin 0.8s linear infinite;
+  margin-bottom: 24rpx;
+}
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+.upload-mask-title {
+  font-size: 30rpx; color: #1E3A5F; font-weight: 600;
+  margin-bottom: 8rpx;
+}
+.upload-mask-file {
+  font-size: 22rpx; color: #6B7280;
+  margin-bottom: 24rpx;
+  max-width: 400rpx;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-progress-bar {
+  width: 400rpx; height: 12rpx;
+  background: #E5E7EB; border-radius: 6rpx;
+  overflow: hidden; margin-bottom: 12rpx;
+}
+.upload-progress-fill {
+  height: 100%; background: #3B82F6;
+  transition: width 0.2s ease;
+}
+.upload-mask-percent {
+  font-size: 24rpx; color: #3B82F6; font-weight: 600;
+}
+
+/* 上传中按钮置灰 */
+.upload-btn.disabled,
+.picker-value.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
 </style>

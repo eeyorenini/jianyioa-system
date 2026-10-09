@@ -374,7 +374,7 @@
               </view>
               <view class="cc-row" v-if="c.attachment">
                 <text class="cc-label">附件</text>
-                <text class="cc-value link" @click="previewFile(c.attachment)">查看文件</text>
+                <text class="cc-value link" @click="previewFile(c.attachment)">查看文件 ({{ parseAttachments(c.attachment).length }}个)</text>
               </view>
             </view>
             <view class="contract-card-actions">
@@ -1138,16 +1138,73 @@ const goCollection = (contract) => {
   uni.navigateTo({ url: `/pages/contracts/collection-add?projectId=${projectId.value}&contractId=${contract.id}&projectName=${encodeURIComponent(project.value.name || '')}&actualReceivable=${financeSummary.value.actual_receivable}` });
 };
 
-const previewFile = (url) => {
+// 把后端 attachment 字段（JSON 数组 / 逗号字符串 / 单个 URL）统一解析成数组
+const parseAttachments = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw !== 'string') return [];
+  const s = raw.trim();
+  if (!s) return [];
+  // 优先按 JSON 数组解析
+  if (s.startsWith('[')) {
+    try { const arr = JSON.parse(s); return Array.isArray(arr) ? arr : [s]; } catch (_) { return [s]; }
+  }
+  // 兜底：老数据（逗号分隔字符串）
+  return s.split(',').map(x => x.trim()).filter(Boolean);
+};
+
+// 打开单个附件
+const openOneAttachment = (url) => {
   if (!url) return;
-  const base = import.meta.env.DEV ? 'http://localhost:3002' : '';
-  const fullUrl = base + url;
-  // 优先用 uni 跨平台 API（H5 不支持，小程序支持）
-  if (uni.previewMedia) {
-    uni.previewMedia({ sources: [{ url: fullUrl, type: url.endsWith('.pdf') ? 'pdf' : 'image' }] });
+  const fullUrl = url.startsWith('http') ? url : (location.origin + url);
+  const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(url);
+
+  // #ifdef H5
+  if (isImage) {
+    uni.previewImage({ urls: [fullUrl], current: fullUrl });
   } else {
     window.open(fullUrl, '_blank');
   }
+  return;
+  // #endif
+
+  // #ifdef MP-WEIXIN
+  uni.downloadFile({
+    url: fullUrl,
+    success: (res) => uni.openDocument({ filePath: res.tempFilePath, success: () => {}, fail: () => uni.showToast({ title: '打开失败', icon: 'none' }) }),
+    fail: () => uni.showToast({ title: '下载失败', icon: 'none' }),
+  });
+  return;
+  // #endif
+
+  // #ifdef APP-PLUS
+  plus.runtime.openURL(fullUrl, () => uni.showToast({ title: '打开失败', icon: 'none' }));
+  // #endif
+};
+
+// previewFile 入口：兼容老字符串、新 JSON 数组、单 URL
+const previewFile = (raw) => {
+  const urls = parseAttachments(raw);
+  if (urls.length === 0) return;
+  if (urls.length === 1) {
+    openOneAttachment(urls[0]);
+    return;
+  }
+  // 多个附件：依次打开（H5 浏览器一个一个新窗口；其他平台提示选一个）
+  // #ifdef H5
+  uni.showActionSheet({
+    itemList: urls.map((u, i) => `${i + 1}. ${decodeURIComponent(u.split('/').pop() || u)}`),
+    success: (res) => openOneAttachment(urls[res.tapIndex]),
+  });
+  return;
+  // #endif
+  // #ifndef H5
+  // 小程序/APP：多附件时只能让用户选一个
+  uni.showActionSheet({
+    itemList: urls.map((u, i) => `${i + 1}. ${decodeURIComponent(u.split('/').pop() || u)}`),
+    success: (res) => openOneAttachment(urls[res.tapIndex]),
+  });
+  // #endif
 };
 
 const goPurchaseDetail = (item) => {

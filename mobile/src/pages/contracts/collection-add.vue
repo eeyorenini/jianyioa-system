@@ -47,8 +47,8 @@
         <text class="form-label">凭证图片</text>
         <view class="image-upload-wrap">
           <view class="image-list">
-            <view v-for="(img, idx) in images" :key="idx" class="image-item">
-              <image class="image-thumb" :src="img" mode="aspectFill" />
+            <view v-for="(img, idx) in images" :key="img.id || idx" class="image-item">
+              <image class="image-thumb" :src="img.url || img" mode="aspectFill" />
               <text class="image-remove" @click="removeImage(idx)">✕</text>
             </view>
             <view v-if="images.length < 3 && !uploading" class="image-add" @click="chooseImages">
@@ -200,12 +200,16 @@ function chooseImages() {
       uploadTotal.value = paths.length
 
       const userInfo = uni.getStorageSync('userInfo') || {}
-      for (const tempPath of paths) {
+      // 2026-10-09 优化：先 push 本地临时路径占位，用户立刻看到缩略图；上传完后替换为 url
+      const placeholders = paths.map(p => ({ id: 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), url: p, status: 'uploading' }))
+      images.value.push(...placeholders)
+      for (let i = 0; i < paths.length; i++) {
+        const ph = placeholders[i]
         try {
           const url = await new Promise((resolve) => {
             uni.uploadFile({
               url: '/api/upload-image',
-              filePath: tempPath,
+              filePath: paths[i],
               name: 'file',
               header: { 'x-user-id': userInfo.id },
               success: (uploadRes) => {
@@ -217,8 +221,11 @@ function chooseImages() {
               fail: () => resolve(''),
             })
           })
+          const idx = images.value.findIndex(it => it.id === ph.id)
           if (url) {
-            images.value.push(url)
+            if (idx >= 0) images.value[idx] = { id: ph.id, url, status: 'done' }
+          } else {
+            if (idx >= 0) images.value.splice(idx, 1)  // 失败移除占位
           }
         } catch {}
         uploadDone.value++

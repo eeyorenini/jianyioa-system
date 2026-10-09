@@ -54,6 +54,14 @@
       </view>
     </view>
 
+    <!-- 操作中蒙版（2026-10-09 加：防重复点击） -->
+    <view class="upload-mask" v-if="submitting" @touchmove.stop.prevent="noop">
+      <view class="upload-mask-box">
+        <view class="upload-spinner"></view>
+        <text class="upload-mask-title">处理中...</text>
+      </view>
+    </view>
+
     <!-- 节点管理入口 -->
     <view class="manage-card" @click="goNodeManage">
       <text class="manage-icon">⚙️</text>
@@ -126,6 +134,8 @@ const userStore = useUserStore();
 const node = ref({});
 const allNodes = ref([]);
 const logs = ref([]);
+const submitting = ref(false);  // 2026-10-09：防重复点击
+const noop = () => {};  // 蒙版下阻止滚动穿透
 
 const getNodeStatusClass = (status) => {
   if (status === 'completed') return 'n-done';
@@ -146,6 +156,8 @@ const getNodeStatusText = (status) => {
 
 // 状态修改（替换原来的 doReport）
 const changeStatus = async (newStatus) => {
+  // 2026-10-09 修复：加防重复点击 + 接收 res + 按短信结果弹反馈
+  if (submitting.value) return;
   const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
   // 完工时需要填 progress_percent 和 actual_date
   const extra = newStatus === 'completed'
@@ -162,18 +174,52 @@ const changeStatus = async (newStatus) => {
     });
   });
 
+  submitting.value = true;
   try {
     const token = uni.getStorageSync("token");
     const payload = { status: newStatus, ...extra };
-    // 发送短信参数：sms_notify=1 表示需要发短信
-    if (confirm === 'sms') payload.sms_notify = 1;
 
+    // 2026-10-09 修复：先更新状态
     await uni.request({
       url: `/api/project-stages/${nodeId.value}`,
       method: "PUT",
       header: { Authorization: token },
       data: payload,
     });
+
+    // 2026-10-09 修复：发短信走独立接口 /api/sms-send（跟 PC 端对齐，之前用 sms_notify=1 不工作）
+    if (confirm === 'sms') {
+      try {
+        const smsRes = await uni.request({
+          url: '/api/sms-send',
+          method: 'POST',
+          header: { Authorization: token },
+          data: { node_id: nodeId.value, project_id: projectId.value },
+        });
+        // 跟 PC 端 PCProjects.vue:1596 解析方式一致
+        const sData = smsRes.data || {};
+        if (sData.status === 'success') {
+          uni.showToast({ title: '短信已发送', icon: 'success', duration: 2000 });
+        } else {
+          // 失败：弹 modal 让用户看到原因
+          uni.showModal({
+            title: '短信未发送',
+            content: (sData.message || '未知原因') + '\n\n请检查：\n1. 系统设置 → 阿里云短信配置\n2. 节点是否绑定了短信模板\n3. 客户手机号是否填写',
+            showCancel: false,
+            confirmText: '我知道了',
+          });
+        }
+      } catch (smsErr) {
+        uni.showModal({
+          title: '短信发送失败',
+          content: (smsErr.data?.error || smsErr.message || '网络错误'),
+          showCancel: false,
+          confirmText: '好的',
+        });
+      }
+    } else {
+      uni.showToast({ title: '已保存', icon: 'success' });
+    }
 
     // 写项目日志
     const actionMap = { pending: 'node_pending', in_progress: 'node_started', completed: 'node_completed', skipped: 'node_skipped' };
@@ -189,11 +235,12 @@ const changeStatus = async (newStatus) => {
       },
     });
 
-    uni.showToast({ title: confirm === 'sms' ? '已保存并发送短信' : '已保存', icon: 'success' });
     await fetchData();
   } catch (e) {
     console.error(e);
     uni.showToast({ title: '操作失败', icon: 'none' });
+  } finally {
+    submitting.value = false;
   }
 };
 

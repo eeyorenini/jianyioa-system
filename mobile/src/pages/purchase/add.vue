@@ -63,14 +63,22 @@
       <view class="form-item form-item-top">
         <text class="form-label">图片</text>
         <view class="image-upload-area">
-          <view v-for="(img, idx) in images" :key="idx" class="image-preview-item">
-            <image class="image-preview" :src="getImageUrl(img)" mode="aspectFill" />
+          <view v-for="(img, idx) in images" :key="img.id || idx" class="image-preview-item">
+            <image class="image-preview" :src="getImageUrl(img.url || img)" mode="aspectFill" />
             <view class="image-remove" @click="removeImage(idx)">×</view>
           </view>
           <view v-if="images.length < 9" class="image-add-btn" @click="chooseImage">
             <text class="image-add-icon">+</text>
             <text class="image-add-text">添加图片</text>
           </view>
+        </view>
+      </view>
+
+      <!-- 上传中蒙版（2026-10-09 补：之前漏了，导致无视觉反馈 + 可误点） -->
+      <view class="upload-mask" v-if="uploadingImage" @touchmove.stop.prevent="noop">
+        <view class="upload-mask-box">
+          <view class="upload-spinner"></view>
+          <text class="upload-mask-title">图片上传中...</text>
         </view>
       </view>
 
@@ -150,6 +158,7 @@ const supplierPicker = ref({ visible: false, title: '选择供应商', items: []
 const materialPicker = ref({ visible: false, title: '选择主材', items: [] })
 const images = ref([])
 const uploadingImage = ref(false)
+const noop = () => {}  // 2026-10-09：蒙版下阻止滚动穿透
 
 const unitList = [
   '个', '块', '片', '张', '卷', '卷', '米', '平方米', '立方米',
@@ -159,6 +168,16 @@ const unitList = [
 const unitPicker = ref({ visible: false, title: '选择单位', items: unitList.map(n => ({ name: n, icon: '📏' })) })
 
 onMounted(() => {
+  // 2026-10-09：从项目详情跳入时，直接带入项目（读 URL 参数）
+  const pages = getCurrentPages()
+  const current = pages[pages.length - 1]
+  const options = current.options || {}
+  if (options.projectId) {
+    form.value.project_id = parseInt(options.projectId)
+    form.value.project_name = options.projectName ? decodeURIComponent(options.projectName) : ''
+    selectedProject.value = { id: form.value.project_id, name: form.value.project_name }
+  }
+
   // 加载项目列表（admin看到所有，非admin只看到自己参与的）
   uni.request({
     url: '/api/projects',
@@ -325,20 +344,27 @@ const chooseImage = () => {
     sourceType: ['album', 'camera'],
     success: async (res) => {
       uploadingImage.value = true
-      let successCount = 0
-      for (const tempPath of res.tempFilePaths) {
+      // 2026-10-09 优化：先 push 本地临时路径占位，用户立刻看到缩略图；上传完后替换为 url
+      const placeholders = res.tempFilePaths.map(p => ({ id: 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), url: p, status: 'uploading' }))
+      images.value.push(...placeholders)
+      for (let i = 0; i < res.tempFilePaths.length; i++) {
+        const tempPath = res.tempFilePaths[i]
+        const ph = placeholders[i]
         try {
           const up = await uploadImage(tempPath)
-          images.value.push(up)
-          successCount++
+          // 找到占位项替换 url
+          const idx = images.value.findIndex(it => it.id === ph.id)
+          if (idx >= 0) images.value[idx] = { id: ph.id, url: up, status: 'done' }
         } catch (e) {
+          // 失败：移除占位项
+          const idx = images.value.findIndex(it => it.id === ph.id)
+          if (idx >= 0) images.value.splice(idx, 1)
           console.error('图片上传失败:', e)
         }
       }
       uploadingImage.value = false
-      if (successCount === 0 && res.tempFilePaths.length > 0) {
-        uni.showToast({ title: '图片上传失败', icon: 'none' })
-      }
+      const failCount = placeholders.length - images.value.filter(it => placeholders.find(p => p.id === it.id) || it.status === 'done').length
+      if (failCount > 0) uni.showToast({ title: `${failCount}张图片上传失败`, icon: 'none' })
     },
     fail: () => { uploadingImage.value = false }
   })
@@ -348,7 +374,8 @@ const uploadImage = (filePath) => {
   return new Promise((resolve, reject) => {
     const token = uni.getStorageSync('userInfo')?.id || ''
     uni.uploadFile({
-      url: 'http://localhost:10086/api/upload-image',
+      // 2026-10-09 修复：用相对路径走 vite proxy（其他上传页面都是这样写）
+      url: '/api/upload-image',
       filePath,
       name: 'file',
       header: { 'x-user-id': token },
@@ -476,6 +503,34 @@ function submit() {
 }
 .image-add-icon { font-size: 24px; color: #999; }
 .image-add-text { font-size: 11px; color: #999; margin-top: 2px; }
+
+/* 上传中蒙版（2026-10-09 补） */
+.upload-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+}
+.upload-mask-box {
+  background: #fff; border-radius: 16rpx;
+  padding: 60rpx 80rpx;
+  display: flex; flex-direction: column; align-items: center;
+  box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.2);
+}
+.upload-spinner {
+  width: 64rpx; height: 64rpx;
+  border: 6rpx solid #E5E7EB;
+  border-top-color: #3B82F6;
+  border-radius: 50%;
+  animation: upload-spin 0.8s linear infinite;
+  margin-bottom: 24rpx;
+}
+@keyframes upload-spin {
+  to { transform: rotate(360deg); }
+}
+.upload-mask-title {
+  font-size: 30rpx; color: #1E3A5F; font-weight: 600;
+}
 
 .nav-bar {
   display: flex; align-items: center; justify-content: space-between;

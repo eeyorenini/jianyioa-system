@@ -77,8 +77,8 @@
     <view class="form-card">
       <view class="form-label">问题照片/视频</view>
       <view class="photo-grid">
-        <view class="photo-item" v-for="(img, idx) in photos" :key="'photo_' + idx">
-          <image class="photo-img" :src="img" mode="aspectFill" @click="previewImg(idx)"></image>
+        <view class="photo-item" v-for="(img, idx) in photos" :key="img.id || ('photo_' + idx)">
+          <image class="photo-img" :src="img.url || img" mode="aspectFill" @click="previewImg(idx)"></image>
           <view class="photo-del" @click="delPhoto(idx)">✕</view>
           <view class="photo-uploading" v-if="uploadingPhotoIdx === idx">
             <view class="photo-uploading-icon">⟳</view>
@@ -185,6 +185,10 @@ const choosePhoto = (e) => {
       const paths = res.tempFilePaths;
       if (!paths.length) { choosingPhoto.value = false; return; }
 
+      // 2026-10-09 优化：先 push 本地临时路径占位
+      const placeholders = paths.map(p => ({ id: 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), url: p, status: 'uploading' }))
+      photos.value.push(...placeholders)
+
       // 显示遮罩
       uploadProgress.visible = true;
       uploadProgress.total = paths.length;
@@ -193,7 +197,7 @@ const choosePhoto = (e) => {
       uploadProgress.text = '正在上传 0/' + paths.length;
 
       // 并行上传所有图片
-      const uploadTasks = paths.map((path, i) => asyncUploadPhoto(path, i, paths.length));
+      const uploadTasks = paths.map((path, i) => asyncUploadPhoto(path, i, paths.length, placeholders[i]));
       await Promise.all(uploadTasks);
 
       // 隐藏遮罩
@@ -207,7 +211,7 @@ const choosePhoto = (e) => {
 };
 
 // 上传单张照片（带进度更新）
-const asyncUploadPhoto = (filePath, index, total) => {
+const asyncUploadPhoto = (filePath, index, total, placeholder) => {
   return new Promise((resolve) => {
     uploadingPhotoIdx.value = photos.value.length + index;
     uni.uploadFile({
@@ -217,7 +221,11 @@ const asyncUploadPhoto = (filePath, index, total) => {
       success: (res) => {
         try {
           const data = JSON.parse(res.data);
-          if (data.url) {
+          if (data.url && placeholder) {
+            // 2026-10-09 优化：替换占位项
+            const idx = photos.value.findIndex(p => p.id === placeholder.id);
+            if (idx >= 0) photos.value[idx] = { id: placeholder.id, url: data.url, status: 'done' };
+          } else if (data.url) {
             photos.value.push(data.url);
           }
         } catch (e) {}
@@ -228,6 +236,10 @@ const asyncUploadPhoto = (filePath, index, total) => {
       },
       fail: (err) => {
         console.error('上传失败:', err);
+        if (placeholder) {
+          const idx = photos.value.findIndex(p => p.id === placeholder.id);
+          if (idx >= 0) photos.value.splice(idx, 1);
+        }
         uni.showToast({ title: '有图片上传失败，已跳过', icon: 'none', duration: 1500 });
         uploadProgress.done++;
         uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
@@ -249,8 +261,9 @@ const delPhoto = (idx) => {
 // 预览照片
 const previewImg = (idx) => {
   const urls = photos.value.map(p => {
-    if (p.startsWith('/uploads/') || p.startsWith('http')) return p;
-    return p;
+    const url = p.url || p;
+    if (url.startsWith('/uploads/') || url.startsWith('http') || url.startsWith('blob:')) return url;
+    return url;
   });
   uni.previewImage({ urls, current: idx });
 };
@@ -268,8 +281,9 @@ const submit = () => {
   const userInfo = uni.getStorageSync('userInfo');
 
   const imageUrls = photos.value.map(p => {
-    if (p.startsWith('/uploads/') || p.startsWith('http')) return p;
-    return p;
+    const url = p.url || p;  // 2026-10-09 兼容对象数组
+    if (url.startsWith('/uploads/') || url.startsWith('http')) return url;
+    return url;
   });
 
   uni.request({

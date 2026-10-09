@@ -50,7 +50,17 @@
       <!-- 施工地点 -->
       <view class="form-item">
         <text class="form-label">施工地点</text>
-        <input class="form-input" v-model="form.location" placeholder="自动填入项目地址，可修改" />
+        <input class="form-input" v-model="form.location" placeholder="自动填入项目名，可修改" />
+      </view>
+
+      <!-- 工人班组（2026-10-09 改为施工方部门选择器） -->
+      <view class="form-item">
+        <text class="form-label">工人班组 *</text>
+        <view class="picker-value" :class="{ placeholder: !form.worker }" @click="showWorkerPicker">
+          {{ form.worker || '请选择施工方员工' }}
+          <text class="arrow">›</text>
+        </view>
+        <text class="form-hint" v-if="form.worker_phone">📞 {{ form.worker_phone }}</text>
       </view>
 
       <!-- 约定工费 -->
@@ -62,10 +72,11 @@
       <!-- 施工开始时间 -->
       <view class="form-item">
         <text class="form-label">施工开始时间</text>
-        <picker mode="date" :value="form.start_date" @change="onStartDateChange">
-          <view class="picker-value" :class="{ placeholder: !form.start_date }">
-            {{ form.start_date || '请选择日期' }}
-            <text class="arrow">›</text>
+        <picker mode="date" :value="form.start_date" :fields="fields" @change="onStartDateChange">
+          <view class="date-picker" :class="{ placeholder: !form.start_date }">
+            <text class="date-picker-icon">📅</text>
+            <text class="date-picker-text">{{ form.start_date || '请选择日期' }}</text>
+            <text class="date-picker-arrow">›</text>
           </view>
         </picker>
       </view>
@@ -93,6 +104,14 @@
       @select="onWorkSelect"
       @cancel="workPicker.visible = false"
     />
+    <!-- 工人班组选择弹窗（2026-10-09 加：列出施工方部门员工） -->
+    <BottomPicker
+      v-model:visible="workerPicker.visible"
+      :title="workerPicker.title"
+      :items="workerPicker.items"
+      @select="onWorkerSelect"
+      @cancel="workerPicker.visible = false"
+    />
   </view>
 </template>
 
@@ -103,6 +122,7 @@ import BottomPicker from '@/components/bottom-picker.vue'
 const selectedProject = ref(null)
 const selectedWork = ref('')
 const submitting = ref(false)
+const fields = 'day'  // 2026-10-09：限制日期选择精度（年月日）
 
 const form = ref({
   project_id: '',
@@ -110,6 +130,7 @@ const form = ref({
   content: '',
   location: '',
   worker: '',
+  worker_phone: '',  // 2026-10-09：选员工后存电话，方便联系
   fee: '',
   start_date: new Date().toISOString().split('T')[0],
   requirement: '',
@@ -117,6 +138,8 @@ const form = ref({
 
 const projectPicker = ref({ visible: false, title: '选择项目', items: [] })
 const workPicker = ref({ visible: false, title: '选择施工内容', items: [] })
+const workerPicker = ref({ visible: false, title: '选择工人（施工方部门）', items: [] })  // 2026-10-09 加
+let workerList = []  // 施工方部门员工列表（缓存）
 
 // 施工内容快捷选项（用于点击，也作为底部选择器数据）
 const workTypes = [
@@ -144,6 +167,22 @@ onMounted(() => {
     }
   })
 
+  // 2026-10-09：加载施工方部门员工（按部门分组，过滤出"施工方"）
+  uni.request({
+    url: '/api/employees/grouped-by-department',
+    success: (res) => {
+      const groups = Array.isArray(res.data) ? res.data : []
+      const builderGroup = groups.find(g => g.department_name === '施工方')
+      workerList = builderGroup ? (builderGroup.employees || []) : []
+      if (workerList.length === 0) {
+        console.warn('[dispatch/add] 施工方部门下暂无员工，请在PC后台组织结构中添加')
+      }
+    },
+    fail: (e) => {
+      console.error('[dispatch/add] 加载施工方员工失败', e)
+    },
+  })
+
   // 从 URL 参数读取项目信息（从项目详情页跳转来）
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
@@ -152,7 +191,10 @@ onMounted(() => {
   if (options.projectId) {
     form.value.project_id = parseInt(options.projectId)
     form.value.project_name = options.projectName ? decodeURIComponent(options.projectName) : ''
-    form.value.location = options.projectAddress ? decodeURIComponent(options.projectAddress) : ''
+    // 2026-10-09：URL 优先用 projectAddress，否则临时用项目名当地址（待小程序上线后再改成定位/真实地址）
+    form.value.location = options.projectAddress
+      ? decodeURIComponent(options.projectAddress)
+      : (form.value.project_name || '')
     selectedProject.value = { id: form.value.project_id, name: form.value.project_name }
   }
 })
@@ -198,6 +240,31 @@ const onWorkChipClick = (work) => {
   form.value.content = work
 }
 
+// 2026-10-09：工人班组选择器
+const showWorkerPicker = () => {
+  if (workerList.length === 0) {
+    uni.showModal({
+      title: '暂无施工方员工',
+      content: '施工方部门下还没有员工，请先在PC端组织结构中给"施工方"部门添加员工。',
+      showCancel: false,
+      confirmText: '我知道了',
+    })
+    return
+  }
+  workerPicker.value = {
+    visible: true,
+    title: '选择工人（施工方部门）',
+    items: workerList.map((w, i) => ({ name: w.name + (w.phone ? '（' + w.phone + '）' : ''), icon: '👷', _index: i })),
+  }
+}
+
+const onWorkerSelect = ({ item }) => {
+  const w = workerList[item._index]
+  form.value.worker = w.name
+  form.value.worker_phone = w.phone || ''
+  workerPicker.value.visible = false
+}
+
 const onStartDateChange = (e) => {
   form.value.start_date = e.detail.value
 }
@@ -208,6 +275,7 @@ function submit() {
   console.log('submit 按钮被点击了')
   if (!form.value.project_id) { uni.showToast({ title: '请选择项目', icon: 'none' }); return }
   if (!form.value.content.trim()) { uni.showToast({ title: '请选择施工内容', icon: 'none' }); return }
+  if (!form.value.worker.trim()) { uni.showToast({ title: '请填写工人班组', icon: 'none' }); return }
 
   submitting.value = true
   console.log('开始发送请求')
@@ -264,6 +332,7 @@ function submit() {
 .form-label { width: 160rpx; font-size: 26rpx; color: #666; flex-shrink: 0; padding-top: 6rpx; }
 .form-input { flex: 1; font-size: 28rpx; color: #333; }
 .form-textarea { flex: 1; font-size: 28rpx; color: #333; border: 1rpx solid #eee; border-radius: 8rpx; padding: 16rpx; resize: none; }
+.form-hint { font-size: 22rpx; color: #10B981; padding: 4rpx 0 0 160rpx; }
 .picker-value {
   flex: 1; font-size: 28rpx; color: #333;
   display: flex; justify-content: space-between; align-items: center;
@@ -281,6 +350,21 @@ function submit() {
   border-radius: 18px; font-size: 13px; color: #6B7280;
 }
 .work-chip.active { background: #1E3A5F; color: #fff; }
+
+/* 日期选择器美化（2026-10-09） */
+.date-picker {
+  flex: 1; font-size: 28rpx; color: #333;
+  display: flex; align-items: center; gap: 8px;
+  background: #F9FAFB;
+  border: 1rpx solid #E5E7EB;
+  border-radius: 8rpx;
+  padding: 12rpx 16rpx;
+  min-height: 40rpx;
+}
+.date-picker.placeholder { color: #9CA3AF; }
+.date-picker-icon { font-size: 16px; color: #6B7280; }
+.date-picker-text { flex: 1; }
+.date-picker-arrow { font-size: 16px; color: #C0C4CC; }
 
 /* 项目横幅 */
 .project-banner {

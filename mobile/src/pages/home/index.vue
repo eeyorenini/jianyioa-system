@@ -169,10 +169,10 @@ const timeStr = computed(() => {
 });
 
 const stats = ref({
-  inProgress: 3,
-  overdue: 2,
-  pendingInspect: 1,
-  pendingPay: '¥12.8万',
+  inProgress: 0,
+  overdue: 0,
+  pendingInspect: 0,
+  pendingPay: '¥0',
 });
 
 const getRoleClass = (role) => {
@@ -201,11 +201,31 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); loadRecentProjects(); });
+onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); });
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
 });
+
+// ====== 首页统计 / 待办 / 逾期预警：从后端拉真实数据 ======
+const loadHomeStats = async () => {
+  try {
+    const res = await uni.request({
+      url: '/api/mobile/home-stats',
+      header: {
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+      }
+    });
+    if (res.data && !res.data.error) {
+      if (res.data.stats) stats.value = { ...stats.value, ...res.data.stats };
+      if (Array.isArray(res.data.todos)) todos.value = res.data.todos;
+      if (Array.isArray(res.data.warnings)) warnings.value = res.data.warnings;
+    }
+  } catch (e) {
+    console.error('加载首页统计失败', e);
+  }
+};
 
 // ====== 快捷入口 ======
 const quickEntries = [
@@ -224,17 +244,9 @@ const quickEntries = [
   { label: '客户', icon: '👤', bg: '#DBEAFE', action: 'customer' },
 ];
 
-const todos = ref([
-  { id: 1, title: '「十六局项目」水电验收申请', project: '十六局西区2-3-201', time: '今天 14:00', priority: 'warning', type: 'node' },
-  { id: 2, title: '「新农村3301」泥瓦工程待审核', project: '新农村3301', time: '今天 10:30', priority: 'danger', type: 'node' },
-  { id: 3, title: '巡检问题待整改：防水层破损', project: '十六局西区2-3-201', time: '昨天', priority: 'danger', type: 'inspect' },
-  { id: 4, title: '材料到货待验收：水泥 2吨', project: '撒打算', time: '昨天', priority: 'info', type: 'material' },
-]);
+const todos = ref([]);
 
-const warnings = ref([
-  { id: 10, name: '新农村3301', node: '木工工程', days: 5 },
-  { id: 5, name: '撒打算', node: '项目完成', days: 3 },
-]);
+const warnings = ref([]);
 
 const recentProjects = ref([]);
 

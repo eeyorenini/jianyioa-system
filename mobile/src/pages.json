@@ -472,6 +472,12 @@
         "selectedIconPath": "static/tab-dispatch-active.png"
       },
       {
+        "pagePath": "pages/purchase/list",
+        "text": "采购",
+        "iconPath": "static/tab-dispatch.png",
+        "selectedIconPath": "static/tab-dispatch-active.png"
+      },
+      {
         "pagePath": "pages/mine/index",
         "text": "我的",
         "iconPath": "static/tab-mine.png",
