@@ -59,6 +59,7 @@
         <el-sub-menu index="project-group">
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
+          <el-menu-item index="/change-orders">增减项管理</el-menu-item>
           <el-menu-item index="/project-logs">施工日志</el-menu-item>
           <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
@@ -91,12 +92,12 @@
           <el-menu-item index="/operation-logs">操作日志</el-menu-item>
           <el-menu-item index="/system-logs">系统日志</el-menu-item>
         </el-sub-menu>
-        <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
+        <el-menu-item index="/finance-projects"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.26</div>
+      <div class="sidebar-version">v 2.1.27</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -133,6 +134,7 @@
         <el-sub-menu index="project-group">
           <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
           <el-menu-item index="/projects">工程管理</el-menu-item>
+          <el-menu-item index="/change-orders">增减项管理</el-menu-item>
           <el-menu-item index="/project-logs">施工日志</el-menu-item>
           <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
           <el-menu-item index="/quotes">报价管理</el-menu-item>
@@ -165,12 +167,12 @@
           <el-menu-item index="/operation-logs">操作日志</el-menu-item>
           <el-menu-item index="/system-logs">系统日志</el-menu-item>
         </el-sub-menu>
-        <el-menu-item index="/finance"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
+        <el-menu-item index="/finance-projects"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
         <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
         <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
         <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
       </el-menu>
-      <div class="sidebar-version">v 2.1.26</div>
+      <div class="sidebar-version">v 2.1.27</div>
     </div>
     
     <!-- 主内容区 -->
