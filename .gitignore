@@ -13,3 +13,6 @@ web_backup_20260902/
 # node_modules
 web/node_modules/
 server/node_modules/
+
+# 上传文件（运营产生，不进版本控制）
+server/uploads/
