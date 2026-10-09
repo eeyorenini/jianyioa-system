@@ -548,6 +548,48 @@
           </div>
         </el-tab-pane>
 
+        <el-tab-pane label="增减项" name="changes">
+          <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
+            <span style="font-size:12px;color:#909399">共 {{ detailChanges.length }} 条</span>
+          </div>
+          <el-table :data="detailChanges" size="small" border max-height="400">
+            <el-table-column prop="change_type" label="类型" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.change_type === 'increase' ? 'success' : 'danger'" size="small">
+                  {{ row.change_type === 'increase' ? '增项' : '减项' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="amount" label="金额（元）" width="120">
+              <template #default="{ row }">
+                <span :style="{ color: row.change_type === 'increase' ? '#67C23A' : '#F56C6C', fontWeight: 600 }">
+                  {{ row.change_type === 'increase' ? '+' : '-' }}¥{{ Number(row.amount || 0).toLocaleString() }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="change_date" label="日期" width="120">
+              <template #default="{ row }">
+                {{ row.change_date ? row.change_date.slice(0, 10) : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="statusText" label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="getChangeStatusType(row.status)" size="small">{{ row.statusText }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" min-width="150" show-overflow-tooltip />
+          </el-table>
+          <div style="margin-top:12px;padding:12px;background:#f5f7fa;border-radius:8px;display:flex;gap:24px;font-size:13px">
+            <span style="color:#67C23A;font-weight:600">增项合计：+¥{{ formatChangeTotal('increase') }}</span>
+            <span style="color:#F56C6C;font-weight:600">减项合计：-¥{{ formatChangeTotal('decrease') }}</span>
+            <span style="color:#409EFF;font-weight:600">净额：{{ formatChangeNet() }}</span>
+          </div>
+          <div v-if="detailChanges.length === 0" style="text-align:center;color:#909399;padding:30px">
+            暂无增减项记录
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane label="采购" name="purchases">
           <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:12px;color:#909399">共 {{ detailPurchases.length }} 条</span>
@@ -645,6 +687,7 @@ const detailTab = ref('logs')
 const detailLogs = ref([])
 const detailInspections = ref([])
 const detailPurchases = ref([])
+const detailChanges = ref([])
 
 const openProjectDetail = async (project) => {
   detailProject.value = project
@@ -689,6 +732,40 @@ const loadDetailPurchases = async () => {
   }
 }
 
+const loadDetailChanges = async () => {
+  if (!detailProject.value?.id) return
+  try {
+    const res = await axios.get('/api/change-orders/list', {
+      params: { project_id: detailProject.value.id }
+    })
+    // axios 返回完整 response，res.data 才是数据体
+    detailChanges.value = Array.isArray(res.data) ? res.data : (res.data?.data || [])
+  } catch (e) {
+    detailChanges.value = []
+  }
+}
+
+const getChangeStatusType = (status) => {
+  if (status === 'approved' || status === '已通过') return 'success'
+  if (status === 'rejected' || status === '已驳回') return 'danger'
+  return 'warning'
+}
+
+const formatChangeTotal = (type) => {
+  const total = detailChanges.value
+    .filter(i => i.change_type === type)
+    .reduce((sum, i) => sum + Number(i.amount || 0), 0)
+  return total.toLocaleString()
+}
+
+const formatChangeNet = () => {
+  const inc = detailChanges.value.filter(i => i.change_type === 'increase').reduce((s, i) => s + Number(i.amount || 0), 0)
+  const dec = detailChanges.value.filter(i => i.change_type === 'decrease').reduce((s, i) => s + Number(i.amount || 0), 0)
+  const net = inc - dec
+  const sign = net >= 0 ? '+' : ''
+  return sign + '¥' + net.toLocaleString()
+}
+
 const getPurchaseStatusType = (status) => {
   const map = { pending: 'warning', approved: 'success', rejected: 'danger', reimbursed: 'primary', finance_confirmed: 'info' }
   return map[status] || ''
@@ -703,6 +780,7 @@ watch(detailTab, (val) => {
   if (val === 'logs' && detailLogs.value.length === 0) loadDetailLogs()
   if (val === 'inspections' && detailInspections.value.length === 0) loadDetailInspections()
   if (val === 'purchases' && detailPurchases.value.length === 0) loadDetailPurchases()
+  if (val === 'changes' && detailChanges.value.length === 0) loadDetailChanges()
 })
 
 // 甘特图拖拽选择模式

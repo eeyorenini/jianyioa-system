@@ -35,6 +35,8 @@ const ProjectLogs = () => import('../views/ProjectLogs.vue')
 const InspectionLogs = () => import('../views/InspectionLogs.vue')
 const Suppliers = () => import('../views/Suppliers.vue')
 const PurchaseRequests = () => import('../views/PurchaseRequests.vue')
+const ChangeOrders = () => import('../views/ChangeOrders.vue')
+const FinanceProjectList = () => import('../views/FinanceProjectList.vue')
 
 const routes = [
   { path: '/login', name: 'Login', component: Login, meta: { requiresAuth: false } },
@@ -57,6 +59,8 @@ const routes = [
   { path: '/material-orders', name: 'MaterialOrders', component: MaterialOrders },
   { path: '/suppliers', name: 'Suppliers', component: Suppliers },
   { path: '/purchase-requests', name: 'PurchaseRequests', component: PurchaseRequests },
+  { path: '/change-orders', name: 'ChangeOrders', component: ChangeOrders },
+  { path: '/finance-projects', name: 'FinanceProjectList', component: FinanceProjectList },
   { path: '/approvals', name: 'Approvals', component: Approvals },
   { path: '/reports', name: 'Reports', component: Reports },
   { path: '/notices', name: 'Notices', component: Notices },

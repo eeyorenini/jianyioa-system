@@ -2093,8 +2093,12 @@ app.get('/api/projects', async (req, res) => {
       if (p.nodes && p.nodes.length > 0) {
         const completedNodes = p.nodes.filter(n => n.status === 'completed').length;
         p.progress = Math.round((completedNodes / p.nodes.length) * 100);
+        // 当前节点名称：第一个未完成的节点，全部完成则显示最后一个
+        const pendingNodes = p.nodes.filter(n => n.status !== 'completed');
+        p.current_node_name = pendingNodes.length > 0 ? pendingNodes[0].node_name : p.nodes[p.nodes.length - 1].node_name;
       } else {
         p.progress = 0;
+        p.current_node_name = '';
       }
     }
 
@@ -2209,6 +2213,17 @@ app.delete('/api/projects/:id', checkPermission('project:delete'), async (req, r
       'finance_records',
       'project_progress_nodes',
       'notifications',
+      'collection_records',
+      'payment_records',
+      'project_stages',
+      'purchase_requests',
+      'sms_send_logs',
+      'acceptance',
+      'cost_records',
+      'finance',
+      'material_out',
+      'purchases',
+      'warranties',
     ];
     for (const tbl of tables) {
       try { await pool.query(`DELETE FROM ${tbl} WHERE project_id = ?`, [pid]); } catch (_) {}
@@ -7473,6 +7488,73 @@ app.get('/api/contracts/by-project/:projectId', async (req, res) => {
 });
 
 // ==================== 增减项 API ====================
+// 兼容移动端 /api/change-orders/list（实际映射到 contract_changes）
+app.get('/api/change-orders/list', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    let sql = `SELECT cc.*, s.name as submitted_by_name, r.name as reviewed_by_name
+               FROM contract_changes cc
+               LEFT JOIN employees s ON s.id = cc.submitted_by
+               LEFT JOIN employees r ON r.id = cc.reviewed_by
+               WHERE 1=1`;
+    const params = [];
+    if (project_id) { sql += ' AND cc.project_id = ?'; params.push(project_id); }
+    sql += ' ORDER BY cc.id DESC';
+    const [rows] = await pool.query(sql, params);
+    // 转换为移动端期望的字段名
+    const list = rows.map(r => ({
+      id: r.id,
+      project_id: r.project_id,
+      change_type: r.change_type,
+      title: r.title,
+      amount: r.amount,
+      reason: r.description,
+      change_date: r.submitted_at,
+      created_at: r.submitted_at,
+      status: r.status,
+      statusText: r.status === 'approved' ? '已通过' : r.status === 'rejected' ? '已驳回' : r.status === 'pending' ? '待审核' : r.status === 'draft' ? '草稿' : '待审核',
+      project_name: null,
+      submitted_by_name: r.submitted_by_name
+    }));
+    res.json(list);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PC 端全量列表（含项目名称）
+app.get('/api/change-orders', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let sql = `SELECT cc.*, s.name as submitted_by_name, r.name as reviewed_by_name,
+                      p.name as project_name
+               FROM contract_changes cc
+               LEFT JOIN employees s ON s.id = cc.submitted_by
+               LEFT JOIN employees r ON r.id = cc.reviewed_by
+               LEFT JOIN projects p ON p.id = cc.project_id
+               WHERE 1=1`;
+    const params = [];
+    if (status) { sql += ' AND cc.status = ?'; params.push(status === '待审核' ? 'pending' : status === '已通过' ? 'approved' : status === '已驳回' ? 'rejected' : status); }
+    sql += ' ORDER BY cc.id DESC';
+    const [rows] = await pool.query(sql, params);
+    const list = rows.map(r => ({
+      id: r.id,
+      project_id: r.project_id,
+      project_name: r.project_name,
+      change_type: r.change_type,
+      title: r.title,
+      amount: r.amount,
+      reason: r.description || r.reason,
+      submitted_at: r.submitted_at,
+      reviewed_at: r.reviewed_at,
+      reviewed_by_name: r.reviewed_by_name,
+      reviewer_remark: r.reviewer_remark,
+      status: r.status,
+      statusText: r.status === 'approved' ? '已通过' : r.status === 'rejected' ? '已驳回' : r.status === 'pending' ? '待审核' : '待审核',
+      submitted_by_name: r.submitted_by_name
+    }));
+    res.json({ code: 0, data: list });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/contract-changes', async (req, res) => {
   try {
     const { project_id, contract_id } = req.query;
@@ -7738,7 +7820,7 @@ app.get('/api/finance/summary', async (req, res) => {
     // 增减项合计（审核通过的）
     const [[changeSum]] = await pool.query(
       `SELECT
-         COALESCE(SUM(CASE WHEN change_type='add' THEN amount ELSE 0 END), 0) as increase_total,
+         COALESCE(SUM(CASE WHEN change_type='increase' THEN amount ELSE 0 END), 0) as increase_total,
          COALESCE(SUM(CASE WHEN change_type='decrease' THEN amount ELSE 0 END), 0) as decrease_total
        FROM contract_changes ${whereProject ? 'WHERE project_id = ? AND status = \'approved\'' : 'WHERE status = \'approved\''}`,
       project_id ? [project_id] : []
@@ -7777,6 +7859,66 @@ app.get('/api/finance/summary', async (req, res) => {
       pending_expense: parseFloat(pendingExpense?.total || 0), // 待确认支出
       balance: receivable - parseFloat(collected?.total || 0) // 未收
     });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 按项目汇总应收（Finance.vue 应收统计 Tab 用）
+app.get('/api/finance/receivable-by-project', async (req, res) => {
+  try {
+    const [projects] = await pool.query(`
+      SELECT p.id, p.name as project_name,
+        cu.name as customer_name,
+        COALESCE(c.contract_amount, 0) as contract_amount
+      FROM projects p
+      LEFT JOIN contracts c ON c.project_id = p.id AND c.review_status = 'approved'
+      LEFT JOIN customers cu ON cu.id = p.customer_id
+      WHERE p.status != '已删除'
+      ORDER BY p.id DESC
+    `);
+
+    const result = [];
+    for (const p of projects) {
+      const [[changeSum]] = await pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN change_type='increase' THEN amount ELSE 0 END), 0) as increase_total,
+           COALESCE(SUM(CASE WHEN change_type='decrease' THEN amount ELSE 0 END), 0) as decrease_total
+         FROM contract_changes WHERE project_id = ? AND status = 'approved'`,
+        [p.id]
+      );
+      const [[collected]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM collection_records WHERE project_id = ? AND status = 'confirmed'`,
+        [p.id]
+      );
+      const contractAmount = parseFloat(p.contract_amount || 0);
+      const increaseTotal = parseFloat(changeSum?.increase_total || 0);
+      const decreaseTotal = parseFloat(changeSum?.decrease_total || 0);
+      const receivable = contractAmount + increaseTotal - decreaseTotal;
+      const collectedAmt = parseFloat(collected?.total || 0);
+      result.push({
+        project_id: p.id,
+        project_name: p.project_name,
+        customer_name: p.customer_name || '',
+        contract_amount: contractAmount,
+        increase_total: increaseTotal,
+        decrease_total: decreaseTotal,
+        receivable,
+        collected: collectedAmt,
+        unpaid: receivable - collectedAmt
+      });
+    }
+
+    // 全局汇总
+    const grand = result.reduce((acc, r) => {
+      acc.contract_amount += r.contract_amount;
+      acc.increase_total += r.increase_total;
+      acc.decrease_total += r.decrease_total;
+      acc.receivable += r.receivable;
+      acc.collected += r.collected;
+      acc.unpaid += r.unpaid;
+      return acc;
+    }, { contract_amount: 0, increase_total: 0, decrease_total: 0, receivable: 0, collected: 0, unpaid: 0 });
+
+    res.json({ list: result, grand });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
