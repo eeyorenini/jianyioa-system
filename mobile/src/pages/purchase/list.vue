@@ -90,20 +90,28 @@
               </view>
             </view>
           </view>
-          <!-- 我的申请：待审核/已驳回显示删除；已通过显示"上传报销" -->
+          <!-- 我的申请：待审核/已驳回显示删除；已通过显示"上传报销"和"反审核" -->
           <view v-if="activeTab === 'my' && (item.status === 'pending' || item.status === 'rejected')" class="card-actions" @click.stop>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
           </view>
-          <view v-else-if="activeTab === 'my' && item.status === 'approved'" class="card-actions" @click.stop>
-            <view class="action-btn approve" @click="showReimburseDialog(item)">上传报销</view>
+          <view v-else-if="activeTab === 'my' && item.status === 'approved' && !hasReimbursement(item)" class="card-actions" @click.stop>
+            <view class="action-btn approve" @click="goReimburseDetail(item)">上传报销</view>
+            <view class="action-btn warn" @click="handleUnapprove(item)">反审核</view>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
+          </view>
+          <view v-else-if="activeTab === 'my' && item.status === 'approved' && hasReimbursement(item)" class="card-actions" @click.stop>
+            <view class="action-btn" @click="goReimburseDetail(item)">查看报销</view>
           </view>
           <!-- 待我审核 显示操作按钮 -->
           <view v-else-if="activeTab === 'pending' && item.status === 'pending'" class="card-actions" @click.stop>
             <view class="action-btn reject" @click="handleReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleApprove(item)">通过</view>
           </view>
-          <!-- 待报销（财务视角）显示确认/驳回按钮 -->
+          <!-- 待报销（申请人视角 status=approved 且无 reimbursement）显示"上传报销" -->
+          <view v-else-if="activeTab === 'reimburse' && item.status === 'approved' && !hasReimbursement(item)" class="card-actions" @click.stop>
+            <view class="action-btn approve" @click="goReimburseDetail(item)">上传报销</view>
+          </view>
+          <!-- 待报销（财务视角 status=reimbursing）显示确认/驳回按钮 -->
           <view v-else-if="activeTab === 'reimburse' && item.status === 'reimbursing'" class="card-actions" @click.stop>
             <view class="action-btn reject" @click="handleFinanceReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleFinanceConfirm(item)">确认</view>
@@ -141,8 +149,8 @@
       </view>
     </view>
 
-    <!-- 上传报销单弹窗（2026-10-10 新增） -->
-    <view v-if="reimburseDialogVisible" class="dialog-mask" @click="reimburseDialogVisible = false">
+    <!-- 上传报销单弹窗 -->
+    <view v-if="reimburseDialogVisible" class="dialog-mask" @click="closeReimburseDialog">
       <view class="dialog-content" @click.stop>
         <view class="dialog-header">上传报销单</view>
         <view class="dialog-body">
@@ -154,9 +162,22 @@
             <text class="form-label">财务备注</text>
             <textarea class="comment-input" v-model="reimburseForm.financial_notes" placeholder="选填：发票号/付款方式/其他说明" />
           </view>
+          <view class="form-row">
+            <text class="form-label">报销凭证 *</text>
+            <view class="img-uploader">
+              <view v-for="(img, idx) in reimburseForm.images" :key="idx" class="img-thumb-wrap">
+                <image class="img-thumb" :src="img" mode="aspectFill" @click="previewReimburseImage(img)" />
+                <view class="img-remove" @click="removeReimburseImage(idx)">×</view>
+              </view>
+              <view v-if="reimburseForm.images.length < 9" class="img-add" @click="chooseReimburseImages">
+                <text class="img-add-icon">+</text>
+                <text class="img-add-text">添加凭证</text>
+              </view>
+            </view>
+          </view>
         </view>
         <view class="dialog-footer">
-          <view class="dialog-btn cancel" @click="reimburseDialogVisible = false">取消</view>
+          <view class="dialog-btn cancel" @click="closeReimburseDialog">取消</view>
           <view class="dialog-btn confirm" @click="submitReimburse">确定上传</view>
         </view>
       </view>
@@ -179,7 +200,7 @@ const pendingCount = ref(0)
 const reimburseCount = ref(0)
 const showDialog = ref(false)
 const reimburseDialogVisible = ref(false)  // 2026-10-10
-const reimburseForm = ref({ actual_amount: '', financial_notes: '' })  // 2026-10-10
+const reimburseForm = ref({ actual_amount: '', financial_notes: '', images: [] })  // 2026-10-10
 const dialogAction = ref('approve') // 'approve' | 'reject'
 const dialogComment = ref('')
 const currentItem = ref(null)
@@ -291,7 +312,12 @@ function loadData(isMore = false) {
   } else if (activeTab.value === 'pending') {
     url = '/api/purchase-requests/pending'
   } else if (activeTab.value === 'reimburse') {
-    url = '/api/purchase-requests/reimburse'
+    // 2026-10-10：申请人视角查 to-reimburse；财务视角查 reimburse
+    if (userInfo.purchase_finance || userInfo.is_finance) {
+      url = '/api/purchase-requests/reimburse'
+    } else {
+      url = '/api/purchase-requests/to-reimburse'
+    }
   } else if (activeTab.value === 'finance') {
     url = '/api/purchase-requests/finance'
   }
@@ -322,24 +348,31 @@ function loadData(isMore = false) {
 }
 
 function loadCounts() {
+  const userInfo = uni.getStorageSync('userInfo') || {}
   // 待审核数量
   uni.request({
     url: '/api/purchase-requests/pending',
     data: { page: 1, page_size: 1 },
+    header: { 'x-user-id': String(userInfo.id || '') },
     success: (res) => {
-      const total = res.data.total || res.data.list?.length || 0
+      const total = Number(res.data.total) || 0
       pendingCount.value = total
-    }
+    },
+    fail: () => { pendingCount.value = 0 }
   })
 
-  // 待报销数量
+  // 待报销数量（申请人用 to-reimburse；财务用 reimburse）
+  const isFinanceUser = !!(userInfo.purchase_finance || userInfo.is_finance)
+  const countUrl = isFinanceUser ? '/api/purchase-requests/reimburse' : '/api/purchase-requests/to-reimburse'
   uni.request({
-    url: '/api/purchase-requests/reimburse',
+    url: countUrl,
     data: { page: 1, page_size: 1 },
+    header: { 'x-user-id': String(userInfo.id || '') },
     success: (res) => {
-      const total = res.data.total || res.data.list?.length || 0
+      const total = Number(res.data.total) || 0
       reimburseCount.value = total
-    }
+    },
+    fail: () => { reimburseCount.value = 0 }
   })
 }
 
@@ -370,23 +403,26 @@ function handleDelete(item) {
     title: '确认删除',
     content: '确定要删除这条采购申请吗？删除后不可恢复。',
     confirmColor: '#f44336',
-    success: (res) => {
-      if (res.confirm) {
-        uni.request({
-          url: `/api/purchase-requests/${item.id}`,
-          method: 'DELETE',
-          success: (res) => {
-            if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
-              uni.showToast({ title: '已删除', icon: 'success' })
-              page.value = 1
-              loadData()
-            } else {
-              uni.showToast({ title: res.data.error || '删除失败', icon: 'none' })
-            }
-          },
-          fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
-        })
-      }
+    success: (modalRes) => {
+      if (!modalRes.confirm) return
+      const userInfo = uni.getStorageSync('userInfo') || {}
+      uni.request({
+        url: `/api/purchase-requests/${item.id}`,
+        method: 'DELETE',
+        header: { 'x-user-id': String(userInfo.id || '') },
+        success: (res) => {
+          // 严格判断：必须 statusCode=200 且 res.data.message 表明成功
+          if (res.statusCode === 200 && res.data && res.data.message) {
+            uni.showToast({ title: '已删除', icon: 'success' })
+            page.value = 1
+            loadData()
+            loadCounts()
+          } else {
+            uni.showToast({ title: (res.data && (res.data.error || res.data.message)) || '删除失败', icon: 'none' })
+          }
+        },
+        fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+      })
     }
   })
 }
@@ -396,42 +432,158 @@ function handleFinanceConfirm(item) {
   uni.navigateTo({ url: `/pages/purchase/finance-accept?id=${item.id}` })
 }
 
-// 2026-10-10：上传报销单（申请人）
+// 2026-10-10：上传报销单（申请人）— 走弹窗快速报销
 function showReimburseDialog(item) {
   currentItem.value = item
-  reimburseForm.value = { actual_amount: item.total_amount || '', financial_notes: '' }
+  reimburseForm.value = { actual_amount: item.total_amount || '', financial_notes: '', images: [] }
   reimburseDialogVisible.value = true
 }
 
+// 2026-10-10：从 list 进入报销 detail 页面（用于"查看报销"按钮）
+function goReimburseDetail(item) {
+  // 弹窗快速上传；如果想进 detail 完整页面，把下面注释打开
+  showReimburseDialog(item)
+  // uni.navigateTo({ url: `/pages/purchase/detail?id=${item.id}` })
+}
+
+// 2026-10-10：判断列表项是否已有报销记录
+function hasReimbursement(item) {
+  return !!(item && (item.reimbursement || item._hasReimbursement))
+}
+
+// 2026-10-10：选报销凭证图片（最多 9 张）
+function chooseReimburseImages() {
+  uni.chooseImage({
+    count: 9 - reimburseForm.value.images.length,
+    sizeType: ['compressed'],
+    sourceType: ['album', 'camera'],
+    success: (res) => {
+      reimburseForm.value.images = [...reimburseForm.value.images, ...res.tempFilePaths]
+    }
+  })
+}
+
+function removeReimburseImage(idx) {
+  reimburseForm.value.images.splice(idx, 1)
+}
+
+function previewReimburseImage(current) {
+  uni.previewImage({ urls: reimburseForm.value.images, current })
+}
+
+function closeReimburseDialog() {
+  if (uploadingReimburse.value) {
+    uni.showToast({ title: '上传中，请稍候', icon: 'none' })
+    return
+  }
+  reimburseDialogVisible.value = false
+}
+
+// 2026-10-10：反审核
+function handleUnapprove(item) {
+  uni.showModal({
+    title: '确认反审核',
+    content: '将已通过的申请退回待审核队列，确认操作？',
+    confirmColor: '#ff9800',
+    success: (modalRes) => {
+      if (!modalRes.confirm) return
+      const userInfo = uni.getStorageSync('userInfo') || {}
+      uni.request({
+        url: `/api/purchase-requests/${item.id}/unapprove`,
+        method: 'PUT',
+        header: { 'x-user-id': String(userInfo.id || '') },
+        success: (res) => {
+          if (res.statusCode === 200 && (res.data.code === 0 || res.data.message || res.data.error === undefined)) {
+            uni.showToast({ title: '已反审核', icon: 'success' })
+            page.value = 1
+            loadData()
+            loadCounts()
+          } else {
+            uni.showToast({ title: (res.data && (res.data.error || res.data.message)) || '反审核失败', icon: 'none' })
+          }
+        },
+        fail: () => uni.showToast({ title: '网络错误', icon: 'none' })
+      })
+    }
+  })
+}
+
+const uploadingReimburse = ref(false)
+
 function submitReimburse() {
+  if (uploadingReimburse.value) return
   if (!reimburseForm.value.actual_amount) {
     uni.showToast({ title: '请填写实付金额', icon: 'none' })
     return
   }
+  if (reimburseForm.value.images.length === 0) {
+    uni.showToast({ title: '请至少上传一张凭证', icon: 'none' })
+    return
+  }
+  if (!currentItem.value || !currentItem.value.id) {
+    uni.showToast({ title: '参数错误', icon: 'none' })
+    return
+  }
+
   const id = currentItem.value.id
-  const token = uni.getStorageSync('userInfo')?.id || ''
-  uni.request({
-    url: `/api/purchase-requests/${id}/reimburse`,
-    method: 'POST',
-    header: { 'x-user-id': token, 'Content-Type': 'application/json' },
-    data: {
-      actual_amount: reimburseForm.value.actual_amount,
-      financial_notes: reimburseForm.value.financial_notes,
-    },
-    success: (res) => {
-      if (res.data.code === 0 || res.data.code === undefined || res.statusCode === 200) {
-        uni.showToast({ title: '已上传报销单', icon: 'success' })
-        reimburseDialogVisible.value = false
-        // 2026-10-10：上传后跳到"待报销" tab
-        activeTab.value = 'reimburse'
-        page.value = 1
-        loadData()
-        loadCounts()
-      } else {
-        uni.showToast({ title: res.data.error || res.data.message || '上传失败', icon: 'none' })
+  const userInfo = uni.getStorageSync('userInfo') || {}
+  const token = String(userInfo.id || '')
+  const paths = reimburseForm.value.images
+  uploadingReimburse.value = true
+
+  // 多文件上传：先 uploadFile 全部拿到 URL，再 POST JSON 给后端（避免 4xx 时回滚）
+  const tasks = paths.map((p) => new Promise((resolve) => {
+    uni.uploadFile({
+      url: '/api/upload-image',
+      filePath: p,
+      name: 'file',
+      header: { 'x-user-id': token },
+      success: (res) => {
+        try {
+          const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data
+          resolve(data.url || data.path || '')
+        } catch { resolve('') }
+      },
+      fail: () => resolve('')
+    })
+  }))
+
+  uni.showLoading({ title: '上传凭证中...' })
+  Promise.all(tasks).then((urls) => {
+    const validUrls = urls.filter(Boolean)
+    if (validUrls.length === 0) {
+      uni.hideLoading()
+      uploadingReimburse.value = false
+      uni.showToast({ title: '凭证上传失败', icon: 'none' })
+      return
+    }
+    // 提交报销
+    uni.request({
+      url: `/api/purchase-requests/${id}/reimburse`,
+      method: 'POST',
+      header: { 'x-user-id': token },
+      data: {
+        actual_amount: reimburseForm.value.actual_amount,
+        financial_notes: reimburseForm.value.financial_notes,
+        images: JSON.stringify(validUrls)
+      },
+      success: (res) => {
+        if (res.statusCode === 200 && (res.data.code === 0 || res.data.message)) {
+          uni.showToast({ title: '报销单已提交', icon: 'success' })
+          reimburseDialogVisible.value = false
+          page.value = 1
+          loadData()
+          loadCounts()
+        } else {
+          uni.showToast({ title: (res.data && (res.data.error || res.data.message)) || '提交失败', icon: 'none' })
+        }
+      },
+      fail: () => uni.showToast({ title: '网络错误', icon: 'none' }),
+      complete: () => {
+        uni.hideLoading()
+        uploadingReimburse.value = false
       }
-    },
-    fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) }
+    })
   })
 }
 
@@ -591,6 +743,31 @@ watch(activeTab, () => {
 .action-btn.reject { background: #fff; color: #f44336; border: 1px solid #f44336; }
 .action-btn.approve { background: #1E3A5F; color: #fff; }
 .action-btn.danger { background: #fff; color: #f44336; border: 1px solid #f44336; }
+.action-btn.warn { background: #fff; color: #ff9800; border: 1px solid #ff9800; }
+
+.form-row { display: flex; flex-direction: column; margin-bottom: 16px; }
+.form-label { font-size: 13px; color: #333; margin-bottom: 6px; }
+.form-input {
+  border: 1px solid #eee; border-radius: 8px; padding: 10px;
+  font-size: 14px; box-sizing: border-box;
+}
+.img-uploader {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.img-thumb-wrap { position: relative; width: 80px; height: 80px; }
+.img-thumb { width: 80px; height: 80px; border-radius: 6px; border: 1rpx solid #eee; }
+.img-remove {
+  position: absolute; top: -8px; right: -8px;
+  width: 20px; height: 20px; line-height: 18px; text-align: center;
+  background: #f44336; color: #fff; border-radius: 50%; font-size: 14px;
+}
+.img-add {
+  width: 80px; height: 80px; border-radius: 6px;
+  border: 1rpx dashed #ccc; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; color: #999;
+}
+.img-add-icon { font-size: 26px; line-height: 1; }
+.img-add-text { font-size: 11px; margin-top: 4px; }
 
 .loading-more { text-align: center; padding: 20px; }
 .loading-text { font-size: 24rpx; color: #999; }
