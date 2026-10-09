@@ -98,7 +98,7 @@ const tags = [
   '其他',
 ]
 
-onMounted(() => {
+onMounted(async () => {
   // 从 URL 参数读取项目信息（从项目详情页跳转来）
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
@@ -110,6 +110,26 @@ onMounted(() => {
   }
   if (options.projectName) {
     projectName.value = decodeURIComponent(options.projectName)
+  }
+
+  // 检查该项目是否有已审核通过的合同，没有则不允许提交增减项
+  if (projectId.value) {
+    try {
+      const token = uni.getStorageSync('token')
+      const res = await uni.request({
+        url: `/api/contracts/by-project/${projectId.value}`,
+        header: { Authorization: token },
+      })
+      const contracts = res.data?.data || []
+      const hasApproved = contracts.some(c => c.review_status === 'approved')
+      if (!hasApproved) {
+        uni.showToast({ title: '该项目暂无已审核合同，暂不能提交增减项', icon: 'none', duration: 2500 })
+        setTimeout(() => uni.navigateBack(), 2500)
+        return
+      }
+    } catch (e) {
+      console.error('检查合同失败', e)
+    }
   }
 })
 

@@ -216,7 +216,7 @@ const quickEntries = [
   { label: '派工管理', icon: '👷', bg: '#FEF3C7', action: 'newDispatch' },
   { label: '主材管理', icon: '🧱', bg: '#EDE9FE', action: 'newMaterial' },
   { label: '验收管理', icon: '✅', bg: '#D1FAE5', action: 'newAccept' },
-  { label: '变更单', icon: '📄', bg: '#FEF3C7', action: 'newChange' },
+  { label: '增减项', icon: '📄', bg: '#FEF3C7', action: 'newChange' },
   { label: '收支记录', icon: '💰', bg: '#DBEAFE', action: 'newFinance' },
   { label: '催收记录', icon: '💰', bg: '#DBEAFE', action: 'newCollection' },
   { label: '通讯录', icon: '📒', bg: '#EDE9FE', action: 'addressbook' },
@@ -309,7 +309,9 @@ const handleQuick = (item) => {
     }); break;
     case 'newMaterial': openMaterialPicker(); break;
     case 'newAccept': uni.navigateTo({ url: '/pages/acceptance/list' }); break;
-    case 'newChange': uni.navigateTo({ url: '/pages/change/list' }); break;
+    case 'newChange': openProjectPicker('选择项目后添加增减项', (p) => {
+      uni.navigateTo({ url: `/pages/contracts/contract-change-add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
     case 'newFinance': openProjectPicker('选择项目后添加收支记录', (p) => {
       uni.navigateTo({ url: `/pages/finance/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
