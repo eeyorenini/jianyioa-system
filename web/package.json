@@ -1,6 +1,6 @@
 {
   "name": "oa-system-web",
-  "version": "1.0.3",
+  "version": "2.1.26",
   "type": "module",
   "scripts": {
     "dev": "vite",
