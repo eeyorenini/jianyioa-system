@@ -5,6 +5,7 @@ interface UserInfo {
   username: string;
   name: string;
   role_name: string;
+  role_code: string;
   position: string;
   phone: string;
   token: string;
@@ -16,11 +17,30 @@ const state = reactive<UserInfo>({
   username: "",
   name: "",
   role_name: "",
+  role_code: "",
   position: "",
   phone: "",
   token: "",
   permissions: [],
 });
+
+// 借权相关状态（仅 admin 使用）
+const imp = reactive({
+  isAdmin: false,
+  impersonating: false,
+  impersonatorName: "", // 原管理员姓名
+  targetName: "",       // 当前借权对象的姓名
+  targetRole: "",       // 当前借权对象的角色名
+});
+
+const parsePerms = (perms: any): string[] => {
+  if (!perms) return [];
+  if (typeof perms === "string") {
+    try { return JSON.parse(perms); } catch { return []; }
+  }
+  if (Array.isArray(perms)) return perms;
+  return [];
+};
 
 export const useUserStore = () => {
   const setUser = (user: UserInfo) => {
@@ -28,18 +48,11 @@ export const useUserStore = () => {
     state.username = user.username;
     state.name = user.name;
     state.role_name = user.role_name || "";
+    state.role_code = (user as any).role_code || "";
     state.position = user.position || "";
     state.phone = user.phone || "";
     state.token = user.token;
-    // 解析权限列表（可能是 JSON 字符串或数组）
-    let perms: string[] = [];
-    if (user.permissions) {
-      if (typeof user.permissions === 'string') {
-        try { perms = JSON.parse(user.permissions); } catch { perms = []; }
-      } else if (Array.isArray(user.permissions)) {
-        perms = user.permissions;
-      }
-    }
+    const perms = parsePerms(user.permissions);
     state.permissions = perms;
     uni.setStorageSync("token", user.token);
     uni.setStorageSync("userInfo", {
@@ -47,6 +60,7 @@ export const useUserStore = () => {
       username: user.username,
       name: user.name,
       role_name: user.role_name,
+      role_code: (user as any).role_code || "",
       position: user.position,
       phone: user.phone,
       permissions: perms,
@@ -60,18 +74,36 @@ export const useUserStore = () => {
       state.username = info.username;
       state.name = info.name;
       state.role_name = info.role_name;
+      state.role_code = info.role_code || "";
       state.position = info.position;
       state.phone = info.phone;
       state.token = uni.getStorageSync("token") || "";
-      let perms: string[] = [];
-      if (info.permissions) {
-        if (typeof info.permissions === 'string') {
-          try { perms = JSON.parse(info.permissions); } catch { perms = []; }
-        } else if (Array.isArray(info.permissions)) {
-          perms = info.permissions;
-        }
+      state.permissions = parsePerms(info.permissions);
+    }
+    // 恢复借权状态
+    const impFlag = uni.getStorageSync("impersonating");
+    const impAdmin = uni.getStorageSync("impersonator");
+    imp.impersonating = !!impFlag;
+    imp.impersonatorName = impAdmin?.name || "";
+    if (imp.impersonating) {
+      imp.targetName = state.name;
+      imp.targetRole = state.role_name || state.position || "";
+    }
+  };
+
+  // 从服务端拉取"当前身份"，判断是否管理员（权威判定）
+  const fetchMe = async () => {
+    try {
+      if (!state.id) return;
+      const res: any = await uni.request({
+        url: "/api/me",
+        header: { "x-user-id": String(state.id) },
+      });
+      if (res?.data && typeof res.data.is_admin !== "undefined") {
+        imp.isAdmin = !!res.data.is_admin;
       }
-      state.permissions = perms;
+    } catch (e) {
+      // 忽略
     }
   };
 
@@ -89,12 +121,20 @@ export const useUserStore = () => {
     state.username = "";
     state.name = "";
     state.role_name = "";
+    state.role_code = "";
     state.position = "";
     state.phone = "";
     state.token = "";
     state.permissions = [];
+    imp.isAdmin = false;
+    imp.impersonating = false;
+    imp.impersonatorName = "";
+    imp.targetName = "";
+    imp.targetRole = "";
     uni.removeStorageSync("token");
     uni.removeStorageSync("userInfo");
+    uni.removeStorageSync("impersonator");
+    uni.removeStorageSync("impersonating");
     uni.reLaunch({ url: "/pages/login/login" });
   };
 
@@ -102,12 +142,70 @@ export const useUserStore = () => {
     return state.permissions.includes(perm);
   };
 
+  // 开始借权：保存原管理员身份，切换到目标员工
+  const startImpersonate = (targetUser: any) => {
+    const adminInfo = {
+      id: state.id,
+      username: state.username,
+      name: state.name,
+      role_name: state.role_name,
+      role_code: state.role_code,
+      position: state.position,
+      phone: state.phone,
+      permissions: state.permissions,
+    };
+    uni.setStorageSync("impersonator", adminInfo);
+    uni.setStorageSync("impersonating", "1");
+    setUser({
+      id: targetUser.id,
+      username: targetUser.username,
+      name: targetUser.name,
+      role_name: targetUser.role_name || "",
+      role_code: targetUser.role_code || "",
+      position: targetUser.position || "",
+      phone: targetUser.phone || "",
+      token: "logged-in",
+      permissions: targetUser.permissions || [],
+    } as any);
+    imp.impersonating = true;
+    imp.impersonatorName = adminInfo.name || "";
+    imp.targetName = targetUser.name || "";
+    imp.targetRole = targetUser.role_name || targetUser.position || "";
+  };
+
+  // 结束借权：恢复原管理员身份
+  const stopImpersonate = () => {
+    const adminInfo = uni.getStorageSync("impersonator");
+    uni.removeStorageSync("impersonator");
+    uni.removeStorageSync("impersonating");
+    imp.impersonating = false;
+    imp.targetName = "";
+    imp.targetRole = "";
+    if (adminInfo) {
+      setUser({
+        id: adminInfo.id,
+        username: adminInfo.username,
+        name: adminInfo.name,
+        role_name: adminInfo.role_name,
+        role_code: adminInfo.role_code,
+        position: adminInfo.position,
+        phone: adminInfo.phone,
+        token: "logged-in",
+        permissions: adminInfo.permissions || [],
+      } as any);
+    }
+  };
+
   return {
     state,
+    imp,
     setUser,
     loadUser,
+    fetchMe,
     checkAuth,
     logout,
     hasPermission,
+    startImpersonate,
+    stopImpersonate,
   };
 };

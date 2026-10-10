@@ -10,6 +10,15 @@
       </view>
     </view>
 
+    <!-- 借权模式横幅 -->
+    <view v-if="imp.impersonating" class="imp-banner" @click="exitImpersonate">
+      <text class="imp-icon">🔑</text>
+      <view class="imp-text">
+        <text class="imp-title">借权模式中</text>
+        <text class="imp-sub">当前身份：{{ imp.targetName }}（{{ imp.targetRole || '无角色' }}）· 点此结束</text>
+      </view>
+    </view>
+
     <!-- 顶部背景 -->
     <view class="home-header">
       <view class="header-top">
@@ -156,8 +165,30 @@ import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 
 const userStore = useUserStore();
+const imp = userStore.imp;
 const userName = computed(() => userStore.state.name || '用户');
 const roleName = computed(() => userStore.state.position || userStore.state.role_name || '未知');
+
+const exitImpersonate = () => {
+  uni.showModal({
+    title: '结束借权',
+    content: '确定回到管理员身份？',
+    success: (r) => {
+      if (!r.confirm) return;
+      uni.request({
+        url: '/api/admin/impersonate/stop',
+        method: 'POST',
+        header: { 'Content-Type': 'application/json' },
+        data: { target_employee_id: userStore.state.id },
+        complete: () => {
+          userStore.stopImpersonate();
+          uni.showToast({ title: '已结束借权', icon: 'none' });
+          setTimeout(() => { uni.reLaunch({ url: '/pages/home/index' }); }, 500);
+        },
+      });
+    },
+  });
+};
 
 const unreadCount = ref(0);
 
@@ -201,7 +232,7 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); });
+onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); userStore.fetchMe(); });
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
@@ -854,6 +885,19 @@ const goProject = (id) => {
   font-size: 11px;
   color: #999;
 }
+
+/* 借权模式横幅 */
+.imp-banner {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #F59E0B, #EF4444);
+  color: #fff;
+  padding: 10px 16px;
+}
+.imp-banner .imp-icon { font-size: 18px; margin-right: 8px; }
+.imp-banner .imp-text { flex: 1; display: flex; flex-direction: column; }
+.imp-banner .imp-title { font-size: 13px; font-weight: 700; }
+.imp-banner .imp-sub { font-size: 11px; opacity: 0.92; margin-top: 1px; }
 
 /* 顶部导航 */
 .nav-bar {

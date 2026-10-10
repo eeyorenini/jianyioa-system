@@ -10,6 +10,16 @@
       </view>
     </view>
 
+    <!-- 借权模式横幅 -->
+    <view v-if="imp.impersonating" class="imp-banner">
+      <text class="imp-icon">🔑</text>
+      <view class="imp-text">
+        <text class="imp-title">借权模式中</text>
+        <text class="imp-sub">当前身份：{{ imp.targetName }}（{{ imp.targetRole || '无角色' }}）</text>
+      </view>
+      <view class="imp-exit" @click="exitImpersonate">结束</view>
+    </view>
+
     <!-- 个人信息卡片 -->
     <view class="profile-card">
       <view class="profile-avatar">{{ avatarText }}</view>
@@ -44,9 +54,14 @@
           <text class="menu-row-label">数据报表</text>
           <text class="menu-row-arrow">›</text>
         </view>
-        <view class="menu-row" @click="showRolePicker">
-          <text class="menu-row-icon">👤</text>
-          <text class="menu-row-label">切换角色</text>
+        <view v-if="imp.isAdmin && !imp.impersonating" class="menu-row" @click="showBorrowPicker">
+          <text class="menu-row-icon">🔑</text>
+          <text class="menu-row-label">借权测试（管理员）</text>
+          <text class="menu-row-arrow">›</text>
+        </view>
+        <view v-if="imp.impersonating" class="menu-row" @click="exitImpersonate">
+          <text class="menu-row-icon">↩️</text>
+          <text class="menu-row-label">结束借权（回到管理员）</text>
           <text class="menu-row-arrow">›</text>
         </view>
         <view class="menu-row" @click="logout">
@@ -62,13 +77,13 @@
       <text>简逸装饰 · 工地管理系统 v1.0</text>
     </view>
 
-    <!-- 角色选择弹窗 -->
+    <!-- 借权对象选择弹窗（员工列表） -->
     <BottomPicker
-      v-model:visible="rolePicker.visible"
-      :title="rolePicker.title"
-      :items="rolePicker.items"
-      @select="onRoleSelect"
-      @cancel="rolePicker.visible = false"
+      v-model:visible="borrowPicker.visible"
+      :title="borrowPicker.title"
+      :items="borrowPicker.items"
+      @select="onBorrowSelect"
+      @cancel="borrowPicker.visible = false"
     />
   </view>
 </template>
@@ -80,6 +95,7 @@ import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 
 const userStore = useUserStore();
+const imp = userStore.imp;
 const userName = computed(() => userStore.state.name || '用户');
 const roleName = computed(() => userStore.state.position || userStore.state.role_name || '未知');
 const avatarText = computed(() => (userName.value || 'U').substring(0, 1).toUpperCase());
@@ -105,8 +121,8 @@ const loadUnread = () => {
   });
 };
 
-onMounted(() => loadUnread());
-onShow(() => loadUnread());
+onMounted(() => { loadUnread(); userStore.fetchMe(); });
+onShow(() => { loadUnread(); userStore.fetchMe(); });
 
 const goMessage = () => {
   uni.navigateTo({ url: '/pages/message/list' });
@@ -154,34 +170,86 @@ const goPage = (url) => {
   }
 };
 
-const showRolePicker = () => {
-  rolePicker.value = {
-    visible: true,
-    title: '切换角色',
-    items: [
-      { name: '管理员', icon: '👑', value: '管理员' },
-      { name: '设计师', icon: '✏️', value: '设计师' },
-      { name: '工长', icon: '👷', value: '工长' },
-      { name: '监理', icon: '🔍', value: '监理' },
-      { name: '业主', icon: '🏠', value: '业主' },
-      { name: '主材', icon: '🧱', value: '主材' },
-      { name: '财务', icon: '💰', value: '财务' },
-      { name: '助理', icon: '📋', value: '助理' },
-    ],
-  };
+// ====== 管理员借权（仅 admin 可用；按"具体员工账号"借权） ======
+const borrowPicker = ref({ visible: false, title: '选择借权对象', items: [] });
+const borrowLoading = ref(false);
+
+const showBorrowPicker = async () => {
+  if (borrowLoading.value) return;
+  borrowLoading.value = true;
+  uni.showLoading({ title: '加载中...' });
+  try {
+    const res = await uni.request({ url: '/api/admin/impersonate-targets' });
+    uni.hideLoading();
+    const list = Array.isArray(res.data) ? res.data : [];
+    if (!list.length) {
+      uni.showToast({ title: '暂无可借权员工', icon: 'none' });
+      return;
+    }
+    borrowPicker.value = {
+      visible: true,
+      title: '选择借权的员工账号',
+      items: list.map((e) => ({
+        name: `${e.name}（${e.role_name || '无角色'}）`,
+        desc: `${e.username}${e.position ? ' · ' + e.position : ''}`,
+        icon: e.role_code === 'admin' ? '👑' : '👤',
+        value: e.id,
+      })),
+    };
+  } catch (e) {
+    uni.hideLoading();
+    uni.showToast({ title: '加载失败', icon: 'none' });
+  } finally {
+    borrowLoading.value = false;
+  }
 };
 
-const rolePicker = ref({
-  visible: false,
-  title: '切换角色',
-  items: [],
-});
+const onBorrowSelect = async ({ item }) => {
+  borrowPicker.value.visible = false;
+  const targetId = item.value;
+  if (!targetId) return;
+  uni.showLoading({ title: '切换中...' });
+  try {
+    const res = await uni.request({
+      url: '/api/admin/impersonate',
+      method: 'POST',
+      header: { 'Content-Type': 'application/json' },
+      data: { target_employee_id: targetId },
+    });
+    uni.hideLoading();
+    const d = res.data || {};
+    if (!d.success || !d.user) {
+      uni.showToast({ title: d.error || '借权失败', icon: 'none' });
+      return;
+    }
+    userStore.startImpersonate(d.user);
+    uni.showToast({ title: `已借权为 ${d.user.name}`, icon: 'none' });
+    setTimeout(() => { uni.reLaunch({ url: '/pages/home/index' }); }, 600);
+  } catch (e) {
+    uni.hideLoading();
+    uni.showToast({ title: '借权失败', icon: 'none' });
+  }
+};
 
-const onRoleSelect = ({ item }) => {
-  rolePicker.value.visible = false;
-  userStore.state.role_name = item.value;
-  userStore.state.position = item.value;
-  uni.showToast({ title: `已切换为 ${item.value}`, icon: 'none' });
+const exitImpersonate = () => {
+  uni.showModal({
+    title: '结束借权',
+    content: '确定回到管理员身份？',
+    success: (r) => {
+      if (!r.confirm) return;
+      uni.request({
+        url: '/api/admin/impersonate/stop',
+        method: 'POST',
+        header: { 'Content-Type': 'application/json' },
+        data: { target_employee_id: userStore.state.id },
+        complete: () => {
+          userStore.stopImpersonate();
+          uni.showToast({ title: '已结束借权', icon: 'none' });
+          setTimeout(() => { uni.reLaunch({ url: '/pages/home/index' }); }, 500);
+        },
+      });
+    },
+  });
 };
 
 const logout = () => {
@@ -250,6 +318,29 @@ const goBack = () => {
   font-weight: 700;
   color: #fff;
   margin-bottom: 6px;
+}
+
+/* 借权模式横幅 */
+.imp-banner {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #F59E0B, #EF4444);
+  color: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
+}
+.imp-banner .imp-icon { font-size: 20px; margin-right: 10px; }
+.imp-banner .imp-text { flex: 1; display: flex; flex-direction: column; }
+.imp-banner .imp-title { font-size: 14px; font-weight: 700; }
+.imp-banner .imp-sub { font-size: 12px; opacity: 0.9; margin-top: 2px; }
+.imp-banner .imp-exit {
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 16px;
+  padding: 5px 14px;
 }
 
 .role-badge {
