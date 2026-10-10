@@ -29,6 +29,7 @@
           <el-option label="已通过" value="approved" />
           <el-option label="已拒绝" value="rejected" />
           <el-option label="报销中" value="reimbursing" />
+          <el-option label="受理中" value="finance_confirmed" />
           <el-option label="已报销" value="reimbursed" />
         </el-select>
         <el-input v-model="keyword" placeholder="项目名称/申请人" style="width:200px;" clearable @clear="loadData" @keyup.enter="loadData">
@@ -63,7 +64,8 @@
             <el-button v-if="activeTab === 'my' && (row._isAdmin || row._isApplicant) && (row.status === 'pending' || row.status === 'rejected')" size="small" type="danger" @click.stop="deleteRow(row)">删除</el-button>
             <el-button v-if="row._canApprove && row.status === 'pending'" size="small" type="success" @click.stop="showApproveDialog(row)">审核</el-button>
             <el-button v-if="row._isApplicant && row.status === 'approved'" size="small" type="warning" @click.stop="showReimburseDialog(row)">上传报销</el-button>
-            <el-button v-if="row._canFinance && row.status === 'reimbursing'" size="small" type="success" @click.stop="showFinanceDialog(row)">确认报销</el-button>
+            <el-button v-if="row._canFinance && row.status === 'reimbursing'" size="small" type="success" @click.stop="showFinanceAcceptDialog(row)">财务受理</el-button>
+            <el-button v-if="row._canFinance && row.status === 'finance_confirmed'" size="small" type="warning" @click.stop="showFinanceConfirmDialog(row)">上传回执</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -136,7 +138,8 @@
           <el-button v-if="detail._isApplicant && detail.status === 'rejected'" type="primary" @click="handleResubmit">重新提交</el-button>
           <el-button v-if="detail._isApplicant && detail.status === 'approved'" type="warning" @click="showReimburseDialog(detail)">上传报销单</el-button>
           <el-button v-if="detail._canApprove && detail.status === 'pending'" type="success" @click="showApproveDialog(detail)">审核</el-button>
-          <el-button v-if="detail._canFinance && detail.status === 'reimbursing'" type="success" @click="showFinanceDialog(detail)">确认报销</el-button>
+          <el-button v-if="detail._canFinance && detail.status === 'reimbursing'" type="success" @click="showFinanceAcceptDialog(detail)">财务受理</el-button>
+          <el-button v-if="detail._canFinance && detail.status === 'finance_confirmed'" type="warning" @click="showFinanceConfirmDialog(detail)">上传回执</el-button>
           <el-button v-if="detail._isApplicant && detail.status === 'pending'" type="danger" @click="handleDelete">删除</el-button>
         </div>
       </template>
@@ -272,8 +275,8 @@
       </template>
     </el-dialog>
 
-    <!-- 财务确认弹窗 -->
-    <el-dialog v-model="financeVisible" title="财务确认报销" width="450px">
+    <!-- 财务受理弹窗（报销中 → 受理中） -->
+    <el-dialog v-model="financeAcceptVisible" title="财务受理" width="450px">
       <el-form :model="financeForm" label-width="90px">
         <el-form-item label="项目">{{ financeForm.project_name }}</el-form-item>
         <el-form-item label="实付金额" required>
@@ -284,8 +287,34 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="financeVisible = false">取消</el-button>
-        <el-button type="success" :loading="submitting" @click="handleFinanceConfirm">确认报销</el-button>
+        <el-button @click="financeAcceptVisible = false">取消</el-button>
+        <el-button type="success" :loading="submitting" @click="handleFinanceAccept">确认受理</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 上传报销回执弹窗（受理中 → 已完结） -->
+    <el-dialog v-model="financeConfirmVisible" title="上传报销回执" width="500px">
+      <el-form :model="financeForm" label-width="90px">
+        <el-form-item label="项目">{{ financeForm.project_name }}</el-form-item>
+        <el-form-item label="实付金额">¥{{ formatNumber(financeForm.actual_amount) }}</el-form-item>
+        <el-form-item label="报销回执" required>
+          <el-upload
+            action="/api/upload-image"
+            :headers="{ 'x-user-id': userId }"
+            list-type="picture-card"
+            :file-list="financeFileList"
+            :on-success="onFinanceUploadSuccess"
+            :on-remove="onFinanceUploadRemove"
+            multiple
+            accept="image/*"
+          >
+            <el-icon><Plus /></el-icon>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="financeConfirmVisible = false">取消</el-button>
+        <el-button type="success" :loading="submitting" @click="handleFinanceConfirm">确认完成</el-button>
       </template>
     </el-dialog>
   </div>
@@ -340,14 +369,17 @@ const approveForm = ref({ id: null, project_name: '', total_amount: 0, action: '
 
 // 报销
 const reimburseVisible = ref(false)
-const reimburseForm = ref({ actual_amount: null, financial_notes: '' })
+const reimburseForm = ref({ id: null, actual_amount: null, financial_notes: '' })
 const uploadRef = ref()
 const uploadFileList = ref([])
 const uploadedImages = ref([])
 
-// 财务确认
-const financeVisible = ref(false)
+// 财务受理 / 上传回执
+const financeAcceptVisible = ref(false)
+const financeConfirmVisible = ref(false)
 const financeForm = ref({ id: null, project_name: '', actual_amount: null, financial_notes: '' })
+const financeFileList = ref([])
+const financeUploadedImages = ref([])
 
 const totalAmount = computed(() => {
   return form.value.items.reduce((sum, item) => {
@@ -364,11 +396,11 @@ const reimburseImages = computed(() => {
 })
 
 function statusText(s) {
-  const map = { pending: '待审核', approved: '已通过', rejected: '已拒绝', reimbursing: '报销中', reimbursed: '已报销' }
+  const map = { pending: '待审核', approved: '已通过', rejected: '已拒绝', reimbursing: '报销中', finance_confirmed: '受理中', reimbursed: '已报销' }
   return map[s] || s
 }
 function statusTagType(s) {
-  const map = { pending: 'warning', approved: 'success', rejected: 'danger', reimbursing: 'primary', reimbursed: 'info' }
+  const map = { pending: 'warning', approved: 'success', rejected: 'danger', reimbursing: 'primary', finance_confirmed: 'warning', reimbursed: 'info' }
   return map[s] || ''
 }
 function formatNumber(v) {
@@ -615,7 +647,7 @@ async function handleApprove() {
 
 // 报销上传
 function showReimburseDialog(row) {
-  reimburseForm.value = { actual_amount: parseFloat(row.total_amount) || 0, financial_notes: '' }
+  reimburseForm.value = { id: row.id, actual_amount: parseFloat(row.total_amount) || 0, financial_notes: '' }
   uploadFileList.value = []
   uploadedImages.value = []
   reimburseVisible.value = true
@@ -647,15 +679,10 @@ async function handleReimburse() {
   if (uploadedImages.value.length === 0) { ElMessage.warning('请上传报销凭证'); return }
   submitting.value = true
   try {
-    // 用 FormData 提交
-    const fd = new FormData()
-    fd.append('actual_amount', reimburseForm.value.actual_amount || 0)
-    fd.append('financial_notes', reimburseForm.value.financial_notes || '')
-    for (const img of uploadedImages.value) {
-      // 如果是已有URL（之前上传过的），直接提交URL字符串
-    }
-    await request.post('/purchase-requests/' + detail.value.id + '/reimburse', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+    await request.post('/purchase-requests/' + reimburseForm.value.id + '/reimburse', {
+      actual_amount: reimburseForm.value.actual_amount || 0,
+      financial_notes: reimburseForm.value.financial_notes || '',
+      images: JSON.stringify(uploadedImages.value)
     })
     ElMessage.success('上传成功')
     reimburseVisible.value = false
@@ -666,26 +693,63 @@ async function handleReimburse() {
   }
 }
 
-// 财务确认
-function showFinanceDialog(row) {
+// 财务受理（报销中 → 受理中）
+function showFinanceAcceptDialog(row) {
   financeForm.value = {
     id: row.id,
     project_name: row.project_name,
     actual_amount: row.reimbursement?.actual_amount ? parseFloat(row.reimbursement.actual_amount) : parseFloat(row.total_amount),
     financial_notes: row.reimbursement?.financial_notes || ''
   }
-  financeVisible.value = true
+  financeAcceptVisible.value = true
+}
+
+async function handleFinanceAccept() {
+  submitting.value = true
+  try {
+    await request.post('/purchase-requests/' + financeForm.value.id + '/finance-accept', {
+      finance_amount: financeForm.value.actual_amount,
+      financial_notes: financeForm.value.financial_notes || ''
+    })
+    ElMessage.success('受理成功')
+    financeAcceptVisible.value = false
+    detailVisible.value = false
+    loadData()
+  } catch (e) { /* interceptor */ } finally {
+    submitting.value = false
+  }
+}
+
+// 上传报销回执（受理中 → 已完结）
+function showFinanceConfirmDialog(row) {
+  financeForm.value = {
+    id: row.id,
+    project_name: row.project_name,
+    actual_amount: row.reimbursement?.actual_amount ? parseFloat(row.reimbursement.actual_amount) : parseFloat(row.total_amount),
+    financial_notes: row.reimbursement?.financial_notes || ''
+  }
+  financeFileList.value = []
+  financeUploadedImages.value = []
+  financeConfirmVisible.value = true
+}
+
+function onFinanceUploadSuccess(res) {
+  if (res && res.url) financeUploadedImages.value.push(res.url)
+}
+
+function onFinanceUploadRemove(file, files) {
+  financeUploadedImages.value = files.map(f => f.url || (f.response && f.response.url)).filter(Boolean)
 }
 
 async function handleFinanceConfirm() {
+  if (financeUploadedImages.value.length === 0) { ElMessage.warning('请上传报销回执'); return }
   submitting.value = true
   try {
-    await request.put('/purchase-requests/' + financeForm.value.id + '/finance-confirm', {
-      actual_amount: financeForm.value.actual_amount,
-      financial_notes: financeForm.value.financial_notes
+    await request.post('/purchase-requests/' + financeForm.value.id + '/finance-confirm', {
+      images: JSON.stringify(financeUploadedImages.value)
     })
     ElMessage.success('财务确认完成')
-    financeVisible.value = false
+    financeConfirmVisible.value = false
     detailVisible.value = false
     loadData()
   } catch (e) { /* interceptor */ } finally {

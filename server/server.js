@@ -3769,7 +3769,8 @@ app.get('/api/me', async (req, res) => {
       FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?
     `).get(userId);
     if (!emp) return res.status(404).json({ error: '用户不存在' });
-    res.json({ ...emp, is_admin: await isAdmin(userId) });
+    const permissions = await getUserPermissions(userId);
+    res.json({ ...emp, is_admin: await isAdmin(userId), permissions });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8750,6 +8751,175 @@ app.get('/api/mobile/home-stats', async (req, res) => {
   } catch (err) {
     console.error('[mobile/home-stats] error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// 统一待办中心（只读聚合）— 2026-10-10
+// 目的：把各模块「待我处理」的条目统一收口，按权限过滤后返回；
+//       仅做只读聚合，不修改任何现有接口与审批业务逻辑。
+// ============================================================
+async function __todoCounts(userId, perms, admin) {
+  const can = (p) => admin || (perms || []).includes(p);
+  const out = {};
+  // 1) 采购待审核（purchase:approve）
+  if (can('purchase:approve')) {
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='pending'");
+    out.purchase_approve = { key: 'purchase_approve', label: '采购待审核', icon: '📦', type: 'purchase_approve', count: Number(r.c) || 0 };
+  }
+  // 2) 报销待确认 / 待上传回执（purchase:finance）
+  if (can('purchase:finance')) {
+    const [[a]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='reimbursing'");
+    out.purchase_reimburse = { key: 'purchase_reimburse', label: '报销待确认', icon: '🧾', type: 'purchase_reimburse', count: Number(a.c) || 0 };
+    const [[b]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='finance_confirmed'");
+    out.purchase_receipt = { key: 'purchase_receipt', label: '待上传回执', icon: '🏦', type: 'purchase_receipt', count: Number(b.c) || 0 };
+  }
+  // 3) 通用审批（approver_ids 含当前用户）
+  {
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM approvals WHERE status='待审批' AND FIND_IN_SET(?, approver_ids)", [String(userId)]);
+    out.approval = { key: 'approval', label: '通用审批', icon: '📝', type: 'approval', count: Number(r.c) || 0 };
+  }
+  // 4) 派工待审核（dispatch:approve）
+  if (can('dispatch:approve')) {
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM dispatches WHERE status='pending'");
+    out.dispatch = { key: 'dispatch', label: '派工待审核', icon: '👷', type: 'dispatch', count: Number(r.c) || 0 };
+  }
+  return out;
+}
+
+const __fmtTodoTime = (t) => {
+  if (!t) return '';
+  try { return String(t).replace('T', ' ').substring(0, 16); } catch { return String(t); }
+};
+
+// GET /api/todo/count — 待办数量汇总（用于首页角标）
+app.get('/api/todo/count', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const admin = await isAdmin(userId);
+    const map = await __todoCounts(userId, perms, admin);
+    const total = Object.values(map).reduce((s, g) => s + (g.count || 0), 0);
+    res.json({ code: 0, total, groups: map });
+  } catch (e) {
+    console.error('[todo/count] error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/todo/center — 待办中心列表（按权限分组返回）
+app.get('/api/todo/center', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const admin = await isAdmin(userId);
+    const can = (p) => admin || (perms || []).includes(p);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
+    const counts = await __todoCounts(userId, perms, admin);
+    const groups = [];
+
+    // 1) 采购待审核
+    if (can('purchase:approve')) {
+      const [rows] = await pool.query(
+        `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
+                (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
+         FROM purchase_requests pr WHERE pr.status = 'pending'
+         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.purchase_approve,
+        items: rows.map(r => ({
+          id: r.id, type: 'purchase_approve',
+          title: r.material_name || '采购申请',
+          subtitle: [r.project_name, r.applicant_name ? ('申请人：' + r.applicant_name) : ''].filter(Boolean).join(' · '),
+          amount: r.total_amount != null ? Number(r.total_amount) : null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/purchase/detail?id=${r.id}`
+        }))
+      });
+    }
+
+    // 2) 报销待确认
+    if (can('purchase:finance')) {
+      const [rows] = await pool.query(
+        `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
+                (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
+         FROM purchase_requests pr WHERE pr.status = 'reimbursing'
+         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.purchase_reimburse,
+        items: rows.map(r => ({
+          id: r.id, type: 'purchase_reimburse',
+          title: r.material_name || '采购报销',
+          subtitle: [r.project_name, r.applicant_name ? ('申请人：' + r.applicant_name) : ''].filter(Boolean).join(' · '),
+          amount: r.total_amount != null ? Number(r.total_amount) : null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/purchase/detail?id=${r.id}`
+        }))
+      });
+
+      // 3) 待上传回执（财务）
+      const [rows2] = await pool.query(
+        `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
+                (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
+         FROM purchase_requests pr WHERE pr.status = 'finance_confirmed'
+         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.purchase_receipt,
+        items: rows2.map(r => ({
+          id: r.id, type: 'purchase_receipt',
+          title: r.material_name || '采购回执',
+          subtitle: [r.project_name, r.applicant_name ? ('申请人：' + r.applicant_name) : ''].filter(Boolean).join(' · '),
+          amount: r.total_amount != null ? Number(r.total_amount) : null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/purchase/detail?id=${r.id}`
+        }))
+      });
+    }
+
+    // 4) 通用审批
+    {
+      const [rows] = await pool.query(
+        `SELECT id, title, type, applicant_name, amount, created_at
+         FROM approvals WHERE status = '待审批' AND FIND_IN_SET(?, approver_ids)
+         ORDER BY created_at DESC LIMIT ?`, [String(userId), limit]);
+      groups.push({
+        ...counts.approval,
+        items: rows.map(r => ({
+          id: r.id, type: 'approval',
+          title: r.title || '审批申请',
+          subtitle: [r.type, r.applicant_name ? ('申请人：' + r.applicant_name) : ''].filter(Boolean).join(' · '),
+          amount: r.amount != null ? Number(r.amount) : null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/approval/detail?id=${r.id}&tab=todo`
+        }))
+      });
+    }
+
+    // 5) 派工待审核
+    if (can('dispatch:approve')) {
+      const [rows] = await pool.query(
+        `SELECT id, project_name, content, worker, created_at
+         FROM dispatches WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.dispatch,
+        items: rows.map(r => ({
+          id: r.id, type: 'dispatch',
+          title: r.content || '派工单',
+          subtitle: [r.project_name, r.worker].filter(Boolean).join(' · '),
+          amount: null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/dispatch/detail?id=${r.id}`
+        }))
+      });
+    }
+
+    const total = groups.reduce((s, g) => s + (g.count || 0), 0);
+    res.json({ code: 0, total, groups, generated_at: new Date().toISOString() });
+  } catch (e) {
+    console.error('[todo/center] error:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
