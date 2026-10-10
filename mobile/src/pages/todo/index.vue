@@ -99,6 +99,7 @@ const visibleGroups = computed(() => {
   // 仅显示有内容的分类；选中某个分类时只显示该分类
   let list = groups.value.filter(g => g.count > 0 && g.items && g.items.length)
   if (activeKey.value !== 'all') {
+    // 切换tab时显示该分类全部内容（不过滤items是否为空，因为数据是分页加载的）
     list = groups.value.filter(g => g.key === activeKey.value)
   }
   return list

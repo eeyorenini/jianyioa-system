@@ -29,7 +29,7 @@
         <view class="role-badge" :class="getRoleClass(roleName)">{{ roleName }}</view>
       </view>
 
-      <!-- 核心数据统计 -->
+      <!-- 核心数据统计（按角色差异化：财务视角侧重金额，其他视角侧重项目） -->
       <view class="stats-row">
         <view class="stat-card" @click="goProjects('进行中')">
           <text class="stat-num success">{{ stats.inProgress }}</text>
@@ -47,8 +47,9 @@
         </view>
         <view class="stat-divider"></view>
         <view class="stat-card" @click="goFinance">
-          <text class="stat-num">{{ stats.pendingPay }}</text>
-          <text class="stat-label">待回款</text>
+          <text v-if="isFinance" class="stat-num">{{ fmtMoney(stats.pendingPayAmount) }}</text>
+          <text v-else class="stat-num">{{ stats.pendingPay }}</text>
+          <text class="stat-label">{{ isFinance ? '待报销金额' : '待回款' }}</text>
         </view>
       </view>
 
@@ -66,30 +67,43 @@
       </view>
     </view>
 
-    <!-- 待办事项 -->
+    <!-- 待办事项（按角色 + 项目相关，区分审批流 vs 项目事项） -->
     <view class="todo-section">
       <view class="section-title todo-title-row">
         <view class="todo-title-left">
           <text>待办事项</text>
-          <text class="todo-count" v-if="todoTotal || todos.length">{{ todoTotal || todos.length }}</text>
+          <text class="todo-count" v-if="todoTotal">{{ todoTotal }}</text>
         </view>
         <text class="todo-more" @click="goTodoCenter">全部 ›</text>
       </view>
-      <view class="todo-list" v-if="todos.length">
-        <view class="todo-item" v-for="todo in todos" :key="todo.id" @click="goTodo(todo)">
-          <view class="todo-left">
-            <view class="todo-priority" :class="`priority-${todo.priority}`"></view>
-            <view class="todo-content">
-              <text class="todo-title">{{ todo.title }}</text>
-              <text class="todo-meta">{{ todo.project }} · {{ todo.time }}</text>
-            </view>
-          </view>
-          <text class="todo-arrow">›</text>
+      <view v-if="!todosLoaded">
+        <view class="empty-state"><text class="empty-text">加载中...</text></view>
+      </view>
+      <view v-else-if="displayTodos.length === 0">
+        <view class="empty-state">
+          <text class="empty-icon">✓</text>
+          <text class="empty-text">暂无待办事项</text>
         </view>
       </view>
-      <view class="empty-state" v-else>
-        <text class="empty-icon">✓</text>
-        <text class="empty-text">暂无待办事项</text>
+      <view v-else>
+        <view v-for="section in displayTodos" :key="section.key">
+          <view class="todo-sub-title" v-if="displayTodos.length > 1 || section.key !== 'main'">
+            <text>{{ section.icon }} {{ section.label }}</text>
+            <text class="todo-sub-count" v-if="section.count > section.items.length">{{ section.count }}</text>
+          </view>
+          <view class="todo-list">
+            <view class="todo-item" v-for="todo in section.items" :key="section.key + '-' + todo.id" @click="goTodoUrl(todo)">
+              <view class="todo-left">
+                <view class="todo-priority" :class="`priority-${todo.priority || 'normal'}`"></view>
+                <view class="todo-content">
+                  <text class="todo-title">{{ todo.title }}</text>
+                  <text class="todo-meta">{{ todo.subtitle || '' }}<text v-if="todo.time"> · {{ todo.time }}</text></text>
+                </view>
+              </view>
+              <text class="todo-arrow">›</text>
+            </view>
+          </view>
+        </view>
       </view>
     </view>
 
@@ -207,7 +221,22 @@ const stats = ref({
   overdue: 0,
   pendingInspect: 0,
   pendingPay: '¥0',
+  pendingPayAmount: 0,
 });
+
+const isFinance = computed(() => {
+  const p = userStore.state.permissions || userStore.state.role_permissions || [];
+  if (Array.isArray(p) && p.includes('purchase:finance')) return true;
+  const code = userStore.state.role_code || '';
+  const name = userStore.state.role_name || '';
+  return code === 'finance' || name.includes('财务');
+});
+
+const fmtMoney = (v) => {
+  const n = Number(v) || 0;
+  if (n >= 10000) return '¥' + (n / 10000).toFixed(1) + '万';
+  return '¥' + n;
+};
 
 const getRoleClass = (role) => {
   if (role.includes('管理')) return 'role-admin';
@@ -235,29 +264,46 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); loadTodoCount(); userStore.fetchMe(); });
+onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); userStore.fetchMe(); });
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
 });
 
-// ====== 首页统计 / 待办 / 逾期预警：从后端拉真实数据 ======
+// ====== 首页统计 / 待办 / 逾期预警：统一从 /api/todo/center 拉（按角色 + 项目相关） ======
 const loadHomeStats = async () => {
   try {
     const res = await uni.request({
-      url: '/api/mobile/home-stats',
+      url: '/api/todo/center?limit=10',
       header: {
-        'x-user-role': userStore.state.role_name,
         'x-user-id': String(userStore.state.id),
       }
     });
-    if (res.data && !res.data.error) {
-      if (res.data.stats) stats.value = { ...stats.value, ...res.data.stats };
-      if (Array.isArray(res.data.todos)) todos.value = res.data.todos;
-      if (Array.isArray(res.data.warnings)) warnings.value = res.data.warnings;
+    const d = (res.data && res.data.code === 0) ? res.data : null;
+    if (!d) return;
+    // 1) stats
+    if (d.home && d.home.stats) stats.value = { ...stats.value, ...d.home.stats };
+    // 2) warnings（逾期预警）
+    if (d.home && Array.isArray(d.home.warnings)) warnings.value = d.home.warnings;
+    // 3) 待办列表：合并审批流 groups + 项目相关 home.sections
+    const merged = [];
+    // 审批流按权限：财务优先报销/回执；经理/设计师：采购审批；所有人：通用审批
+    for (const g of d.groups || []) {
+      if (g.items && g.items.length) merged.push({ key: g.key, label: g.label, icon: g.icon, count: g.count, items: g.items });
     }
+    // 项目相关（节点到期/待整改/我的派工）
+    for (const s of d.home?.sections || []) {
+      merged.push({ key: 'home_' + s.key, label: s.label, icon: s.icon, count: s.items.length, items: s.items });
+    }
+    todos.value = merged;
+    todosLoaded.value = true;
+    // 角标 = 审批流待办 + 项目事项 + 预警的总和
+    const projItems = (d.home?.sections || []).reduce((s, x) => s + (x.items?.length || 0), 0)
+    const warnCount = (d.home?.warnings || []).length
+    todoTotal.value = (d.total || 0) + projItems + warnCount
   } catch (e) {
     console.error('加载首页统计失败', e);
+    todosLoaded.value = true;
   }
 };
 
@@ -279,6 +325,23 @@ const quickEntries = [
 ];
 
 const todos = ref([]);
+const todosLoaded = ref(false);
+
+// 折叠展示：所有 section 合并到最多 8 条（首页只是入口，不堆太多）
+const displayTodos = computed(() => {
+  const out = [];
+  let total = 0;
+  const MAX = 8;
+  for (const sec of todos.value) {
+    const items = sec.items.slice(0, Math.max(0, MAX - total));
+    if (items.length > 0) {
+      out.push({ ...sec, items });
+      total += items.length;
+    }
+    if (total >= MAX) break;
+  }
+  return out;
+});
 
 const todoTotal = ref(0);
 
@@ -523,6 +586,28 @@ const goTodo = (todo) => {
   } else if (todo.type === 'inspect') {
     uni.navigateTo({ url: '/pages/inspection/detail' });
   }
+};
+
+// 通用：根据 todo.url 跳转（兼容字符串与对象）
+const goTodoUrl = (todo) => {
+  const u = todo && todo.url
+  if (u) {
+    if (u.startsWith('/pages/')) {
+      // /pages/.../detail?id=xx&y=zz
+      const [path, qs] = u.split('?')
+      const params = {}
+      if (qs) for (const kv of qs.split('&')) { const [k, v] = kv.split('='); if (k) params[k] = v }
+      if (path === '/pages/purchase/list' || path === '/pages/projects/list' || path === '/pages/inspection/list') {
+        uni.switchTab({ url: path })
+      } else {
+        uni.navigateTo({ url: path, params, success: () => {}, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } })
+      }
+    } else {
+      uni.navigateTo({ url: u })
+    }
+    return
+  }
+  goTodo(todo)
 };
 
 // 待办中心：汇总各模块待我处理的事项（按权限聚合）
@@ -787,6 +872,26 @@ const goProject = (id) => {
   align-items: center;
   padding: 24px 0;
   gap: 8px;
+}
+
+.todo-sub-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #1A1F36;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+.todo-sub-title:first-child { margin-top: 0; }
+.todo-sub-count {
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 10px;
+  border-radius: 10px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
 }
 
 .empty-icon {

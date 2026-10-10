@@ -135,7 +135,8 @@ const statusIcon = (s) => {
 
 const reimburseImages = computed(() => {
   try {
-    const raw = detail.value?.images
+    // 2026-10-10：申请人报销凭证在 reimbursement.images，detail.images 是申请材料图
+    const raw = detail.value?.reimbursement?.images
     if (!raw) return []
     const arr = Array.isArray(raw) ? raw : JSON.parse(raw)
     return arr.filter(Boolean)

@@ -286,8 +286,8 @@ const statusIcon = (s) => {
 
 const userInfo = computed(() => uni.getStorageSync('userInfo') || {})
 const isApplicant = computed(() => detail.value?.applicant_id === userInfo.value.id)
-const isApprover = computed(() => detail.value?.can_approve === true)
-const isFinance = computed(() => detail.value?.can_finance_confirm === true)
+const isApprover = computed(() => detail.value?._canApprove === true || detail.value?.can_approve === true)
+const isFinance = computed(() => detail.value?._canFinance === true || detail.value?.can_finance_confirm === true)
 const reimburseImages = computed(() => {
   try {
     // 报销凭证存在 reimbursement.images，不在 request.images
