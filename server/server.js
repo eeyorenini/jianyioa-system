@@ -126,6 +126,49 @@ const db = new Database();
 // ✅ 直接导出 pool 供外部 MySQL 查询用（如 notifications 表）
 const mysqlPool = pool;
 
+// ================================================================
+// 安全修复 2026-10-10：不再信任客户端传来的 x-user-role
+// 服务端按 x-user-id 解析"真实角色"，覆盖该请求头；客户端伪造一律无效。
+// （历史上约 18 处接口用 x-user-role==='admin' 判定管理员，存在越权隐患）
+// ================================================================
+const _authRoleCache = new Map(); // userId -> { username, role_code, ts }
+const _AUTH_ROLE_TTL = 60000;
+async function resolveAuthRole(userId) {
+  const cached = _authRoleCache.get(userId);
+  if (cached && Date.now() - cached.ts < _AUTH_ROLE_TTL) return cached;
+  const row = await db.prepare(
+    'SELECT e.username, r.code AS role_code FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?'
+  ).get(userId);
+  const info = {
+    username: row ? (row.username || '') : '',
+    role_code: row ? (row.role_code || '') : '',
+    ts: Date.now()
+  };
+  if (row) _authRoleCache.set(userId, info);
+  return info;
+}
+// 判定管理员：角色码为 admin，或登录名为 admin（兼容历史账号）
+function isAdminRoleInfo(info) {
+  return !!info && (info.role_code === 'admin' || info.username === 'admin');
+}
+// 角色/员工信息变更后清缓存
+function clearAuthRoleCache() { _authRoleCache.clear(); }
+
+app.use(async (req, res, next) => {
+  try {
+    const uid = parseInt(req.headers['x-user-id']);
+    if (uid && !isNaN(uid)) {
+      const info = await resolveAuthRole(uid);
+      req.headers['x-user-role'] = isAdminRoleInfo(info) ? 'admin' : (info.role_code || '');
+    } else if (req.headers['x-user-role']) {
+      delete req.headers['x-user-role'];
+    }
+  } catch (e) {
+    delete req.headers['x-user-role'];
+  }
+  next();
+});
+
 // 初始化数据库表结构（从 init.sql 读取）
 async function initDatabase() {
   // 先检查表是否已存在，避免重复执行 init.sql
@@ -1735,9 +1778,9 @@ const promiseTimeout = (ms, promise) =>
 const isAdmin = async (userId) => {
   if (!userId) return false;
   try {
-    // 获取用户信息和角色（5秒超时，防止数据库慢查询卡死所有接口）
-    const user = await promiseTimeout(5000, db.prepare('SELECT e.*, r.code as role_code FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?').get(userId));
-    return user && user.role_code === 'admin';
+    // 复用权威角色解析（带 60s 缓存）；兼容 role_code='admin' 或 username='admin'
+    const info = await resolveAuthRole(userId);
+    return isAdminRoleInfo(info);
   } catch (e) {
     console.error('isAdmin 查询失败:', e.message);
     return false;
@@ -3499,6 +3542,7 @@ app.post('/api/employees', checkPermission('employee:write'), async (req, res) =
   `);
   const result = await stmt.run(username, password, name, phone, email, department_id, position, role_id, status || '在职', entry_date, salary, id_card, emergency_contact, emergency_phone);
   await addLog(userId, '', '新增', '员工管理', result.lastInsertRowid, name, `员工姓名: ${name}，用户名: ${username}，初始密码: ${password}`, req.ip);
+  clearAuthRoleCache();
   res.json({ id: result.lastInsertRowid, message: '添加成功', password });
 });
 
@@ -3516,6 +3560,8 @@ app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res
   `);
   await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
   await addLog(userId, '', '编辑', '员工管理', req.params.id, name || '', `更新员工: ${name || req.params.id}`, req.ip);
+  clearAuthRoleCache();
+  clearUserPermCache(parseInt(req.params.id));
   res.json({ message: '更新成功' });
 });
 
@@ -3567,6 +3613,7 @@ app.delete('/api/employees/:id', checkPermission('employee:delete'), async (req,
   const stmt = db.prepare('DELETE FROM employees WHERE id = ?');
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '员工管理', req.params.id, empName, `删除员工: ${empName}`, req.ip);
+  clearAuthRoleCache();
   res.json({ message: '删除成功' });
 });
 
@@ -3668,6 +3715,7 @@ app.post('/api/roles', checkPermission('role:write'), async (req, res) => {
     managed_department_ids ? JSON.stringify(managed_department_ids) : null
   );
   await addLog(userId, '', '新增', '角色管理', result.lastInsertRowid, name, `角色名称: ${name}`, req.ip);
+  clearAuthRoleCache();
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
@@ -3677,17 +3725,21 @@ app.put('/api/roles/:id', checkPermission('role:write'), async (req, res) => {
   const userId = getUserId(req);
   const { name, code, description, permissions, notification_types, managed_department_ids } = req.body;
   // 注意：这里使用 pool 而不是 db（db 是 better-sqlite3，pool 是 mysql2）
-  await pool.query(
-    'UPDATE roles SET name=?, code=?, description=?, permissions=?, notification_types=?, managed_department_ids=? WHERE id=?',
-    [
-      name, code, description,
-      JSON.stringify(permissions || []),
-      JSON.stringify(notification_types || []),
-      managed_department_ids ? JSON.stringify(managed_department_ids) : null,
-      req.params.id
-    ]
-  );
-  await addLog(userId, '', '编辑', '角色管理', req.params.id, name, `更新角色: ${name}`, req.ip);
+  // 2026-10-10 修复：只更新"本次传入"的字段，避免只改消息订阅时把 name/code 等写成空
+  // （历史事故：配置 notification_types 导致 admin 角色的 name/code 被清空 → isAdmin 失效）
+  const sets = [];
+  const vals = [];
+  if (name !== undefined) { sets.push('name=?'); vals.push(name); }
+  if (code !== undefined) { sets.push('code=?'); vals.push(code); }
+  if (description !== undefined) { sets.push('description=?'); vals.push(description); }
+  if (permissions !== undefined) { sets.push('permissions=?'); vals.push(JSON.stringify(permissions || [])); }
+  if (notification_types !== undefined) { sets.push('notification_types=?'); vals.push(JSON.stringify(notification_types || [])); }
+  if (managed_department_ids !== undefined) { sets.push('managed_department_ids=?'); vals.push(managed_department_ids ? JSON.stringify(managed_department_ids) : null); }
+  if (sets.length === 0) return res.json({ message: '无更新字段' });
+  vals.push(req.params.id);
+  await pool.query(`UPDATE roles SET ${sets.join(', ')} WHERE id=?`, vals);
+  await addLog(userId, '', '编辑', '角色管理', req.params.id, name || '', `更新角色: ${name || req.params.id}`, req.ip);
+  clearAuthRoleCache();
   res.json({ message: '更新成功' });
 });
 
@@ -3701,7 +3753,84 @@ app.delete('/api/roles/:id', checkPermission('role:delete'), async (req, res) =>
   const stmt = db.prepare('DELETE FROM roles WHERE id = ?');
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '角色管理', req.params.id, roleName, `删除角色: ${roleName}`, req.ip);
+  clearAuthRoleCache();
   res.json({ message: '删除成功' });
+});
+
+// ==================== 管理员借权（模拟身份，仅用于测试业务流程） 2026-10-10 ====================
+// 当前身份（含是否管理员）——客户端据此决定是否展示"借权"入口
+app.get('/api/me', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const emp = await db.prepare(`
+      SELECT e.id, e.username, e.name, e.phone, e.position,
+             r.name AS role_name, r.code AS role_code
+      FROM employees e LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?
+    `).get(userId);
+    if (!emp) return res.status(404).json({ error: '用户不存在' });
+    res.json({ ...emp, is_admin: await isAdmin(userId) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 可借权目标列表（在职员工）——仅管理员
+app.get('/api/admin/impersonate-targets', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '仅管理员可使用借权功能' });
+    const rows = await db.prepare(`
+      SELECT e.id, e.username, e.name, e.position, e.status,
+             r.name AS role_name, r.code AS role_code
+      FROM employees e LEFT JOIN roles r ON e.role_id = r.id
+      WHERE e.status = '在职'
+      ORDER BY r.name, e.name
+    `).all();
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 借权：以指定员工身份进入系统——仅管理员，且会写入操作日志
+app.post('/api/admin/impersonate', async (req, res) => {
+  try {
+    const adminId = getUserId(req);
+    if (!(await isAdmin(adminId))) return res.status(403).json({ error: '仅管理员可使用借权功能' });
+    const targetId = parseInt(req.body.target_employee_id);
+    if (!targetId || isNaN(targetId)) return res.status(400).json({ error: '缺少 target_employee_id' });
+    const target = await db.prepare(`
+      SELECT e.id, e.username, e.name, e.phone, e.position, e.role_id, e.status,
+             r.name AS role_name, r.code AS role_code, r.permissions AS role_permissions
+      FROM employees e LEFT JOIN roles r ON e.role_id = r.id
+      WHERE e.id = ?
+    `).get(targetId);
+    if (!target) return res.status(404).json({ error: '目标员工不存在' });
+    await addLog(adminId, '', '借权登录', '身份借用', targetId, target.name,
+      `管理员借权为 ${target.name}(${target.username}/${target.role_name || '-'})`, req.ip);
+    res.json({
+      success: true,
+      impersonate_by: adminId,
+      user: { ...target, permissions: target.role_permissions || '[]' }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 结束借权（仅记录审计）
+app.post('/api/admin/impersonate/stop', async (req, res) => {
+  try {
+    const adminId = getUserId(req);
+    const targetId = parseInt(req.body.target_employee_id) || 0;
+    if (adminId && await isAdmin(adminId)) {
+      await addLog(adminId, '', '结束借权', '身份借用', targetId, '', '管理员结束借权', req.ip);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/permissions', async (req, res) => {
