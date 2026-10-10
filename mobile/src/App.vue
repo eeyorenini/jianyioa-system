@@ -1,6 +1,7 @@
 <script setup >
 import { onLaunch, onShow, onHide } from "@dcloudio/uni-app";
 import { useUserStore } from "./stores/user";
+import { applyRoleTabBar } from "./utils/permission";
 
 onLaunch(() => {
   console.log("App Launch");
@@ -24,6 +25,10 @@ onLaunch(() => {
 onShow(() => {
   const { checkAuth } = useUserStore();
   checkAuth();
+  // 已登录时按角色应用底部 tabBar（未登录会被 checkAuth 重定向到登录页，此处跳过）
+  if (uni.getStorageSync("token")) {
+    applyRoleTabBar();
+  }
 });
 
 onHide(() => {

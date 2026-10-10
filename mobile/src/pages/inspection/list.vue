@@ -107,6 +107,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { guardTab } from "@/utils/permission";
 
 const loading = ref(false);
 const curStatus = ref('');
@@ -218,6 +219,7 @@ const goBack = () => {
 };
 
 onMounted(() => {
+  if (!guardTab('inspection:read')) return;
   loadData();
 });
 </script>

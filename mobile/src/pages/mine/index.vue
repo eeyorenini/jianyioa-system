@@ -25,7 +25,7 @@
       <view class="profile-avatar">{{ avatarText }}</view>
       <view class="profile-info">
         <text class="profile-name">{{ userName }}</text>
-        <view class="role-badge" :class="getRoleClass(roleName)">{{ roleName }}</view>
+        <view class="role-badge" :class="roleBadgeClass">{{ roleName }}</view>
       </view>
     </view>
 
@@ -54,7 +54,7 @@
           <text class="menu-row-label">消息通知</text>
           <text class="menu-row-arrow">›</text>
         </view>
-        <view class="menu-row" @click="goPage('/pages/report/index')">
+        <view v-if="canSeeReport" class="menu-row" @click="goPage('/pages/report/index')">
           <text class="menu-row-icon">📊</text>
           <text class="menu-row-label">数据报表</text>
           <text class="menu-row-arrow">›</text>
@@ -98,6 +98,7 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
+import { MY_WORK_ITEMS, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -126,42 +127,26 @@ const loadUnread = () => {
   });
 };
 
-onMounted(() => { loadUnread(); userStore.fetchMe(); });
-onShow(() => { loadUnread(); userStore.fetchMe(); });
+const syncUser = () => {
+  loadUnread();
+  // 权限以服务端为准：刷新后重新应用 tabBar（角色/借权变化即时生效）
+  userStore.fetchMe().then(() => applyRoleTabBar());
+};
+onMounted(syncUser);
+onShow(syncUser);
 
 const goMessage = () => {
   uni.navigateTo({ url: '/pages/message/list' });
 };
 
-const myWork = computed(() => {
-  const role = roleName.value;
-  const base = [
-    { label: '我的项目', icon: '📁', bg: '#DBEAFE', url: '/pages/projects/list' },
-    { label: '我的派工', icon: '👷', bg: '#FEF3C7', url: '/pages/dispatch/list' },
-    { label: '我的日志', icon: '📝', bg: '#D1FAE5', url: '/pages/mine/my-logs' },
-    { label: '我的巡检', icon: '🔍', bg: '#FEE2E2', url: '/pages/mine/my-inspections' },
-  ];
-  if (role === '财务') {
-    return [{ label: '收支管理', icon: '💰', bg: '#DBEAFE', url: '/pages/finance/list' }];
-  }
-  if (role === '业主') {
-    return [
-      { label: '我的项目', icon: '📁', bg: '#DBEAFE', url: '/pages/projects/list' },
-      { label: '验收确认', icon: '✅', bg: '#D1FAE5', url: '/pages/projects/list' },
-      { label: '我的账单', icon: '💰', bg: '#FEF3C7', url: '/pages/finance/list' },
-    ];
-  }
-  return base;
-});
+// 「我的工作」按权限过滤（配置集中在 utils/permission.ts，不再硬编码角色名）
+const myWork = computed(() => visibleEntries(MY_WORK_ITEMS));
 
-const getRoleClass = (role) => {
-  if (role.includes('管理')) return 'role-admin';
-  if (role.includes('设计')) return 'role-designer';
-  if (role.includes('工长')) return 'role-worker';
-  if (role.includes('监理')) return 'role-supervisor';
-  if (role.includes('业主')) return 'role-owner';
-  return 'role-default';
-};
+// 角色标签样式（统一到 utils/permission）
+const roleBadgeClass = computed(() => roleClass(userStore.state.role_code, roleName.value));
+
+// 数据报表入口：按 report:read 权限显示
+const canSeeReport = computed(() => userStore.canSee('report:read'));
 
 const goPage = (url) => {
   if (url.startsWith('/pages')) {

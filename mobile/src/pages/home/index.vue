@@ -26,7 +26,7 @@
           <text class="greeting-time">{{ timeStr }}</text>
           <text class="greeting-name">{{ userName }}，您好</text>
         </view>
-        <view class="role-badge" :class="getRoleClass(roleName)">{{ roleName }}</view>
+        <view class="role-badge" :class="roleBadgeClass">{{ roleName }}</view>
       </view>
 
       <!-- 核心数据统计（按角色差异化：财务视角侧重金额，其他视角侧重项目） -->
@@ -180,6 +180,7 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
+import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -225,11 +226,10 @@ const stats = ref({
 });
 
 const isFinance = computed(() => {
-  const p = userStore.state.permissions || userStore.state.role_permissions || [];
-  if (Array.isArray(p) && p.includes('purchase:finance')) return true;
+  // 优先权限码；兼容历史财务角色
+  if (userStore.can('purchase:finance')) return true;
   const code = userStore.state.role_code || '';
-  const name = userStore.state.role_name || '';
-  return code === 'finance' || name.includes('财务');
+  return code === 'finance';
 });
 
 const fmtMoney = (v) => {
@@ -238,16 +238,8 @@ const fmtMoney = (v) => {
   return '¥' + n;
 };
 
-const getRoleClass = (role) => {
-  if (role.includes('管理')) return 'role-admin';
-  if (role.includes('设计')) return 'role-designer';
-  if (role.includes('工长')) return 'role-worker';
-  if (role.includes('监理')) return 'role-supervisor';
-  if (role.includes('业主')) return 'role-owner';
-  if (role.includes('主材')) return 'role-material';
-  if (role.includes('财务')) return 'role-finance';
-  return 'role-assistant';
-};
+// 角色标签样式（统一到 utils/permission，避免各处 includes 硬编码）
+const roleBadgeClass = computed(() => roleClass(userStore.state.role_code, roleName.value));
 
 const goMessage = () => {
   uni.navigateTo({ url: '/pages/message/list' });
@@ -264,7 +256,13 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); userStore.fetchMe(); });
+onShow(() => {
+  loadUnread();
+  loadRecentProjects();
+  loadHomeStats();
+  // 权限以服务端为准：刷新后再应用一次 tabBar（角色/借权变化后即时生效）
+  userStore.fetchMe().then(() => applyRoleTabBar());
+});
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
@@ -307,22 +305,8 @@ const loadHomeStats = async () => {
   }
 };
 
-// ====== 快捷入口 ======
-const quickEntries = [
-  { label: '项目管理', icon: '📁', bg: '#DBEAFE', action: 'projectList' },
-  { label: '新建项目', icon: '📋', bg: '#D1FAE5', action: 'newProject' },
-  { label: '施工日志', icon: '📝', bg: '#D1FAE5', action: 'newLog' },
-  { label: '质量巡检', icon: '🔍', bg: '#FEE2E2', action: 'newInspect' },
-  { label: '派工管理', icon: '👷', bg: '#FEF3C7', action: 'newDispatch' },
-  { label: '主材管理', icon: '🧱', bg: '#EDE9FE', action: 'newMaterial' },
-  { label: '验收管理', icon: '✅', bg: '#D1FAE5', action: 'newAccept' },
-  { label: '增减项', icon: '📄', bg: '#FEF3C7', action: 'newChange' },
-  { label: '收支记录', icon: '💰', bg: '#DBEAFE', action: 'newFinance' },
-  { label: '催收记录', icon: '💰', bg: '#DBEAFE', action: 'newCollection' },
-  { label: '通讯录', icon: '📒', bg: '#EDE9FE', action: 'addressbook' },
-  { label: '甘特图', icon: '📊', bg: '#FEE2E2', action: 'gantt' },
-  { label: '客户', icon: '👤', bg: '#DBEAFE', action: 'customer' },
-];
+// ====== 快捷入口（按权限过滤，配置集中在 utils/permission.ts） ======
+const quickEntries = computed(() => visibleEntries(HOME_QUICK_ENTRIES));
 
 const todos = ref([]);
 const todosLoaded = ref(false);
@@ -683,6 +667,10 @@ const goProject = (id) => {
 .role-designer { background: rgba(59,130,246,0.3); }
 .role-worker { background: rgba(234,88,12,0.3); }
 .role-supervisor { background: rgba(139,92,246,0.3); }
+.role-owner { background: rgba(16,185,129,0.3); }
+.role-material { background: rgba(245,158,11,0.3); }
+.role-finance { background: rgba(20,184,166,0.3); }
+.role-default { background: rgba(255,255,255,0.15); }
 
 /* 统计卡片 */
 .stats-row {

@@ -128,6 +128,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { guardTab } from '@/utils/permission'
 
 const activeTab = ref('my')
 const list = ref([])
@@ -442,6 +443,7 @@ function submitAction() {
 }
 
 onMounted(() => {
+  if (!guardTab('dispatch:read')) return
   loadData()
   loadCounts()
   uni.$on('dispatch-refresh', () => {

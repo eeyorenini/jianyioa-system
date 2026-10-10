@@ -202,7 +202,10 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useUserStore } from '@/stores/user'
+import { guardTab } from '@/utils/permission'
 
+const userStore = useUserStore()
 const activeTab = ref('my')
 const list = ref([])
 const loading = ref(false)
@@ -220,18 +223,13 @@ const dialogAction = ref('approve') // 'approve' | 'reject'
 const dialogComment = ref('')
 const currentItem = ref(null)
 
-// 读取当前用户权限（由服务端 /api/me 同步；借权切换后随之变化）
-const userPerms = () => {
-  const info = uni.getStorageSync('userInfo') || {}
-  let p = info.permissions || info.role_permissions
-  if (typeof p === 'string') { try { p = JSON.parse(p) } catch { p = [] } }
-  return Array.isArray(p) ? p : []
-}
-const isAdminUser = () => (uni.getStorageSync('userInfo') || {}).role_code === 'admin'
-const can = (perm) => isAdminUser() || userPerms().includes(perm)
+// 权限判定统一走 store（由服务端 /api/me 同步；借权切换后随之变化）
+const userPerms = () => userStore.permissionList()
+const isAdminUser = () => userStore.isAdminUser()
+const can = (perm) => userStore.can(perm)
 const isFinanceView = () => {
   const info = uni.getStorageSync('userInfo') || {}
-  return !!(info.purchase_finance || info.is_finance) || can('purchase:finance')
+  return !!(info.purchase_finance || info.is_finance) || userStore.can('purchase:finance')
 }
 
 // tab 按权限渲染：一个页面，各角色只看到自己该处理的
@@ -712,6 +710,7 @@ function submitAction() {
 }
 
 onMounted(() => {
+  if (!guardTab('purchase:read')) return
   loadData()
   loadCounts()
 })

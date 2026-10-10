@@ -961,28 +961,16 @@ const goContractChange = (change) => {
 const canApproveContract = ref(false);
 
 const checkContractApprovePermission = async () => {
-  try {
-    const token = uni.getStorageSync('token');
-    const res = await uni.request({ url: '/api/my-permissions', header: { Authorization: token } });
-    const perms = res.data?.permissions || [];
-    canApproveContract.value = perms.includes('contract:approve') || perms.includes('project_contract:approve');
-  } catch {
-    // 读取本地缓存
-    canApproveContract.value = userStore.hasPermission('contract:approve');
-  }
+  // 权限统一走 store（管理员直通，数据源与 /api/me 一致）
+  await userStore.fetchMe();
+  canApproveContract.value = userStore.can('contract:approve') || userStore.can('project_contract:approve');
 };
 
 const canApproveChange = ref(false);
 
 const checkChangeApprovePermission = async () => {
-  try {
-    const token = uni.getStorageSync('token');
-    const res = await uni.request({ url: '/api/my-permissions', header: { Authorization: token } });
-    const perms = res.data?.permissions || [];
-    canApproveChange.value = perms.includes('contract_change:approve');
-  } catch {
-    canApproveChange.value = userStore.hasPermission('contract_change:approve');
-  }
+  await userStore.fetchMe();
+  canApproveChange.value = userStore.can('contract_change:approve');
 };
 
 const openApproveChangeDialog = (change) => {

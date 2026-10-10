@@ -144,9 +144,50 @@ export const useUserStore = () => {
     uni.reLaunch({ url: "/pages/login/login" });
   };
 
-  const hasPermission = (perm: string) => {
-    return state.permissions.includes(perm);
+  // ============ 权限判定（与服务端 isAdminRoleInfo 保持一致） ============
+
+  // 是否管理员：role_code=admin 或登录名 admin（与后端完全一致）
+  const isAdminUser = () => state.role_code === "admin" || state.username === "admin";
+
+  // 当前权限数组
+  const permissionList = (): string[] => (Array.isArray(state.permissions) ? state.permissions : []);
+
+  // 是否已配置权限（用于菜单可见性的宽容降级：未配置=不限制）
+  const hasConfiguredPerms = () => permissionList().length > 0;
+
+  // 严格判定：是否拥有某权限（管理员直通，支持 * 通配）
+  const can = (perm: string): boolean => {
+    if (!perm) return true;
+    if (isAdminUser()) return true;
+    const list = permissionList();
+    return list.includes("*") || list.includes(perm);
   };
+
+  // 任一权限满足即可
+  const canAny = (perms: string[]): boolean => (perms || []).some((p) => can(p));
+
+  // 菜单/入口可见性（宽容降级）：
+  //  - 管理员 → 全部可见
+  //  - 未配置权限的角色 → 不限制（向后兼容，避免把老角色锁死）
+  //  - 已配置权限 → 按权限判定，并兼容"仅模块名"的旧格式
+  const canSee = (perm?: string): boolean => {
+    if (!perm) return true;
+    if (isAdminUser()) return true;
+    if (!hasConfiguredPerms()) return true;
+    const list = permissionList();
+    if (list.includes("*") || list.includes(perm)) return true;
+    const mod = perm.split(":")[0];
+    return !!mod && list.includes(mod);
+  };
+
+  // 是否为客户端（业主）身份：客户登录走 /api/customers/login，不使用员工 tabBar
+  const isCustomer = (): boolean => {
+    if (state.role_code === "customer") return true;
+    try { return uni.getStorageSync("userType") === "customer"; } catch { return false; }
+  };
+
+  // 兼容旧调用点
+  const hasPermission = (perm: string) => can(perm);
 
   // 开始借权：保存原管理员身份，切换到目标员工
   const startImpersonate = (targetUser: any) => {
@@ -211,6 +252,13 @@ export const useUserStore = () => {
     checkAuth,
     logout,
     hasPermission,
+    can,
+    canAny,
+    canSee,
+    isAdminUser,
+    isCustomer,
+    hasConfiguredPerms,
+    permissionList,
     startImpersonate,
     stopImpersonate,
   };
