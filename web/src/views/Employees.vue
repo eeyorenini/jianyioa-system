@@ -30,7 +30,7 @@
         <el-table-column label="操作" width="200">
           <template #default="scope">
             <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button size="small" type="warning" @click="handleResetPassword(scope.row)" v-if="currentUserRole === 'admin'">重置密码</el-button>
+            <el-button size="small" type="warning" @click="handleResetPassword(scope.row)" v-if="canResetPassword">重置密码</el-button>
             <el-button type="danger" size="small" @click="handleDelete(scope.row.id)">删除</el-button>
           </template>
         </el-table-column>
@@ -102,7 +102,7 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="20">
+        <el-row :gutter="20" v-if="canSeeSensitive">
           <el-col :span="12">
             <el-form-item label="薪资">
               <el-input-number v-model="form.salary" :min="0" :precision="2" style="width: 100%" />
@@ -136,17 +136,24 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
+import { useUserStore } from '@/stores/user'
 
 const employeeList = ref([])
 const departments = ref([])
 const roles = ref([])
 const showAddDialog = ref(false)
 const isEdit = ref(false)
-const currentUserRole = ref('')
+const userStore = useUserStore()
+// 是否可重置他人密码（与后端 employee:reset_password 权限对齐）
+const canResetPassword = computed(() => userStore.canAction('employee', 'reset_password'))
+// 是否可见员工敏感字段（薪资/身份证），与后端 employee:read_all / employee:salary 对齐
+const canSeeSensitive = computed(() =>
+  userStore.isAdmin || userStore.canAction('employee', 'read_all') || userStore.canAction('employee', 'salary')
+)
 const form = reactive({
   id: null,
   name: '',
@@ -170,8 +177,6 @@ const getRoleType = (role) => {
 
 const loadData = async () => {
   try {
-    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-    currentUserRole.value = userInfo.role_code || ''
     const [empRes, deptRes, roleRes] = await Promise.all([
       request.get('/employees'),
       request.get('/departments'),

@@ -102,8 +102,8 @@ const handleChangePassword = async () => {
     return
   }
   try {
-    const userInfo = JSON.parse(localStorage.getItem('userInfo') || '{}')
-    await axios.put(`/api/employees/${userInfo.id}/password`, {
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    await axios.put(`/api/employees/${currentUser.id}/password`, {
       old_password: pwdForm.old_password,
       new_password: pwdForm.new_password
     })

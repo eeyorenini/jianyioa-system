@@ -1,8 +1,11 @@
 <template>
-  <el-container class="layout-container">
+  <!-- 登录页：不渲染后台框架 -->
+  <router-view v-if="isLoginPage" />
+
+  <el-container v-else class="layout-container">
     <!-- 移动端遮罩 -->
     <div class="mobile-overlay" :class="{ show: mobileMenuShow }" @click="mobileMenuShow = false"></div>
-    
+
     <!-- 移动端顶部导航 -->
     <div class="mobile-navbar" v-if="isMobile">
       <div class="mobile-navbar-left">
@@ -23,7 +26,7 @@
         </el-dropdown>
       </div>
     </div>
-    
+
     <!-- 左侧菜单（电脑端） -->
     <el-aside v-if="!isMobile" width="220px">
       <div class="logo">
@@ -38,66 +41,18 @@
         text-color="#bfcbd9"
         active-text-color="#409EFF"
       >
-        <el-menu-item index="/personal-center">
-          <el-icon><User /></el-icon>
-          <span>个人中心</span>
-        </el-menu-item>
-        <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>数据看板</span>
-        </el-menu-item>
-        <el-sub-menu index="customer-group">
-          <template #title><el-icon><User /></el-icon><span>客户服务</span></template>
-          <el-menu-item index="/customers">客户列表</el-menu-item>
-          <el-menu-item index="/sms-templates">短信模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="contract-group">
-          <template #title><el-icon><Document /></el-icon><span>合同管理</span></template>
-          <el-menu-item index="/contracts">合同编辑</el-menu-item>
-          <el-menu-item index="/contract-templates">合同模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="project-group">
-          <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
-          <el-menu-item index="/projects">工程管理</el-menu-item>
-          <el-menu-item index="/change-orders">增减项管理</el-menu-item>
-          <el-menu-item index="/project-logs">施工日志</el-menu-item>
-          <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
-          <el-menu-item index="/quotes">报价管理</el-menu-item>
-          <el-menu-item index="/acceptance">验收管理</el-menu-item>
-          <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="material-group">
-          <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
-          <el-menu-item index="/main-materials">主材管理</el-menu-item>
-          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
-          <el-menu-item index="/warehouse">仓库管理</el-menu-item>
-          <el-menu-item index="/material-orders">采购订单</el-menu-item>
-          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="approval-group">
-          <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
-          <el-menu-item index="/approvals">审批管理</el-menu-item>
-          <el-menu-item index="/reports">工作汇报</el-menu-item>
-          <el-menu-item index="/notices">公告管理</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="org-group">
-          <template #title><el-icon><Grid /></el-icon><span>组织结构</span></template>
-          <el-menu-item index="/employees">员工管理</el-menu-item>
-          <el-menu-item index="/roles">角色权限</el-menu-item>
-          <el-menu-item index="/departments">部门管理</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="system-group">
-          <template #title><el-icon><Tools /></el-icon><span>系统设置</span></template>
-          <el-menu-item index="/system-settings">API接口</el-menu-item>
-          <el-menu-item index="/operation-logs">操作日志</el-menu-item>
-          <el-menu-item index="/system-logs">系统日志</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/finance-projects"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
-        <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
-        <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
-        <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
+        <template v-for="m in visibleMenus" :key="m.index || m.path">
+          <el-menu-item v-if="m.type === 'item'" :index="m.path">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <span>{{ m.title }}</span>
+          </el-menu-item>
+          <el-sub-menu v-else :index="m.index">
+            <template #title><el-icon><component :is="m.icon" /></el-icon><span>{{ m.title }}</span></template>
+            <el-menu-item v-for="c in m.children" :key="c.path" :index="c.path">{{ c.title }}</el-menu-item>
+          </el-sub-menu>
+        </template>
       </el-menu>
-      <div class="sidebar-version">v 2.1.27</div>
+      <div class="sidebar-version">v 2.2.3</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -115,66 +70,20 @@
         active-text-color="#409EFF"
         @select="mobileMenuShow = false"
       >
-        <el-menu-item index="/personal-center">
-          <el-icon><User /></el-icon><span>个人中心</span>
-        </el-menu-item>
-        <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon><span>数据看板</span>
-        </el-menu-item>
-        <el-sub-menu index="customer-group">
-          <template #title><el-icon><User /></el-icon><span>客户服务</span></template>
-          <el-menu-item index="/customers">客户列表</el-menu-item>
-          <el-menu-item index="/sms-templates">短信模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="contract-group">
-          <template #title><el-icon><Document /></el-icon><span>合同管理</span></template>
-          <el-menu-item index="/contracts">合同编辑</el-menu-item>
-          <el-menu-item index="/contract-templates">合同模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="project-group">
-          <template #title><el-icon><FolderOpened /></el-icon><span>项目管理</span></template>
-          <el-menu-item index="/projects">工程管理</el-menu-item>
-          <el-menu-item index="/change-orders">增减项管理</el-menu-item>
-          <el-menu-item index="/project-logs">施工日志</el-menu-item>
-          <el-menu-item index="/inspection-logs">巡检日志</el-menu-item>
-          <el-menu-item index="/quotes">报价管理</el-menu-item>
-          <el-menu-item index="/acceptance">验收管理</el-menu-item>
-          <el-menu-item index="/progress-node-templates">节点模板</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="material-group">
-          <template #title><el-icon><Box /></el-icon><span>材料管理</span></template>
-          <el-menu-item index="/main-materials">主材管理</el-menu-item>
-          <el-menu-item index="/suppliers">供应商管理</el-menu-item>
-          <el-menu-item index="/warehouse">仓库管理</el-menu-item>
-          <el-menu-item index="/material-orders">采购订单</el-menu-item>
-          <el-menu-item index="/purchase-requests">采购申请</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="approval-group">
-          <template #title><el-icon><Checked /></el-icon><span>行政审批</span></template>
-          <el-menu-item index="/approvals">审批管理</el-menu-item>
-          <el-menu-item index="/reports">工作汇报</el-menu-item>
-          <el-menu-item index="/notices">公告管理</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="org-group">
-          <template #title><el-icon><Grid /></el-icon><span>组织结构</span></template>
-          <el-menu-item index="/employees">员工管理</el-menu-item>
-          <el-menu-item index="/roles">角色权限</el-menu-item>
-          <el-menu-item index="/departments">部门管理</el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="system-group">
-          <template #title><el-icon><Tools /></el-icon><span>系统设置</span></template>
-          <el-menu-item index="/system-settings">API接口</el-menu-item>
-          <el-menu-item index="/operation-logs">操作日志</el-menu-item>
-          <el-menu-item index="/system-logs">系统日志</el-menu-item>
-        </el-sub-menu>
-        <el-menu-item index="/finance-projects"><el-icon><Wallet /></el-icon><span>财务管理</span></el-menu-item>
-        <el-menu-item index="/budgets"><el-icon><Money /></el-icon><span>预算报价</span></el-menu-item>
-        <el-menu-item index="/invoices"><el-icon><Ticket /></el-icon><span>发票管理</span></el-menu-item>
-        <el-menu-item index="/message-center"><el-icon><Bell /></el-icon><span>消息中心</span></el-menu-item>
+        <template v-for="m in visibleMenus" :key="m.index || m.path">
+          <el-menu-item v-if="m.type === 'item'" :index="m.path">
+            <el-icon><component :is="m.icon" /></el-icon>
+            <span>{{ m.title }}</span>
+          </el-menu-item>
+          <el-sub-menu v-else :index="m.index">
+            <template #title><el-icon><component :is="m.icon" /></el-icon><span>{{ m.title }}</span></template>
+            <el-menu-item v-for="c in m.children" :key="c.path" :index="c.path">{{ c.title }}</el-menu-item>
+          </el-sub-menu>
+        </template>
       </el-menu>
-      <div class="sidebar-version">v 2.1.27</div>
+      <div class="sidebar-version">v 2.2.3</div>
     </div>
-    
+
     <!-- 主内容区 -->
     <el-container class="main-container">
       <!-- 电脑端顶部header -->
@@ -185,6 +94,7 @@
             <span class="user-dropdown">
               <el-icon><User /></el-icon>
               <span>{{ userStore.userName }}</span>
+              <el-tag v-if="userStore.userRole" size="small" type="info" style="margin-left:6px">{{ userStore.userRole }}</el-tag>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -195,7 +105,7 @@
           </el-dropdown>
         </div>
       </el-header>
-      
+
       <!-- 主内容 -->
       <el-main :class="{ 'mobile-main': isMobile }">
         <router-view />
@@ -208,10 +118,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
-import {
-  OfficeBuilding, User, DataAnalysis, FolderOpened, Box, Checked,
-  Wallet, Setting, Ticket, Fold, Expand, Document, Money, Grid, Tools, Bell, Message
-} from '@element-plus/icons-vue'
+import { OfficeBuilding, User, Fold, Expand } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -220,6 +127,95 @@ const userStore = useUserStore()
 const activeMenu = computed(() => route.path)
 const mobileMenuShow = ref(false)
 const isMobile = ref(false)
+
+// 登录页不渲染后台框架
+const isLoginPage = computed(() => route.path === '/login')
+
+// ==================== 菜单配置（权限驱动） ====================
+// perm 对应后端权限模块标识；无 perm 表示所有登录用户可见
+// 管理员（userStore.isAdmin）默认可见全部
+const menuConfig = [
+  { type: 'item', path: '/personal-center', icon: 'User', title: '个人中心' },
+  { type: 'item', path: '/dashboard', icon: 'DataAnalysis', title: '数据看板' },
+  {
+    type: 'group', index: 'customer-group', icon: 'User', title: '客户服务',
+    children: [
+      { path: '/customers', title: '客户列表', perm: 'customer' },
+      { path: '/sms-templates', title: '短信模板', perm: 'sms' }
+    ]
+  },
+  {
+    type: 'group', index: 'contract-group', icon: 'Document', title: '合同管理',
+    children: [
+      { path: '/contracts', title: '合同编辑', perm: 'contract' },
+      { path: '/contract-templates', title: '合同模板', perm: 'contract' }
+    ]
+  },
+  {
+    type: 'group', index: 'project-group', icon: 'FolderOpened', title: '项目管理',
+    children: [
+      { path: '/projects', title: '工程管理', perm: 'project' },
+      { path: '/change-orders', title: '增减项管理', perm: 'contract_change' },
+      { path: '/project-logs', title: '施工日志', perm: 'project' },
+      { path: '/inspection-logs', title: '巡检日志', perm: 'inspection' },
+      { path: '/quotes', title: '报价管理', perm: 'quote' },
+      { path: '/acceptance', title: '验收管理', perm: 'acceptance' },
+      { path: '/progress-node-templates', title: '节点模板', perm: 'project' }
+    ]
+  },
+  {
+    type: 'group', index: 'material-group', icon: 'Box', title: '材料管理',
+    children: [
+      { path: '/main-materials', title: '主材管理', perm: 'warehouse' },
+      { path: '/suppliers', title: '供应商管理', perm: 'supplier' },
+      { path: '/warehouse', title: '仓库管理', perm: 'warehouse' },
+      { path: '/material-orders', title: '采购订单', perm: 'purchase' },
+      { path: '/purchase-requests', title: '采购申请', perm: 'purchase' }
+    ]
+  },
+  {
+    type: 'group', index: 'approval-group', icon: 'Checked', title: '行政审批',
+    children: [
+      { path: '/approvals', title: '审批管理', perm: 'approval' },
+      { path: '/reports', title: '工作汇报', perm: 'report' },
+      { path: '/notices', title: '公告管理', perm: 'notice' }
+    ]
+  },
+  {
+    type: 'group', index: 'org-group', icon: 'Grid', title: '组织结构',
+    children: [
+      { path: '/employees', title: '员工管理', perm: 'employee' },
+      { path: '/roles', title: '角色权限', perm: 'role' },
+      { path: '/departments', title: '部门管理', perm: 'department' }
+    ]
+  },
+  {
+    type: 'group', index: 'system-group', icon: 'Tools', title: '系统设置',
+    children: [
+      { path: '/system-settings', title: 'API接口', perm: 'settings' },
+      { path: '/operation-logs', title: '操作日志', perm: 'settings' },
+      { path: '/system-logs', title: '系统日志', perm: 'settings' }
+    ]
+  },
+  { type: 'item', path: '/finance-projects', icon: 'Wallet', title: '财务管理', perm: 'finance' },
+  { type: 'item', path: '/budgets', icon: 'Money', title: '预算报价', perm: 'budget' },
+  { type: 'item', path: '/invoices', icon: 'Ticket', title: '发票管理', perm: 'invoice' },
+  { type: 'item', path: '/message-center', icon: 'Bell', title: '消息中心' }
+]
+
+// 按权限过滤后的菜单
+const visibleMenus = computed(() => {
+  const result = []
+  for (const m of menuConfig) {
+    if (m.type === 'item') {
+      if (!m.perm || userStore.can(m.perm)) result.push(m)
+    } else {
+      const children = (m.children || []).filter((c) => !c.perm || userStore.can(c.perm))
+      if (children.length) result.push({ ...m, children })
+    }
+  }
+  return result
+})
 
 const checkMobile = () => {
   isMobile.value = window.innerWidth <= 768
@@ -246,15 +242,18 @@ const pageTitle = computed(() => {
     '/customers': '客户服务', '/channels': '渠道管理',
     '/contracts': '合同编辑', '/contract-templates': '合同模板',
     '/operation-logs': '操作日志', '/budgets': '预算报价',
-    '/finance': '财务管理', '/projects': '工程管理',
+    '/finance': '财务管理', '/finance-projects': '财务管理', '/projects': '工程管理',
     '/quotes': '报价管理', '/main-materials': '主材管理',
     '/warehouse': '仓库管理', '/material-orders': '采购订单',
+    '/suppliers': '供应商管理', '/purchase-requests': '采购申请',
+    '/change-orders': '增减项管理',
     '/approvals': '审批管理', '/reports': '工作汇报',
-    '/notices': '公告管理',
-    '/acceptance': '验收管理', '/invoices': '发票管理',
-    '/employees': '员工管理', '/roles': '角色权限',
+    '/notices': '公告管理', '/acceptance': '验收管理',
+    '/invoices': '发票管理', '/employees': '员工管理', '/roles': '角色权限',
     '/departments': '部门管理', '/sms-templates': '短信模板',
-    '/system-settings': '系统设置', '/operation-logs': '操作日志', '/system-logs': '系统日志',
+    '/progress-node-templates': '节点模板',
+    '/system-settings': '系统设置', '/system-logs': '系统日志',
+    '/project-logs': '施工日志', '/inspection-logs': '巡检日志',
     '/message-center': '消息中心'
   }
   return titles[route.path] || '简逸ERP'
@@ -307,7 +306,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* ==================== 移动端样式 ==================== */
 @media screen and (max-width: 768px) {
   .layout-container { flex-direction: column; }
-  
+
   /* 移动端顶部导航 */
   .mobile-navbar {
     display: flex !important;
@@ -318,25 +317,24 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .mobile-navbar-left { display: flex; align-items: center; gap: 12px; }
   .mobile-navbar-right { display: flex; align-items: center; }
   .mobile-logo { font-size: 16px; font-weight: bold; }
-  
+
   /* 移动端菜单按钮 */
   .mobile-menu-btn {
     background: none; border: none; cursor: pointer;
     font-size: 22px; color: #fff; padding: 0;
   }
-  
+
   /* 遮罩层 */
   .mobile-overlay {
     display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.5); z-index: 999;
   }
   .mobile-overlay.show { display: block; }
-  
+
   /* 移动端侧边栏 - 从左侧滑出 */
   .mobile-sidebar {
     display: flex; flex-direction: column;
-    position: fixed; top: 0; left: 0;
-    width: 260px; height: 100%; background: #304156;
+    position: fixed; top: 0; left: 0; width: 260px; height: 100%; background: #304156;
     z-index: 1000; transform: translateX(-100%);
     transition: transform 0.3s; overflow-y: auto;
   }
@@ -347,14 +345,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     padding: 0 15px; border-bottom: 1px solid #404854;
   }
   .mobile-menu { border-right: none; background: transparent !important; }
-  
+
   /* 主内容区 */
   .main-container { margin-top: 50px; }
   .mobile-main {
     padding: 12px !important; margin: 0;
     min-height: calc(100vh - 50px); background: #f0f2f5;
   }
-  
+
   /* 移动端通用样式 */
   .mobile-main .el-card {
     margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);

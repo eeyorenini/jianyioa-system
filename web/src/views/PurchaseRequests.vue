@@ -324,6 +324,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '../utils/request'
+import { useUserStore } from '../stores/user'
 
 const userId = parseInt(localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).id : 0)
 
@@ -758,13 +759,11 @@ async function handleFinanceConfirm() {
 }
 
 onMounted(async () => {
-  // 检查权限
-  try {
-    const perms = JSON.parse(localStorage.getItem('permissions') || '[]')
-    canApprove.value = perms.includes('purchase:approve')
-    canFinance.value = perms.includes('purchase:finance')
-    canViewAll.value = perms.includes('purchase:view')
-  } catch {}
+  // 检查权限（统一走用户权限 store，管理员默认拥有全部）
+  const userStore = useUserStore()
+  canApprove.value = userStore.canAction('purchase', 'approve')
+  canFinance.value = userStore.canAction('purchase', 'finance')
+  canViewAll.value = userStore.canAction('purchase', 'read_all')
   loadData()
 })
 </script>

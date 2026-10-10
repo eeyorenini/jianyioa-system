@@ -133,6 +133,9 @@ const mysqlPool = pool;
 // ================================================================
 const _authRoleCache = new Map(); // userId -> { username, role_code, ts }
 const _AUTH_ROLE_TTL = 60000;
+// 角色「可管理部门」缓存（userId -> 部门 id 数组；角色变更时随 _authRoleCache 统一失效）
+const managedDeptCache = new Map();
+const MANAGED_DEPT_CACHE_TTL = 30000;
 async function resolveAuthRole(userId) {
   const cached = _authRoleCache.get(userId);
   if (cached && Date.now() - cached.ts < _AUTH_ROLE_TTL) return cached;
@@ -152,7 +155,10 @@ function isAdminRoleInfo(info) {
   return !!info && (info.role_code === 'admin' || info.username === 'admin');
 }
 // 角色/员工信息变更后清缓存
-function clearAuthRoleCache() { _authRoleCache.clear(); }
+function clearAuthRoleCache() {
+  _authRoleCache.clear();
+  managedDeptCache.clear();
+}
 
 app.use(async (req, res, next) => {
   try {
@@ -1826,6 +1832,94 @@ async function hasReadAllPermission(userId, moduleKey) {
   return perms.includes(`${moduleKey}:read_all`);
 }
 
+// 员工「敏感字段」字段级权限：薪资 / 身份证
+// 可见条件：管理员、employee:read_all（全部数据）、或显式授予 employee:salary
+async function canSeeEmployeeSensitive(userId) {
+  if (!userId) return false;
+  try {
+    if (await isAdmin(userId)) return true;
+    const perms = await getUserPermissions(userId);
+    return perms.includes('*') || perms.includes('employee:read_all') || perms.includes('employee:salary');
+  } catch (e) {
+    console.error('canSeeEmployeeSensitive 判定失败:', e.message);
+    return false;
+  }
+}
+
+// 员工敏感字段清单（脱敏时置空）
+const EMPLOYEE_SENSITIVE_FIELDS = ['salary', 'id_card'];
+
+// 对员工列表脱敏：无字段级权限时，隐藏他人（selfId 除外）的敏感字段
+function maskEmployeeSensitive(rows, canSee, selfId) {
+  if (canSee || !Array.isArray(rows)) return rows;
+  return rows.map(r => {
+    if (!r || typeof r !== 'object') return r;
+    if (selfId && r.id === selfId) return r;
+    const copy = { ...r };
+    for (const f of EMPLOYEE_SENSITIVE_FIELDS) copy[f] = null;
+    return copy;
+  });
+}
+
+// ============ 数据范围：角色「可管理部门」(managed_department_ids) ============
+// 语义：
+//   null / 空数组 → 不启用部门范围，保持原有逻辑（read_all 决定 / 否则仅本人）
+//   非空数组      → 该用户可查看这些部门（含所有子部门）的数据（作为 read_all 的增量授权）
+async function getManagedDepartmentIds(userId) {
+  if (!userId) return null;
+  const cached = managedDeptCache.get(userId);
+  if (cached && Date.now() - cached.ts < MANAGED_DEPT_CACHE_TTL) return cached.ids;
+  try {
+    const [rows] = await promiseTimeout(5000, pool.query(
+      `SELECT r.managed_department_ids FROM employees e
+       LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?`, [userId]
+    ));
+    const raw = rows && rows[0] ? rows[0].managed_department_ids : null;
+    let ids = [];
+    if (raw) {
+      if (typeof raw === 'string') {
+        try { ids = JSON.parse(raw); } catch { ids = []; }
+      } else if (Array.isArray(raw)) {
+        ids = raw;
+      }
+    }
+    ids = (ids || []).map((n) => parseInt(n, 10)).filter((n) => !isNaN(n));
+    const result = ids.length ? ids : null;
+    managedDeptCache.set(userId, { ids: result, ts: Date.now() });
+    return result;
+  } catch (e) {
+    console.error('getManagedDepartmentIds 查询失败:', e.message);
+    return null;
+  }
+}
+
+// 递归展开部门（含所有子部门）。部门数量少，全量加载后在内存里展开。
+async function expandDepartmentIds(ids) {
+  if (!ids || !ids.length) return [];
+  try {
+    const [rows] = await promiseTimeout(5000, pool.query('SELECT id, parent_id FROM departments'));
+    const childrenMap = new Map();
+    for (const d of rows) {
+      const p = (d.parent_id === null || d.parent_id === undefined) ? '__root__' : String(d.parent_id);
+      if (!childrenMap.has(p)) childrenMap.set(p, []);
+      childrenMap.get(p).push(d.id);
+    }
+    const out = new Set(ids);
+    const queue = [...ids];
+    while (queue.length) {
+      const cur = queue.shift();
+      const kids = childrenMap.get(String(cur)) || [];
+      for (const k of kids) {
+        if (!out.has(k)) { out.add(k); queue.push(k); }
+      }
+    }
+    return [...out];
+  } catch (e) {
+    console.error('expandDepartmentIds 查询失败:', e.message);
+    return ids;
+  }
+}
+
 // 清除用户权限缓存
 function clearUserPermCache(userId) {
   userPermCache.delete(userId);
@@ -3470,35 +3564,38 @@ app.get('/api/user/info', async (req, res) => {
   }
 });
 
-app.get('/api/departments', async (req, res) => {
-  const userId = getUserId(req);
-  const userRole = req.headers['x-user-role'] || '';
-  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
-  const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'department');
-  if (hasAll) {
-    const stmt = db.prepare('SELECT * FROM departments ORDER BY id');
-    return res.json(await stmt.all());
-  }
-  // 非 read_all 只能看到自己所属部门，兼容 creator_id 逻辑
-  const stmt = db.prepare('SELECT * FROM departments ORDER BY id');
-  res.json(await stmt.all());
-});
-
 app.get('/api/employees', async (req, res) => {
   const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: '未登录' });
   const userRole = req.headers['x-user-role'] || '';
   const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
   const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'employee');
+  // 字段级权限：薪资 / 身份证（无权限则脱敏，本人除外）
+  const canSensitive = await canSeeEmployeeSensitive(userId);
   if (hasAll) {
-    const stmt = db.prepare(`SELECT e.*, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id ORDER BY e.created_at DESC`);
-    return res.json(await stmt.all());
+    const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id ORDER BY e.created_at DESC`);
+    return res.json(maskEmployeeSensitive(await stmt.all(), canSensitive, userId));
   }
-  const stmt = db.prepare(`SELECT e.*, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ? ORDER BY e.created_at DESC`);
-  res.json(await stmt.all(userId));
+  // 数据范围：角色配置了「可管理部门」→ 可查看这些部门（含子部门）的员工
+  const managedDeptIds = await getManagedDepartmentIds(userId);
+  if (managedDeptIds && managedDeptIds.length) {
+    const deptIds = await expandDepartmentIds(managedDeptIds);
+    if (deptIds.length) {
+      const placeholders = deptIds.map(() => '?').join(',');
+      const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.department_id IN (${placeholders}) OR e.id = ? ORDER BY e.created_at DESC`);
+      return res.json(maskEmployeeSensitive(await stmt.all([...deptIds, userId]), canSensitive, userId));
+    }
+  }
+  // 默认：仅本人
+  const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ? ORDER BY e.created_at DESC`);
+  res.json(maskEmployeeSensitive(await stmt.all(userId), canSensitive, userId));
 });
 
 // GET /api/employees/grouped-by-department — 按部门分组的员工列表，供项目编辑页下拉用
 app.get('/api/employees/grouped-by-department', async (req, res) => {
+  // 安全修复：该接口原先完全无鉴权，未登录即可拉取全公司姓名+手机号，现要求登录
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: '未登录' });
   try {
     const deptRows = await db.prepare('SELECT id, name FROM departments ORDER BY name').all();
     const empRows = await db.prepare('SELECT id, name, phone, department_id FROM employees ORDER BY department_id, name').all();
@@ -3556,12 +3653,21 @@ app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res
   const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
   if (!name) return res.status(400).json({ error: '姓名必填' });
 
-  // 不允许通过此接口修改用户名（用户名就是电话）
-  const stmt = db.prepare(`
-    UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, salary=?, id_card=?, emergency_contact=?, emergency_phone=?
-    WHERE id=?
-  `);
-  await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
+  // 字段级权限：无「薪资/身份证」权限者不得覆盖这两个字段（列表已脱敏，防止把真实值抹成空）
+  const canSensitive = await canSeeEmployeeSensitive(userId);
+  if (canSensitive) {
+    const stmt = db.prepare(`
+      UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, salary=?, id_card=?, emergency_contact=?, emergency_phone=?
+      WHERE id=?
+    `);
+    await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
+  } else {
+    const stmt = db.prepare(`
+      UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, emergency_contact=?, emergency_phone=?
+      WHERE id=?
+    `);
+    await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, emergency_contact, emergency_phone, req.params.id);
+  }
   await addLog(userId, '', '编辑', '员工管理', req.params.id, name || '', `更新员工: ${name || req.params.id}`, req.ip);
   clearAuthRoleCache();
   clearUserPermCache(parseInt(req.params.id));
@@ -8526,6 +8632,17 @@ const webDistPath = path.join(__dirname, '../web/dist');
 if (fs.existsSync(webDistPath)) {
   app.use(express.static(webDistPath));
 }
+// 移动端 H5 生产产物（build:h5 产物；index.html + assets + static）
+// 路径前缀 /m：与 PC 前端（/）、API（/api）完全互不干扰；SPA fallback 见下方 app.get('*')。
+const mobileDistPath = path.join(__dirname, 'public-mobile-h5');
+if (fs.existsSync(mobileDistPath)) {
+  app.use('/m', express.static(mobileDistPath));
+  // 兜底：uni-h5 tabBar 图标是 pages.json 里写的相对路径 'static/tab-home.png'，
+  // getRealPath() 计算时会拼成 '/static/...'（不带 /m 前缀），导致 404 或拉到 PC 同名 png。
+  // 这里在 3002 后端直接把 /static/* 指向 mobile/static，让 tabBar 图标总能正确命中。
+  // 与 PC web/dist 没有同名 static，零冲突。
+  app.use('/static', express.static(path.join(mobileDistPath, 'static')));
+}
 
 // 临时调试：查询员工权限
 app.get('/api/debug-perms', async (req, res) => {
@@ -8685,9 +8802,9 @@ app.get('/api/mobile/home-stats', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
 
-    // 1. 进行中项目数
+    // 1. 进行中项目数：所有"非终止态"（开工准备/进行中/施工中/暂停等都算在跑；只排除已收尾/已取消/已交付/已完成）
     const inProgress = Number((await db.prepare(
-      "SELECT COUNT(*) as count FROM projects WHERE status = '进行中'"
+      "SELECT COUNT(*) as count FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> ''"
     ).get())?.count) || 0;
 
     // 2. 逾期节点数（end_date < 今天 且 status != 'completed'）
@@ -9047,13 +9164,13 @@ app.get('/api/todo/center', async (req, res) => {
       }));
     }
 
-    // 5) 进行中项目数（按项目相关人过滤；admin=全公司）
+    // 5) 进行中项目数：所有非终止态（开工准备/进行中/施工中/暂停等都算在跑；排除已收尾/已取消/已交付/已完成等）
     const inProgress = myProjectIds.length
       ? (await pool.query(
-          `SELECT COUNT(*) c FROM projects WHERE status='进行中' AND id IN (${myProjectIds.map(() => '?').join(',')})`,
+          `SELECT COUNT(*) c FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> '' AND id IN (${myProjectIds.map(() => '?').join(',')})`,
           myProjectIds
         ))[0][0].c
-      : (admin ? (await pool.query("SELECT COUNT(*) c FROM projects WHERE status='进行中'"))[0][0].c : 0);
+      : (admin ? (await pool.query("SELECT COUNT(*) c FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> ''"))[0][0].c : 0);
     const overdue = (await pool.query(
       `SELECT COUNT(*) c FROM project_stages
        WHERE plan_end_date IS NOT NULL AND plan_end_date < ?
@@ -9101,6 +9218,11 @@ app.get('/api/todo/center', async (req, res) => {
 
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads') && !req.path.startsWith('/auth')) {
+    // 移动端 SPA：/m/* 命中时返回移动端 index.html
+    if (req.path.startsWith('/m')) {
+      const mobileIndex = path.join(mobileDistPath, 'index.html');
+      if (fs.existsSync(mobileIndex)) return res.sendFile(mobileIndex);
+    }
     res.sendFile(path.join(webDistPath, 'index.html'));
   } else {
     res.status(404).json({ error: 'Not Found' });

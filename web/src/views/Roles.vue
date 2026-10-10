@@ -71,7 +71,7 @@
         <el-tab-pane label="功能权限" name="permissions">
           <el-table :data="moduleList" border style="width: 100%">
             <el-table-column prop="name" label="模块" width="150" />
-            <el-table-column label="全部" width="70">
+            <el-table-column label="全部数据" width="90">
               <template #default="scope">
                 <el-checkbox
                   v-model="scope.row.hasAll"
@@ -122,9 +122,25 @@
                 />
               </template>
             </el-table-column>
+            <el-table-column label="财务" width="70">
+              <template #default="scope">
+                <el-checkbox
+                  v-model="scope.row.finance_action"
+                  :disabled="isAllPermission || !scope.row.hasFinance"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="薪资" width="70">
+              <template #default="scope">
+                <el-checkbox
+                  v-model="scope.row.salary"
+                  :disabled="isAllPermission || !scope.row.hasSalary"
+                />
+              </template>
+            </el-table-column>
           </el-table>
           <div style="margin-top: 10px; color: #909399; font-size: 12px;">
-            注：admin角色拥有全部权限，无需单独设置
+            注：「全部数据」指可查看该模块的全部数据（read_all），不勾选则只能查看自己创建/相关的数据；「财务」列仅采购模块可用；「薪资」列仅员工模块可用，勾选后可查看员工薪资与身份证（敏感字段），不勾选则列表脱敏（本人始终可见自己的）。admin 角色拥有全部权限，无需单独设置。
           </div>
         </el-tab-pane>
 
@@ -148,20 +164,31 @@
 
         <!-- Tab4 - 可管理部门 -->
         <el-tab-pane label="可管理部门" name="departments">
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom: 14px;">
+            <div style="line-height: 1.6; font-size: 13px;">
+              勾选后，该角色即使没有「员工管理 · 全部数据」权限，也能查看<b>所辖部门（含下级部门）</b>的员工与移动端通讯录；
+              不勾选则不启用，保持原有权限逻辑。适用于部门负责人 / 项目经理等需要管理下属的场景。
+            </div>
+          </el-alert>
           <el-checkbox-group v-model="selectedDepartments">
             <el-row>
               <el-col
-                v-for="dept in departments"
+                v-for="dept in deptOptions"
                 :key="dept.id"
                 :span="8"
                 style="margin-bottom: 10px;"
               >
                 <el-checkbox :value="dept.id">
-                  {{ dept.name }}
+                  <span :style="{ paddingLeft: (dept.depth * 14) + 'px' }">
+                    {{ dept.depth > 0 ? '└ ' : '' }}{{ dept.name }}
+                  </span>
                 </el-checkbox>
               </el-col>
             </el-row>
           </el-checkbox-group>
+          <div v-if="!departments.length" style="color: #909399; font-size: 13px; padding: 6px 0;">
+            暂无部门，请先在「部门管理」中创建部门。
+          </div>
         </el-tab-pane>
       </el-tabs>
 
@@ -199,6 +226,29 @@ import request from '@/utils/request'
 
 const roleList = ref([])
 const departments = ref([])
+
+// 部门选项：按 parent_id 组织为层级并缩进展示（便于识别上下级部门）
+const deptOptions = computed(() => {
+  const list = departments.value || []
+  const byParent = new Map()
+  list.forEach((d) => {
+    const p = d.parent_id ? d.parent_id : '__root__'
+    if (!byParent.has(p)) byParent.set(p, [])
+    byParent.get(p).push(d)
+  })
+  const out = []
+  const walk = (key, depth) => {
+    (byParent.get(key) || []).forEach((d) => {
+      out.push({ id: d.id, name: d.name, depth })
+      walk(d.id, depth + 1)
+    })
+  }
+  walk('__root__', 0)
+  // 兜底：parent_id 指向不存在部门的孤立节点也要展示
+  const seen = new Set(out.map((o) => o.id))
+  list.forEach((d) => { if (!seen.has(d.id)) out.push({ id: d.id, name: d.name, depth: 0 }) })
+  return out
+})
 const showDialog = ref(false)
 const showQuickDialog = ref(false)
 const isEdit = ref(false)
@@ -224,9 +274,10 @@ const presetRoles = [
     name: '项目经理',
     code: 'project_manager',
     permissions: [
-      'customer:read', 'contract:read', 'project:write', 'inspection:read',
-      'acceptance:read', 'finance:read', 'notice:read', 'notice:write',
-      'dispatch:write', 'approval:read', 'approval:write', 'budget:read'
+      'customer:read', 'contract:read', 'project:read', 'project:write', 'project:read_all',
+      'inspection:read', 'acceptance:read', 'finance:read', 'notice:read', 'notice:write',
+      'dispatch:write', 'approval:read', 'approval:write', 'budget:read',
+      'quote:read', 'quote:write', 'purchase:read', 'purchase:approve'
     ],
     notification_types: [
       'contract_created', 'contract_updated', 'project_created', 'project_status_changed',
@@ -241,7 +292,8 @@ const presetRoles = [
     code: 'designer',
     permissions: [
       'customer:read', 'customer:write', 'project:read', 'project:write',
-      'contract:read', 'inspection:read', 'notice:read'
+      'contract:read', 'inspection:read', 'notice:read',
+      'quote:read', 'quote:write', 'purchase:read', 'purchase:approve'
     ],
     notification_types: [
       'project_created', 'node_status_changed', 'project_progress', 'acceptance_submit',
@@ -253,7 +305,8 @@ const presetRoles = [
     name: '监理',
     code: 'supervisor',
     permissions: [
-      'project:read', 'inspection:write', 'acceptance:write', 'notice:read'
+      'project:read', 'inspection:write', 'acceptance:write', 'notice:read',
+      'purchase:read'
     ],
     notification_types: [
       'inspection_submit', 'acceptance_submit', 'dispatch_created',
@@ -265,8 +318,9 @@ const presetRoles = [
     name: '财务',
     code: 'finance',
     permissions: [
-      'finance:read', 'finance:write', 'contract:read',
-      'invoice:read', 'invoice:write', 'notice:read'
+      'finance:read', 'finance:write', 'finance:delete', 'finance:read_all',
+      'contract:read', 'invoice:read', 'invoice:write', 'notice:read',
+      'purchase:read', 'purchase:finance'
     ],
     notification_types: [
       'contract_created', 'contract_updated', 'invoice_created', 'approval_result',
@@ -289,27 +343,32 @@ const presetRoles = [
 ]
 
 // 模块列表
+// key 必须与后端权限码前缀一致（server.js 中 checkPermission / hasReadAllPermission 使用的模块名）
+// hasDelete / hasResetPassword / hasApprove / hasFinance 控制该模块是否展示对应的动作列
 const moduleList = ref([
   { key: 'customer', name: '客户管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
   { key: 'project_contract', name: '项目合同', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
   { key: 'project', name: '项目管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
+  { key: 'quote', name: '报价管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'inspection', name: '巡检验房', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'acceptance', name: '验收管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'approval', name: '审批管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'employee', name: '员工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true },
   { key: 'notice', name: '通知公告', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'report', name: '报表管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'budget', name: '预算管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'warehouse', name: '仓库管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'settings', name: '系统设置', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'sms', name: '短信模板', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
-  { key: 'role', name: '角色管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
-  { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
-  { key: 'purchase', name: '采购管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'budget', name: '预算管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'finance', name: '财务管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'purchase', name: '采购管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
+  { key: 'warehouse', name: '仓库管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'supplier', name: '供应商管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
   { key: 'invoice', name: '发票管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'supplier', name: '供应商管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false }
+  { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
+  { key: 'employee', name: '员工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true, hasSalary: true, salary: false },
+  { key: 'role', name: '角色管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'department', name: '部门管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'sms', name: '短信模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  { key: 'settings', name: '系统设置', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false }
 ])
 
 // 消息类型
@@ -441,6 +500,9 @@ const parsePermissionsToModules = (perms) => {
     module.write = perms.includes(`${module.key}:write`);
     module.delete = perms.includes(`${module.key}:delete`);
     module.reset_password = perms.includes(`${module.key}:reset_password`);
+    module.approve = perms.includes(`${module.key}:approve`);
+    module.finance_action = perms.includes(`${module.key}:finance`);
+    module.salary = perms.includes(`${module.key}:salary`);
   });
 }
 
@@ -499,6 +561,8 @@ const handleSave = async () => {
       if (module.delete) permissions.push(`${module.key}:delete`);
       if (module.reset_password) permissions.push(`${module.key}:reset_password`);
       if (module.approve) permissions.push(`${module.key}:approve`);
+      if (module.finance_action) permissions.push(`${module.key}:finance`);
+      if (module.salary) permissions.push(`${module.key}:salary`);
     });
   }
 
@@ -561,6 +625,9 @@ const resetFormData = () => {
     module.write = false;
     module.delete = false;
     module.reset_password = false;
+    module.approve = false;
+    module.finance_action = false;
+    module.salary = false;
   });
 }
 

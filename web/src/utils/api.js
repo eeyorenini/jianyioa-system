@@ -23,7 +23,11 @@ export const employeeApi = {
   create: (data) => request.post('/employees', data),
   update: (id, data) => request.put(`/employees/${id}`, data),
   delete: (id) => request.delete(`/employees/${id}`),
-  login: (data) => request.post('/employees/login', data)
+  login: (data) => request.post('/employees/login', data),
+  // 当前身份 + 权限（服务端权威判定，返回 is_admin / permissions / role_code 等）
+  me: () => request.get('/me'),
+  // 当前用户权限码数组
+  myPermissions: () => request.get('/my-permissions')
 }
 
 // ============ 合同相关（不动） ============
