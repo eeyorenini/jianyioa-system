@@ -3657,22 +3657,36 @@ app.get('/api/roles', async (req, res) => {
 
 app.post('/api/roles', checkPermission('role:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
-    
+
   const userId = getUserId(req);
-  const { name, code, description, permissions } = req.body;
-  const stmt = db.prepare('INSERT INTO roles (name, code, description, permissions) VALUES (?, ?, ?, ?)');
-  const result = await stmt.run(name, code, description, JSON.stringify(permissions || []));
+  const { name, code, description, permissions, notification_types, managed_department_ids } = req.body;
+  const stmt = db.prepare('INSERT INTO roles (name, code, description, permissions, notification_types, managed_department_ids) VALUES (?, ?, ?, ?, ?, ?)');
+  const result = await stmt.run(
+    name, code, description,
+    JSON.stringify(permissions || []),
+    JSON.stringify(notification_types || []),
+    managed_department_ids ? JSON.stringify(managed_department_ids) : null
+  );
   await addLog(userId, '', '新增', '角色管理', result.lastInsertRowid, name, `角色名称: ${name}`, req.ip);
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
 app.put('/api/roles/:id', checkPermission('role:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
-    
+
   const userId = getUserId(req);
-  const { name, code, description, permissions } = req.body;
-  const stmt = db.prepare('UPDATE roles SET name=?, code=?, description=?, permissions=? WHERE id=?');
-  await stmt.run(name, code, description, JSON.stringify(permissions || []), req.params.id);
+  const { name, code, description, permissions, notification_types, managed_department_ids } = req.body;
+  // 注意：这里使用 pool 而不是 db（db 是 better-sqlite3，pool 是 mysql2）
+  await pool.query(
+    'UPDATE roles SET name=?, code=?, description=?, permissions=?, notification_types=?, managed_department_ids=? WHERE id=?',
+    [
+      name, code, description,
+      JSON.stringify(permissions || []),
+      JSON.stringify(notification_types || []),
+      managed_department_ids ? JSON.stringify(managed_department_ids) : null,
+      req.params.id
+    ]
+  );
   await addLog(userId, '', '编辑', '角色管理', req.params.id, name, `更新角色: ${name}`, req.ip);
   res.json({ message: '更新成功' });
 });
@@ -4166,15 +4180,19 @@ async function sendApprovalNotification({ userId, userName, title, content, type
 // 查询具有指定权限的用户ID列表
 async function getUserIdsByPermission(permCode) {
   try {
+    // 2026-10-10 修复：MySQL 5.5 没有 JSON_SEARCH，改在 Node 层解析 JSON
     const [rows] = await pool.query(`
-      SELECT DISTINCT e.id FROM employees e
+      SELECT DISTINCT e.id, r.permissions FROM employees e
       LEFT JOIN roles r ON e.role_id = r.id
-      WHERE (
-        (r.permissions IS NOT NULL AND r.permissions != '' AND r.permissions != '[]'
-          AND (r.permissions LIKE ? OR JSON_SEARCH(r.permissions, 'one', ?) IS NOT NULL))
-      )
-    `, [`%${permCode}%`, permCode]);
-    return rows.map(r => r.id);
+      WHERE r.permissions IS NOT NULL AND r.permissions != '' AND r.permissions != '[]'
+    `);
+    const matched = [];
+    for (const row of rows) {
+      let arr = [];
+      try { arr = typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions; } catch {}
+      if (Array.isArray(arr) && arr.includes(permCode)) matched.push(row.id);
+    }
+    return matched;
   } catch (e) {
     console.error('getUserIdsByPermission error:', e.message);
     return [];
@@ -4184,18 +4202,46 @@ async function getUserIdsByPermission(permCode) {
 // 查询订阅了指定消息类型的用户ID列表
 async function getUserIdsByNotificationType(notifType) {
   try {
+    // 2026-10-10 修复：MySQL 5.5 没有 JSON_SEARCH，改在 Node 层解析 JSON
     const [rows] = await pool.query(`
-      SELECT DISTINCT e.id FROM employees e
+      SELECT DISTINCT e.id, r.notification_types FROM employees e
       LEFT JOIN roles r ON e.role_id = r.id
-      WHERE (
-        r.notification_types IS NOT NULL AND r.notification_types != ''
-        AND r.notification_types != '[]'
-        AND JSON_SEARCH(r.notification_types, 'one', ?) IS NOT NULL
-      )
-    `, [notifType]);
-    return rows.map(r => r.id);
+      WHERE r.notification_types IS NOT NULL AND r.notification_types != '' AND r.notification_types != '[]'
+    `);
+    const matched = [];
+    for (const row of rows) {
+      let arr = [];
+      try { arr = typeof row.notification_types === 'string' ? JSON.parse(row.notification_types) : row.notification_types; } catch {}
+      if (Array.isArray(arr) && arr.includes(notifType)) matched.push(row.id);
+    }
+    return matched;
   } catch (e) {
     console.error('getUserIdsByNotificationType error:', e.message);
+    return [];
+  }
+}
+
+// 2026-10-10 新增：获取项目相关人员（项目经理/设计师/监理/创建人/客户）
+// 只返回 employees 表里实际存在的 id（客户在 customers 表不在 employees，过滤掉）
+async function getProjectRelatedUserIds(projectId) {
+  if (!projectId) return [];
+  try {
+    const [rows] = await pool.query(
+      `SELECT manager_id, designer_id, supervisor_id, creator_id, customer_id FROM projects WHERE id = ?`,
+      [projectId]
+    );
+    if (!rows[0]) return [];
+    const r = rows[0];
+    const candidates = [...new Set([r.manager_id, r.designer_id, r.supervisor_id, r.creator_id, r.customer_id].filter(Boolean))];
+    if (candidates.length === 0) return [];
+    // 过滤：只在 employees 表里存在
+    const [emps] = await pool.query(
+      `SELECT id FROM employees WHERE id IN (${candidates.map(() => '?').join(',')})`,
+      candidates
+    );
+    return emps.map(e => e.id);
+  } catch (e) {
+    console.error('getProjectRelatedUserIds error:', e.message);
     return [];
   }
 }
@@ -4218,6 +4264,210 @@ async function sendPurchaseNotification({ userId, userName, title, content, type
     console.error('sendPurchaseNotification error:', err);
   }
 }
+
+// 2026-10-10 新增：多通道通知分发器（站内 / 短信 / 微信小程序订阅消息 / 企业微信）
+// 调用方式：await dispatchNotification({ userId, channels: ['inapp','sms','mini_subscribe'], type:'purchase_approved', title, content, data:{thing1, time2}, relatedId, relatedType })
+// channels 可选：inapp / sms / mini_subscribe / mp_template / wecom / email
+async function dispatchNotification({ userId, channels = ['inapp', 'sms'], type, title, content, data = {}, relatedId, relatedType }) {
+  if (!userId) return [];
+  const results = [];
+  // 1. 站内消息 (inapp)
+  if (channels.includes('inapp')) {
+    try {
+      const [r] = await pool.query(
+        `INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, channel, push_status, created_at)
+         VALUES (?, '', ?, ?, ?, ?, ?, 'inapp', 'sent', NOW())`,
+        [userId, title, content, type, relatedId || 0, relatedType || '']
+      );
+      results.push({ channel: 'inapp', success: true, message_id: r.insertId });
+    } catch (e) {
+      results.push({ channel: 'inapp', success: false, error: e.message });
+    }
+  }
+  // 2. 短信 (sms)
+  if (channels.includes('sms')) {
+    try {
+      const [emps] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+      if (emps[0] && emps[0].phone) {
+        await sendSmsFromNotify(emps[0].phone, '', title, content);
+        results.push({ channel: 'sms', success: true });
+      } else {
+        results.push({ channel: 'sms', success: false, error: 'no_phone' });
+      }
+    } catch (e) {
+      results.push({ channel: 'sms', success: false, error: e.message });
+    }
+  }
+  // 3. 微信小程序订阅消息（stub — 待小程序上线后接入 SDK）
+  if (channels.includes('mini_subscribe')) {
+    try {
+      const [ids] = await pool.query(
+        `SELECT openid FROM wechat_identities WHERE employee_id = ? AND wechat_type = 'mini' LIMIT 1`,
+        [userId]
+      );
+      if (!ids[0] || !ids[0].openid) {
+        results.push({ channel: 'mini_subscribe', success: false, error: 'no_openid' });
+      } else {
+        // TODO: 接入微信 subscribeMessage.send
+        // 1) 查 wechat_templates 拿 template_id (按 type)
+        const [tpl] = await pool.query(
+          `SELECT template_id, data_keys FROM wechat_templates WHERE template_code = ? AND wechat_type = 'mini' AND status='active' LIMIT 1`,
+          [type]
+        );
+        if (!tpl[0] || !tpl[0].template_id) {
+          results.push({ channel: 'mini_subscribe', success: false, error: 'no_template', template_code: type });
+        } else {
+          // 2) 查 user 是否授权过这个 template_id
+          const [auth] = await pool.query(
+            `SELECT id, expires_at FROM subscribe_records WHERE employee_id = ? AND template_id = ? AND status='authorized' LIMIT 1`,
+            [userId, tpl[0].template_id]
+          );
+          if (!auth[0]) {
+            results.push({ channel: 'mini_subscribe', success: false, error: 'not_authorized', template_id: tpl[0].template_id });
+          } else {
+            // 3) 调微信 API (stub - 待实现)
+            // const apiRes = await callWechatSubscribeMsgAPI({ openid, template_id, data, ... });
+            // results.push({ channel: 'mini_subscribe', success: apiRes.errcode === 0, external_id: apiRes.msgid });
+            results.push({ channel: 'mini_subscribe', success: true, stub: true, template_id: tpl[0].template_id });
+          }
+        }
+      }
+    } catch (e) {
+      results.push({ channel: 'mini_subscribe', success: false, error: e.message });
+    }
+  }
+  return results;
+}
+
+// 2026-10-10 新增：access_token 缓存（微信 API 调用前置）
+const _wechatTokenCache = new Map();
+async function getWechatAccessToken(wechatType) {
+  // TODO: 实际接入时从 wechat_config 读 appid/secret，调用微信 API
+  // const [rows] = await pool.query('SELECT appid, app_secret FROM wechat_config WHERE wechat_type = ? AND is_default = 1', [wechatType]);
+  // if (cached && !expired) return cached;
+  // const res = await axios.get(`https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appid}&secret=${secret}`);
+  // cache.set(wechatType, { token: res.access_token, expires: Date.now() + 7000*1000 });
+  return { token: null, stub: true, wechatType };
+}
+
+// =================== 微信小程序/公众号 配置 + 身份 + 模板 + 订阅 ===================
+// 1. 微信配置 CRUD
+app.get('/api/wechat/config', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT id, wechat_type, appid, is_default, created_at FROM wechat_config ORDER BY id');
+    res.json({ list: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/wechat/config', async (req, res) => {
+  try {
+    const { wechat_type, appid, app_secret, is_default } = req.body;
+    if (!wechat_type || !['mp', 'mini'].includes(wechat_type)) return res.status(400).json({ error: 'wechat_type 必须为 mp 或 mini' });
+    if (is_default) await pool.query('UPDATE wechat_config SET is_default = 0');
+    const [r] = await pool.query(
+      'INSERT INTO wechat_config (wechat_type, appid, app_secret, is_default, created_at) VALUES (?, ?, ?, ?, NOW())',
+      [wechat_type, appid || '', app_secret || '', is_default ? 1 : 0]
+    );
+    res.json({ id: r.insertId, message: '配置已保存（access_token 调用待接入 SDK）' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 2. 员工微信身份 CRUD
+app.get('/api/wechat/identity', async (req, res) => {
+  try {
+    const { employee_id, wechat_type } = req.query;
+    let sql = 'SELECT * FROM wechat_identities WHERE 1=1';
+    const params = [];
+    if (employee_id) { sql += ' AND employee_id = ?'; params.push(employee_id); }
+    if (wechat_type) { sql += ' AND wechat_type = ?'; params.push(wechat_type); }
+    const [rows] = await pool.query(sql, params);
+    res.json({ list: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/wechat/identity', async (req, res) => {
+  try {
+    const { employee_id, wechat_type, appid, openid, unionid } = req.body;
+    if (!employee_id || !wechat_type) return res.status(400).json({ error: '缺少 employee_id 或 wechat_type' });
+    if (!['mp', 'mini'].includes(wechat_type)) return res.status(400).json({ error: 'wechat_type 必须为 mp 或 mini' });
+    if (!openid && !unionid) return res.status(400).json({ error: 'openid 和 unionid 至少需要一个' });
+    // upsert
+    await pool.query(
+      `INSERT INTO wechat_identities (employee_id, wechat_type, appid, openid, unionid, created_at)
+       VALUES (?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE appid=VALUES(appid), openid=COALESCE(VALUES(openid), openid), unionid=COALESCE(VALUES(unionid), unionid)`,
+      [employee_id, wechat_type, appid || '', openid || null, unionid || null]
+    );
+    res.json({ message: '微信身份已绑定（待小程序上线后实际生效）' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 3. 微信模板 CRUD（用户在微信后台申请后，把 template_id 录入到这里）
+app.get('/api/wechat/templates', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM wechat_templates ORDER BY template_code, wechat_type');
+    res.json({ list: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/wechat/templates', async (req, res) => {
+  try {
+    const { template_code, wechat_type, template_id, title, data_keys, status } = req.body;
+    if (!template_code || !wechat_type || !template_id) return res.status(400).json({ error: '缺少必填字段 template_code/wechat_type/template_id' });
+    await pool.query(
+      `INSERT INTO wechat_templates (template_code, wechat_type, template_id, title, data_keys, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE template_id=VALUES(template_id), title=VALUES(title), data_keys=VALUES(data_keys), status=VALUES(status)`,
+      [template_code, wechat_type, template_id, title || '', JSON.stringify(data_keys || []), status || 'active']
+    );
+    res.json({ message: '模板已注册（实际推送待 SDK 接入）' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 4. 订阅授权记录（用户在 H5/小程序里点订阅按钮后调用）
+app.get('/api/wechat/subscribe', async (req, res) => {
+  try {
+    const { employee_id } = req.query;
+    if (!employee_id) return res.status(400).json({ error: '缺少 employee_id' });
+    const [rows] = await pool.query(
+      `SELECT * FROM subscribe_records WHERE employee_id = ? AND status='authorized' ORDER BY authorized_at DESC`,
+      [employee_id]
+    );
+    res.json({ list: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/wechat/subscribe', async (req, res) => {
+  try {
+    const { employee_id, template_id, expires_at } = req.body;
+    if (!employee_id || !template_id) return res.status(400).json({ error: '缺少 employee_id 或 template_id' });
+    await pool.query(
+      `INSERT INTO subscribe_records (employee_id, template_id, authorized_at, expires_at, status)
+       VALUES (?, ?, NOW(), ?, 'authorized')
+       ON DUPLICATE KEY UPDATE expires_at=VALUES(expires_at), status='authorized'`,
+      [employee_id, template_id, expires_at || null]
+    );
+    res.json({ message: '订阅授权已记录' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 5. 统一通知分发接口（前端/PC 端测试用）
+app.post('/api/notify/dispatch', async (req, res) => {
+  try {
+    const { user_id, channels, type, title, content, data, related_id, related_type } = req.body;
+    if (!user_id) return res.status(400).json({ error: '缺少 user_id' });
+    if (!title || !content) return res.status(400).json({ error: '缺少 title 或 content' });
+    const results = await dispatchNotification({
+      userId: user_id,
+      channels: channels || ['inapp'],
+      type: type || 'custom',
+      title, content, data: data || {},
+      relatedId: related_id,
+      relatedType: related_type
+    });
+    res.json({ results, message: '通知已分发（外部通道为 stub）' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // GET /api/purchase-requests — 列表（支持 project_id / status / applicant_id 过滤）
 app.get('/api/purchase-requests', async (req, res) => {
@@ -4339,12 +4589,13 @@ app.post('/api/purchase-requests', async (req, res) => {
 
     await addLog(userId, '', '新增', '采购管理', requestId, project_name || '', `提交采购申请，金额：${total_amount}`, req.ip);
 
-    // 通知有 purchase:approve 权限的人 + 订阅了 purchase_submit 的角色成员
+    // 通知有 purchase:approve 权限的人 + 订阅了 purchase_submit 的角色成员 + 项目相关人员
     const approverIds = await getUserIdsByPermission('purchase:approve');
     const subscribedIds = await getUserIdsByNotificationType('purchase_submit');
-    const allNotifyIds = [...new Set([...approverIds, ...subscribedIds])];
+    const projectUserIds = await getProjectRelatedUserIds(raw.project_id);
+    const allNotifyIds = [...new Set([...approverIds, ...subscribedIds, ...projectUserIds])];
     for (const uid of allNotifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4383,6 +4634,17 @@ app.get('/api/purchase-requests/my', checkPermission('purchase:read'), async (re
       'SELECT COUNT(*) as total FROM purchase_requests WHERE applicant_id = ?',
       [targetId]
     );
+    // 2026-10-10：附上每条的 reimbursement 记录，让 list 卡片能展示报销凭证
+    if (rows.length > 0) {
+      const ids = rows.map(r => r.id);
+      const [reim] = await pool.query(
+        `SELECT request_id, images, actual_amount, financial_notes, confirmed_by_name, confirmed_at, reject_reason
+         FROM purchase_reimbursements WHERE request_id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      const map = new Map(reim.map(r => [r.request_id, r]));
+      rows.forEach(r => { r.reimbursement = map.get(r.id) || null; });
+    }
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests my error:', err);
@@ -4644,12 +4906,13 @@ app.put('/api/purchase-requests/:id/approve', async (req, res) => {
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '采购管理', req.params.id, rows[0].project_name || '', `采购审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
 
-    // 通知申请人 + 订阅了该通知类型的角色成员
+    // 通知申请人 + 订阅了该通知类型的角色成员 + 项目相关人员
     const record = rows[0];
     const subscribedIds = await getUserIdsByNotificationType(action === 'approve' ? 'purchase_approved' : 'purchase_rejected');
-    const allNotifyIds = new Set([record.applicant_id, ...subscribedIds]);
+    const projectUserIds = await getProjectRelatedUserIds(record.project_id);
+    const allNotifyIds = new Set([record.applicant_id, ...subscribedIds, ...projectUserIds]);
     for (const uid of allNotifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         if (action === 'approve') {
           await sendPurchaseNotification({
@@ -4698,10 +4961,12 @@ app.put('/api/purchase-requests/:id/unapprove', async (req, res) => {
 
     await addLog(userId, '', '反审核', '采购管理', req.params.id, rows[0].project_name || '', `反审核，状态从 approved 回退到 pending`, req.ip);
 
-    // 通知有 purchase:approve 权限的人
+    // 通知有 purchase:approve 权限的人 + 项目相关人员
     const approverIds = await getUserIdsByPermission('purchase:approve');
-    for (const uid of approverIds) {
-      if (uid !== userId) {
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const allUnapproveIds = [...new Set([...approverIds, ...projectUserIds])];
+    for (const uid of allUnapproveIds) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4759,12 +5024,13 @@ app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), asyn
 
     await addLog(userId, '', '上传报销', '采购管理', req.params.id, rows[0].project_name || '', `上传报销单，实付金额：${actual_amount || 0}`, req.ip);
 
-    // 通知有 purchase:finance 权限的人 + 订阅了 purchase_reimbursing 的角色成员
+    // 通知有 purchase:finance 权限的人 + 订阅了 purchase_reimbursing 的角色成员 + 项目相关人员
     const financeIds = await getUserIdsByPermission('purchase:finance');
     const subscribedIds = await getUserIdsByNotificationType('purchase_reimbursing');
-    const allNotifyIds = [...new Set([...financeIds, ...subscribedIds])];
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const allNotifyIds = [...new Set([...financeIds, ...subscribedIds, ...projectUserIds])];
     for (const uid of allNotifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4810,11 +5076,12 @@ app.put('/api/purchase-requests/:id/finance-reject', async (req, res) => {
 
     await addLog(userId, '', '财务驳回', '采购管理', req.params.id, rows[0].project_name || '', `财务驳回报销，原因：${reason || '未填写'}`, req.ip);
 
-    // 通知申请人 + 订阅了 purchase_rejected 的角色成员
+    // 通知申请人 + 订阅了 purchase_rejected 的角色成员 + 项目相关人员
     const subscribedIds = await getUserIdsByNotificationType('purchase_rejected');
-    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds]);
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds, ...projectUserIds]);
     for (const uid of allNotifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4861,11 +5128,12 @@ app.post('/api/purchase-requests/:id/finance-accept', async (req, res) => {
 
     await addLog(userId, '', '财务受理', '采购管理', req.params.id, rows[0].project_name || '', `财务受理报销申请，实付：${amount}`, req.ip);
 
-    // 通知申请人 + 订阅了 purchase_finance_confirmed 的角色成员
+    // 通知申请人 + 订阅了 purchase_finance_confirmed 的角色成员 + 项目相关人员
     const subscribedIds = await getUserIdsByNotificationType('purchase_finance_confirmed');
-    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds]);
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const allNotifyIds = new Set([rows[0].applicant_id, ...subscribedIds, ...projectUserIds]);
     for (const uid of allNotifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4908,11 +5176,12 @@ app.post('/api/purchase-requests/:id/finance-confirm', async (req, res) => {
 
     await addLog(userId, '', '财务确认', '采购管理', req.params.id, rows[0].project_name || '', `财务确认报销完成，回执图片已上传`, req.ip);
 
-    // 通知申请人 + 原审核人 + 订阅了 purchase_reimbursed 的角色成员
+    // 通知申请人 + 原审核人 + 订阅了 purchase_reimbursed 的角色成员 + 项目相关人员
     const subscribedIds = await getUserIdsByNotificationType('purchase_reimbursed');
-    const notifyIds = new Set([rows[0].applicant_id, ...await getUserIdsByPermission('purchase:approve'), ...subscribedIds]);
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const notifyIds = new Set([rows[0].applicant_id, ...await getUserIdsByPermission('purchase:approve'), ...subscribedIds, ...projectUserIds]);
     for (const uid of notifyIds) {
-      if (uid !== userId) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
@@ -4943,10 +5212,12 @@ app.post('/api/purchase-requests/:id/resubmit', async (req, res) => {
 
     await pool.query(`UPDATE purchase_requests SET status='pending', rejection_reason='', updated_at=NOW() WHERE id=?`, [req.params.id]);
 
-    // 通知有 purchase:approve 权限的人
+    // 通知有 purchase:approve 权限的人 + 项目相关人员
     const approverIds = await getUserIdsByPermission('purchase:approve');
-    for (const uid of approverIds) {
-      if (uid !== userId) {
+    const projectUserIds = await getProjectRelatedUserIds(rows[0].project_id);
+    const allResubmitIds = [...new Set([...approverIds, ...projectUserIds])];
+    for (const uid of allResubmitIds) {
+      if (true) { // B3 fix: 不再排除操作人自己 (业务上不会自审自付; admin 测自己也想看通知)
         const [emp] = await pool.query('SELECT name FROM employees WHERE id = ?', [uid]);
         await sendPurchaseNotification({
           userId: uid, userName: emp[0]?.name || '',
