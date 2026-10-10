@@ -1792,14 +1792,17 @@ const userPermCache = new Map();
 const PERM_CACHE_TTL = 30000;
 
 // 获取用户权限数组（5秒超时，防止数据库慢查询卡死所有接口）
+// 2026-10-10 修复：改用 pool (MySQL) 而不是 db (SQLite)，因为权限数据保存在 MySQL
 async function getUserPermissions(userId) {
   if (!userId) return [];
   const cached = userPermCache.get(userId);
   if (cached && Date.now() - cached.ts < PERM_CACHE_TTL) return cached.perms;
   try {
-    const emp = await promiseTimeout(5000, db.prepare('SELECT role_id FROM employees WHERE id = ?').get(userId));
-    if (!emp?.role_id) return [];
-    const role = await promiseTimeout(5000, db.prepare('SELECT permissions FROM roles WHERE id = ?').get(emp.role_id));
+    const [emps] = await promiseTimeout(5000, pool.query('SELECT role_id FROM employees WHERE id = ?', [userId]));
+    if (!emps || emps.length === 0 || !emps[0].role_id) return [];
+    const [roles] = await promiseTimeout(5000, pool.query('SELECT permissions FROM roles WHERE id = ?', [emps[0].role_id]));
+    if (!roles || roles.length === 0) return [];
+    const role = roles[0];
     let perms = [];
     if (role?.permissions) {
       if (typeof role.permissions === 'string') {
@@ -4910,15 +4913,20 @@ app.get('/api/purchase-requests/:id', async (req, res) => {
     const [reimbursements] = await pool.query('SELECT * FROM purchase_reimbursements WHERE request_id = ?', [req.params.id]);
 
     const perms = await getUserPermissions(userId);
-    const canApprove = perms.includes('purchase:approve');
-    const canFinance = perms.includes('purchase:finance');
+    const isAdminUser = await isAdmin(userId);
+    const canApprove = isAdminUser || perms.includes('purchase:approve');
+    const canFinance = isAdminUser || perms.includes('purchase:finance');
 
     const record = rows[0];
     record.items = items;
     record.reimbursement = reimbursements[0] || null;
-    record._canApprove = canApprove;
+    // 2026-10-10：权限/身份标记统一用 can_xxx（前端 detail.vue 读的是这个键名）
+    record._canApprove = canApprove;  // 兼容两种字段名
     record._canFinance = canFinance;
-    record._isApplicant = record.applicant_id === userId;
+    record.can_approve = canApprove;
+    record.can_finance_confirm = canFinance;
+    record.is_admin = await isAdmin(userId);
+    record.is_applicant = record.applicant_id === userId;
 
     res.json(record);
   } catch (err) {
@@ -6087,7 +6095,7 @@ app.delete('/api/cost-records/:id', async (req, res) => {
   res.json({ message: '删除成功' });
 });
 
-// 整改问题
+// 整改问题列表
 app.get('/api/rectification-issues', async (req, res) => {
   const { project_id } = req.query;
   let sql = `SELECT ri.*, e.name as creator_name
@@ -6101,6 +6109,21 @@ app.get('/api/rectification-issues', async (req, res) => {
   sql += ' ORDER BY ri.created_at DESC';
   const stmt = db.prepare(sql);
   res.json(params.length ? await stmt.all(...params) : await stmt.all());
+});
+
+// 整改问题详情（移动端巡检详情页调用）
+app.get('/api/rectification-issues/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const stmt = db.prepare('SELECT * FROM rectification_issues WHERE id = ?');
+    const row = await stmt.get(req.params.id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    res.json(row);
+  } catch (err) {
+    console.error('rectification-issues detail error:', err);
+    res.status(500).json({ error: '查询失败' });
+  }
 });
 
 app.post('/api/rectification-issues', async (req, res) => {
@@ -8809,6 +8832,7 @@ app.get('/api/todo/count', async (req, res) => {
 });
 
 // GET /api/todo/center — 待办中心列表（按权限分组返回）
+// 2026-10-10 扩展：同时返回 home 区块（按角色过滤的统计 + 项目相关事项 + 逾期预警）
 app.get('/api/todo/center', async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -8916,7 +8940,159 @@ app.get('/api/todo/center', async (req, res) => {
     }
 
     const total = groups.reduce((s, g) => s + (g.count || 0), 0);
-    res.json({ code: 0, total, groups, generated_at: new Date().toISOString() });
+
+    // ==== home 区块：按角色过滤的统计 + 项目相关事项 + 逾期预警 ====
+    const today = new Date().toISOString().split('T')[0];
+    const todayPlus3 = new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0];
+
+    // 当前用户关联的项目（设计师/项目经理/监理视角下才会有值；财务/admin 通常为空集）
+    const [myProjects] = await pool.query(
+      `SELECT id, name, status, manager_id, designer_id, supervisor_id
+       FROM projects
+       WHERE manager_id = ? OR designer_id = ? OR supervisor_id = ?
+       ORDER BY id DESC LIMIT 20`,
+      [userId, userId, userId]
+    );
+    const myProjectIds = myProjects.map(p => p.id);
+
+    // 1) 节点提前 3 天提醒（在 home 区域显示）
+    let stage_alerts = [];
+    if (myProjectIds.length > 0) {
+      const [rows] = await pool.query(
+        `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, ps.status, p.name AS project_name
+         FROM project_stages ps
+         JOIN projects p ON p.id = ps.project_id
+         WHERE ps.project_id IN (${myProjectIds.map(() => '?').join(',')})
+           AND ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
+           AND ps.status NOT IN ('completed', '已完成')
+           AND ps.plan_end_date BETWEEN ? AND ?
+         ORDER BY ps.plan_end_date ASC LIMIT 10`,
+        [...myProjectIds, today, todayPlus3]
+      );
+      stage_alerts = rows.map(r => {
+        const days = (new Date(r.plan_end_date) - new Date(today)) / 86400;
+        return {
+          id: r.id, type: 'stage_due',
+          title: r.stage_name,
+          subtitle: r.project_name,
+          time: r.plan_end_date,
+          days_left: Math.round(days),
+          priority: days <= 0 ? 'danger' : 'warning',
+          url: `/pages/projects/detail?id=${r.project_id}`
+        };
+      });
+    }
+
+    // 2) 待整改巡检（按项目相关人过滤：designer/manager/supervisor）
+    let rectify_alerts = [];
+    if (myProjectIds.length > 0 || admin) {
+      const sql = admin
+        ? `SELECT i.id, i.project_id, i.project_name, i.issues, i.score, i.created_at
+           FROM inspections i WHERE i.rectify_status = '待整改' ORDER BY i.created_at DESC LIMIT 10`
+        : `SELECT i.id, i.project_id, i.project_name, i.issues, i.score, i.created_at
+           FROM inspections i WHERE i.rectify_status = '待整改' AND i.project_id IN (${myProjectIds.map(() => '?').join(',')})
+           ORDER BY i.created_at DESC LIMIT 10`;
+      const [rows] = await pool.query(sql, admin ? [] : myProjectIds);
+      rectify_alerts = rows.map(r => ({
+        id: r.id, type: 'inspect_rectify',
+        title: (r.issues || '待整改').slice(0, 30),
+        subtitle: r.project_name,
+        time: __fmtTodoTime(r.created_at),
+        priority: 'danger',
+        url: `/pages/inspection/detail?id=${r.id}`
+      }));
+    }
+
+    // 3) 派工待我处理（worker=本人 或 applicant=本人）
+    let my_dispatch = [];
+    {
+      const [rows] = await pool.query(
+        `SELECT d.id, d.project_id, d.project_name, d.content, d.worker, d.status, d.created_at
+         FROM dispatches d
+         WHERE (d.applicant_id = ? OR d.worker LIKE ?) AND d.status IN ('pending', 'in_progress', '已派工')
+         ORDER BY d.created_at DESC LIMIT 10`,
+        [userId, '%' + userId + '%']
+      );
+      my_dispatch = rows.map(r => ({
+        id: r.id, type: 'dispatch_mine',
+        title: r.content || '派工单',
+        subtitle: [r.project_name, r.worker].filter(Boolean).join(' · '),
+        time: __fmtTodoTime(r.created_at),
+        priority: 'normal',
+        url: `/pages/dispatch/detail?id=${r.id}`
+      }));
+    }
+
+    // 4) 逾期节点预警（按项目相关人）
+    let warnings = [];
+    if (myProjectIds.length > 0) {
+      const [rows] = await pool.query(
+        `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, p.name AS project_name,
+                DATEDIFF(?, ps.plan_end_date) AS days
+         FROM project_stages ps
+         JOIN projects p ON p.id = ps.project_id
+         WHERE ps.project_id IN (${myProjectIds.map(() => '?').join(',')})
+           AND ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
+           AND ps.plan_end_date < ?
+           AND ps.status NOT IN ('completed', '已完成')
+         ORDER BY ps.plan_end_date ASC LIMIT 10`,
+        [today, ...myProjectIds, today]
+      );
+      warnings = rows.map(r => ({
+        id: r.project_id,
+        name: r.project_name || '未知项目',
+        node: r.stage_name || '',
+        days: r.days || 0,
+        url: `/pages/projects/detail?id=${r.project_id}`
+      }));
+    }
+
+    // 5) 进行中项目数（按项目相关人过滤；admin=全公司）
+    const inProgress = myProjectIds.length
+      ? (await pool.query(
+          `SELECT COUNT(*) c FROM projects WHERE status='进行中' AND id IN (${myProjectIds.map(() => '?').join(',')})`,
+          myProjectIds
+        ))[0][0].c
+      : (admin ? (await pool.query("SELECT COUNT(*) c FROM projects WHERE status='进行中'"))[0][0].c : 0);
+    const overdue = (await pool.query(
+      `SELECT COUNT(*) c FROM project_stages
+       WHERE plan_end_date IS NOT NULL AND plan_end_date < ?
+         AND status NOT IN ('completed', '已完成')
+         ${myProjectIds.length ? `AND project_id IN (${myProjectIds.map(() => '?').join(',')})` : (admin ? '' : 'AND 0')}`,
+      myProjectIds.length ? [today, ...myProjectIds] : [today]
+    ))[0][0].c;
+    const pendingInspect = (await pool.query(
+      `SELECT COUNT(*) c FROM inspections WHERE rectify_status='待整改'
+       ${myProjectIds.length ? `AND project_id IN (${myProjectIds.map(() => '?').join(',')})` : (admin ? '' : 'AND 0')}`,
+      myProjectIds.length ? myProjectIds : []
+    ))[0][0].c;
+
+    // 6) 财务角色（purchase:finance）关心的金额：报销中总金额
+    let pendingPayAmount = null;
+    if (can('purchase:finance')) {
+      const [[r]] = await pool.query(
+        "SELECT COALESCE(SUM(total_amount),0) AS s FROM purchase_requests WHERE status IN ('reimbursing','finance_confirmed')"
+      );
+      pendingPayAmount = Number(r.s) || 0;
+    }
+
+    const home = {
+      stats: {
+        inProgress: Number(inProgress) || 0,
+        overdue: Number(overdue) || 0,
+        pendingInspect: Number(pendingInspect) || 0,
+        pendingPayAmount,
+      },
+      // 按角色排序：经理/设计师/监理/工长 先看预警+整改；财务看采购；admin 全见
+      sections: [
+        { key: 'stage_due', label: '节点即将到期（3天内）', icon: '⏰', items: stage_alerts },
+        { key: 'inspect_rectify', label: '待整改', icon: '🔧', items: rectify_alerts },
+        { key: 'dispatch_mine', label: '我的派工', icon: '👷', items: my_dispatch },
+      ].filter(s => s.items.length > 0),
+      warnings,
+    };
+
+    res.json({ code: 0, total, groups, home, generated_at: new Date().toISOString() });
   } catch (e) {
     console.error('[todo/center] error:', e.message);
     res.status(500).json({ error: e.message });
