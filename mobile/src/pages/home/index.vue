@@ -68,9 +68,12 @@
 
     <!-- 待办事项 -->
     <view class="todo-section">
-      <view class="section-title">
-        <text>待办事项</text>
-        <text class="todo-count" v-if="todos.length">{{ todos.length }}</text>
+      <view class="section-title todo-title-row">
+        <view class="todo-title-left">
+          <text>待办事项</text>
+          <text class="todo-count" v-if="todoTotal || todos.length">{{ todoTotal || todos.length }}</text>
+        </view>
+        <text class="todo-more" @click="goTodoCenter">全部 ›</text>
       </view>
       <view class="todo-list" v-if="todos.length">
         <view class="todo-item" v-for="todo in todos" :key="todo.id" @click="goTodo(todo)">
@@ -232,7 +235,7 @@ const loadUnread = async () => {
   }
 };
 
-onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); userStore.fetchMe(); });
+onShow(() => { loadUnread(); loadRecentProjects(); loadHomeStats(); loadTodoCount(); userStore.fetchMe(); });
 
 onMounted(() => {
   // 实际加载时从后端拉取数据
@@ -276,6 +279,8 @@ const quickEntries = [
 ];
 
 const todos = ref([]);
+
+const todoTotal = ref(0);
 
 const warnings = ref([]);
 
@@ -520,6 +525,27 @@ const goTodo = (todo) => {
   }
 };
 
+// 待办中心：汇总各模块待我处理的事项（按权限聚合）
+const goTodoCenter = () => {
+  uni.navigateTo({ url: '/pages/todo/index' });
+};
+
+const loadTodoCount = async () => {
+  try {
+    const res = await uni.request({
+      url: '/api/todo/count',
+      header: {
+        'x-user-id': String(userStore.state.id),
+      }
+    });
+    if (res.data && res.data.code === 0) {
+      todoTotal.value = res.data.total || 0;
+    }
+  } catch (e) {
+    // 忽略
+  }
+};
+
 const goProject = (id) => {
   uni.navigateTo({ url: `/pages/projects/detail?id=${id}` });
 };
@@ -627,6 +653,22 @@ const goProject = (id) => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.todo-title-row {
+  justify-content: space-between;
+}
+
+.todo-title-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.todo-more {
+  font-size: 13px;
+  font-weight: 400;
+  color: #2D5A8E;
 }
 
 .quick-grid {

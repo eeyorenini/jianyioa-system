@@ -52,7 +52,7 @@ export const useUserStore = () => {
     state.position = user.position || "";
     state.phone = user.phone || "";
     state.token = user.token;
-    const perms = parsePerms(user.permissions);
+    const perms = parsePerms((user as any).permissions || (user as any).role_permissions);
     state.permissions = perms;
     uni.setStorageSync("token", user.token);
     uni.setStorageSync("userInfo", {
@@ -78,7 +78,7 @@ export const useUserStore = () => {
       state.position = info.position;
       state.phone = info.phone;
       state.token = uni.getStorageSync("token") || "";
-      state.permissions = parsePerms(info.permissions);
+      state.permissions = parsePerms(info.permissions || info.role_permissions);
     }
     // 恢复借权状态
     const impFlag = uni.getStorageSync("impersonating");
@@ -101,6 +101,12 @@ export const useUserStore = () => {
       });
       if (res?.data && typeof res.data.is_admin !== "undefined") {
         imp.isAdmin = !!res.data.is_admin;
+        // 以服务端返回的权限为准（借权切换后会随身份变化）
+        if (Array.isArray(res.data.permissions)) {
+          state.permissions = res.data.permissions;
+          const cur = uni.getStorageSync("userInfo") || {};
+          uni.setStorageSync("userInfo", { ...cur, permissions: res.data.permissions });
+        }
       }
     } catch (e) {
       // 忽略

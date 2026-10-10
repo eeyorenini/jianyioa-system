@@ -15,6 +15,13 @@
       }
     },
     {
+      "path": "pages/todo/index",
+      "style": {
+        "navigationBarTitleText": "待办中心",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/customer/home",
       "style": {
         "navigationBarTitleText": "客户首页",

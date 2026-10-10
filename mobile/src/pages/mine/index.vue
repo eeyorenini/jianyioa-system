@@ -44,6 +44,11 @@
     <view class="menu-section">
       <view class="menu-title">系统</view>
       <view class="menu-list">
+        <view class="menu-row" @click="goPage('/pages/todo/index')">
+          <text class="menu-row-icon">📥</text>
+          <text class="menu-row-label">待办中心</text>
+          <text class="menu-row-arrow">›</text>
+        </view>
         <view class="menu-row" @click="goPage('/pages/message/list')">
           <text class="menu-row-icon">🔔</text>
           <text class="menu-row-label">消息通知</text>

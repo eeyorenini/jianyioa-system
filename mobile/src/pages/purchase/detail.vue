@@ -83,15 +83,15 @@
       </view>
 
       <!-- 报销凭证 -->
-      <view class="section-card" v-if="detail.status === 'approved' || detail.status === 'reimbursing' || detail.status === 'reimbursed'">
+      <view class="section-card" v-if="detail.status === 'approved' || detail.status === 'reimbursing' || detail.status === 'finance_confirmed' || detail.status === 'reimbursed'">
         <view class="section-title">报销凭证</view>
         <view v-if="reimburseImages.length > 0" class="image-list">
           <image v-for="(img, idx) in reimburseImages" :key="idx" class="preview-img" :src="getImgUrl(img)" mode="aspectFill" @click="previewImage(img, reimburseImages)" />
         </view>
         <view v-else class="empty-images">暂无凭证</view>
 
-        <!-- approved/reimbursing 状态 — 本人可上传凭证 -->
-        <view v-if="(detail.status === 'approved' || detail.status === 'reimbursing') && isApplicant" class="upload-section">
+        <!-- approved 状态 — 本人可上传凭证（报销中已交给财务，本人只读） -->
+        <view v-if="detail.status === 'approved' && isApplicant" class="upload-section">
           <view class="upload-btn" @click="chooseImage">
             <text class="upload-icon">+</text>
             <text class="upload-text">添加凭证</text>
@@ -155,17 +155,22 @@
           <view class="btn approve" @click="showApproveDialog">通过</view>
         </template>
 
-        <!-- 已通过/报销中 - 本人上传凭证 -->
-        <template v-if="(detail.status === 'approved' || detail.status === 'reimbursing') && isApplicant">
+        <!-- 已通过 - 本人上传凭证（报销中/受理中阶段已交给财务，本人只读） -->
+        <template v-if="detail.status === 'approved' && isApplicant">
           <view class="btn primary full" @click="submitReimburse" :class="{ disabled: submitting }">
-            {{ submitting ? '提交中...' : (detail.status === 'reimbursing' ? '重新提交报销' : '提交报销') }}
+            {{ submitting ? '提交中...' : '提交报销' }}
           </view>
         </template>
 
-        <!-- 报销中 - 财务人员操作 -->
+        <!-- 报销中 - 财务受理 / 驳回 -->
         <template v-if="detail.status === 'reimbursing' && isFinance">
           <view class="btn reject" @click="showFinanceRejectDialog">驳回</view>
-          <view class="btn approve" @click="showFinanceConfirmDialog">确认报销</view>
+          <view class="btn approve" @click="goFinanceAccept">财务受理</view>
+        </template>
+
+        <!-- 受理中 - 财务上传回执 -->
+        <template v-if="detail.status === 'finance_confirmed' && isFinance">
+          <view class="btn approve full" @click="goFinanceConfirmPage">上传报销回执</view>
         </template>
       </view>
     </template>
@@ -548,6 +553,16 @@ function submitReimburse() {
       fail: () => { submitting.value = false; uni.showToast({ title: '网络错误', icon: 'none' }) }
     })
   })
+}
+
+// 财务受理（报销中 → 受理中）：走统一的财务受理页
+function goFinanceAccept() {
+  uni.navigateTo({ url: `/pages/purchase/finance-accept?id=${detail.value.id}` })
+}
+
+// 财务上传回执（受理中 → 已完结）：走统一的财务确认页
+function goFinanceConfirmPage() {
+  uni.navigateTo({ url: `/pages/purchase/finance-confirm?id=${detail.value.id}` })
 }
 
 function showFinanceConfirmDialog() {

@@ -50,6 +50,7 @@
               {{ statusLabel(item.status) }}
             </view>
           </view>
+          <view v-if="flowHint(item) && activeTab === 'my'" class="flow-hint">{{ flowHint(item) }}</view>
           <view class="card-info">
             <view class="info-row">
               <text class="info-label">项目</text>
@@ -219,12 +220,34 @@ const dialogAction = ref('approve') // 'approve' | 'reject'
 const dialogComment = ref('')
 const currentItem = ref(null)
 
-const tabs = computed(() => [
-  { key: 'my', label: '我的申请', badge: null },
-  { key: 'pending', label: '待审核', badge: pendingCount.value || null },
-  { key: 'reimburse', label: '待报销', badge: reimburseCount.value || null },
-  { key: 'finance', label: '财务确认', badge: null },
-])
+// 读取当前用户权限（由服务端 /api/me 同步；借权切换后随之变化）
+const userPerms = () => {
+  const info = uni.getStorageSync('userInfo') || {}
+  let p = info.permissions || info.role_permissions
+  if (typeof p === 'string') { try { p = JSON.parse(p) } catch { p = [] } }
+  return Array.isArray(p) ? p : []
+}
+const isAdminUser = () => (uni.getStorageSync('userInfo') || {}).role_code === 'admin'
+const can = (perm) => isAdminUser() || userPerms().includes(perm)
+const isFinanceView = () => {
+  const info = uni.getStorageSync('userInfo') || {}
+  return !!(info.purchase_finance || info.is_finance) || can('purchase:finance')
+}
+
+// tab 按权限渲染：一个页面，各角色只看到自己该处理的
+const tabs = computed(() => {
+  const list = [{ key: 'my', label: '我的申请', badge: null }]
+  if (can('purchase:approve')) {
+    list.push({ key: 'pending', label: '待审核', badge: pendingCount.value || null })
+  }
+  if (can('purchase:write') || can('purchase:finance')) {
+    list.push({ key: 'reimburse', label: '待报销', badge: reimburseCount.value || null })
+  }
+  if (can('purchase:finance')) {
+    list.push({ key: 'finance', label: '财务确认', badge: null })
+  }
+  return list
+})
 
 const emptyText = computed(() => {
   const map = {
@@ -271,6 +294,15 @@ function statusColor(s) {
     reimbursed: '#4caf50',
   }
   return map[s] || '#999'
+}
+
+// 当前所处环节提示：让申请人清楚「现在轮到谁处理」
+function flowHint(item) {
+  const s = item && item.status
+  if (s === 'reimbursing') return '⏳ 已上传凭证，等待财务受理'
+  if (s === 'finance_confirmed') return '🏦 财务已受理，等待上传报销回执'
+  if (s === 'approved') return '📤 待您上传报销凭证'
+  return ''
 }
 
 const getImages = (imgField) => {
@@ -333,7 +365,7 @@ function loadData(isMore = false) {
     url = '/api/purchase-requests/pending'
   } else if (activeTab.value === 'reimburse') {
     // 2026-10-10：申请人视角查 to-reimburse；财务视角查 reimburse
-    if (userInfo.purchase_finance || userInfo.is_finance) {
+    if (isFinanceView()) {
       url = '/api/purchase-requests/reimburse'
     } else {
       url = '/api/purchase-requests/to-reimburse'
@@ -369,31 +401,33 @@ function loadData(isMore = false) {
 
 function loadCounts() {
   const userInfo = uni.getStorageSync('userInfo') || {}
-  // 待审核数量
-  uni.request({
-    url: '/api/purchase-requests/pending',
-    data: { page: 1, page_size: 1 },
-    header: { 'x-user-id': String(userInfo.id || '') },
-    success: (res) => {
-      const total = Number(res.data.total) || 0
-      pendingCount.value = total
-    },
-    fail: () => { pendingCount.value = 0 }
-  })
+
+  // 待审核数量（仅审批人）
+  if (can('purchase:approve')) {
+    uni.request({
+      url: '/api/purchase-requests/pending',
+      data: { page: 1, page_size: 1 },
+      header: { 'x-user-id': String(userInfo.id || '') },
+      success: (res) => { pendingCount.value = Number(res.data.total) || 0 },
+      fail: () => { pendingCount.value = 0 }
+    })
+  } else {
+    pendingCount.value = 0
+  }
 
   // 待报销数量（申请人用 to-reimburse；财务用 reimburse）
-  const isFinanceUser = !!(userInfo.purchase_finance || userInfo.is_finance)
-  const countUrl = isFinanceUser ? '/api/purchase-requests/reimburse' : '/api/purchase-requests/to-reimburse'
-  uni.request({
-    url: countUrl,
-    data: { page: 1, page_size: 1 },
-    header: { 'x-user-id': String(userInfo.id || '') },
-    success: (res) => {
-      const total = Number(res.data.total) || 0
-      reimburseCount.value = total
-    },
-    fail: () => { reimburseCount.value = 0 }
-  })
+  if (can('purchase:write') || can('purchase:finance')) {
+    const countUrl = isFinanceView() ? '/api/purchase-requests/reimburse' : '/api/purchase-requests/to-reimburse'
+    uni.request({
+      url: countUrl,
+      data: { page: 1, page_size: 1 },
+      header: { 'x-user-id': String(userInfo.id || '') },
+      success: (res) => { reimburseCount.value = Number(res.data.total) || 0 },
+      fail: () => { reimburseCount.value = 0 }
+    })
+  } else {
+    reimburseCount.value = 0
+  }
 }
 
 function goDetail(item) {
@@ -741,6 +775,9 @@ watch(activeTab, () => {
 }
 .status-tag {
   font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-left: 8px;
+}
+.flow-hint {
+  font-size: 12px; color: #ff9800; margin: 6px 0 8px;
 }
 .card-info { display: flex; flex-direction: column; gap: 6px; }
 .info-row { display: flex; font-size: 13px; }
