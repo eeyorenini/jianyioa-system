@@ -75,7 +75,7 @@
               <text class="info-label">时间</text>
               <text class="info-value">{{ item.created_at }}</text>
             </view>
-            <!-- 图片缩略图 -->
+            <!-- 图片缩略图（申请时） -->
             <view v-if="getImages(item.images).length" class="info-row image-row">
               <text class="info-label">图片</text>
               <view class="thumb-list">
@@ -86,6 +86,20 @@
                   :src="getImgUrl(img)"
                   mode="aspectFill"
                   @click.stop="previewImage(img, getImages(item.images))"
+                />
+              </view>
+            </view>
+            <!-- 报销凭证缩略图（已上传报销后显示） -->
+            <view v-if="reimburseImagesOf(item).length" class="info-row image-row">
+              <text class="info-label">凭证</text>
+              <view class="thumb-list">
+                <image
+                  v-for="(img, idx) in reimburseImagesOf(item)"
+                  :key="'r' + idx"
+                  class="thumb-img"
+                  :src="getImgUrl(img)"
+                  mode="aspectFill"
+                  @click.stop="previewImage(img, reimburseImagesOf(item))"
                 />
               </view>
             </view>
@@ -263,6 +277,12 @@ const getImages = (imgField) => {
   if (!imgField) return []
   if (Array.isArray(imgField)) return imgField
   try { return JSON.parse(imgField) } catch { return [] }
+}
+
+// 2026-10-10：报销凭证图片（来自 purchase_reimbursements.images）
+const reimburseImagesOf = (item) => {
+  if (!item || !item.reimbursement) return []
+  return getImages(item.reimbursement.images)
 }
 
 const getImgUrl = (path) => {
