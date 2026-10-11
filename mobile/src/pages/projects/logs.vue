@@ -237,7 +237,13 @@ function goLogDetail(log) {
 }
 
 function goAddLog() {
-  uni.navigateTo({ url: `/pages/projects/log-add?id=${projectId.value}` });
+  // 关键修复：原代码用 ?id= 但 log-add.vue onMounted 取的是 options.projectId，
+  // 拼错参数导致 projectId.value=0，新建页面空白。这里改用 ?projectId= 与 log-add 对齐。
+  if (!projectId.value) {
+    uni.showToast({ title: '未选择项目', icon: 'none' });
+    return;
+  }
+  uni.navigateTo({ url: `/pages/projects/log-add?projectId=${projectId.value}&projectName=${encodeURIComponent(projectName.value || '')}` });
 }
 
 // 点击缩略图预览（使用原生预览）

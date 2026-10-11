@@ -3,6 +3,12 @@ import uni from "@dcloudio/vite-plugin-uni";
 
 export default defineConfig({
   plugins: [uni()],
+  // 关键修复：uni-h5 的 manifest.json 设了 h5.router.base = "/m/"，
+  // dev 模式也走这套路由前缀。但 vite 默认从 10086 根路径起服务，
+  // 不加这个 rewrite 用户访问 http://localhost:10086/ 会 404，
+  // 访问 /m/ 才会显示空壳。需要让 vite 把 /m/* 重写到根，
+  // 让 uni 自己接管路由。
+  base: "/m/",
   server: {
     port: 10086,
     host: "0.0.0.0",
@@ -39,3 +45,4 @@ export default defineConfig({
     },
   },
 });
+

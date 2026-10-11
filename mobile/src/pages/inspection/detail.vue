@@ -19,6 +19,12 @@
       <!-- 状态标签 -->
       <view class="status-bar">
         <text class="status-tag" :class="statusClass">{{ statusText }}</text>
+        <view class="status-urgency" v-if="urgency === 'overdue'">
+          <text class="urgency-badge urgency-overdue">已逾期 {{ overdueDays }}天</text>
+        </view>
+        <view class="status-urgency" v-else-if="urgency === 'urgent'">
+          <text class="urgency-badge urgency-urgent">加急 还剩 {{ daysLeft }}天</text>
+        </view>
         <text class="create-time">{{ formatDate(detail.created_at) }}</text>
       </view>
 
@@ -80,12 +86,13 @@
       </view>
 
       <!-- 整改操作 -->
-      <view v-if="detail.status === 'pending'" class="action-bar">
-        <button class="btn-primary" @click="showFixDialog = true">提交整改</button>
+      <view v-if="canFix" class="action-bar">
+        <button v-if="detail.rectify_status !== '已整改'" class="btn-secondary" @click="showFixDialog = true">提交整改</button>
+        <button class="btn-primary" @click="confirmComplete">标记为已整改</button>
       </view>
     </view>
 
-    <!-- 整改弹窗 -->
+    <!-- 整改弹窗（提交整改记录） -->
     <view v-if="showFixDialog" class="dialog-mask" @click="showFixDialog = false">
       <view class="dialog" @click.stop>
         <view class="dialog-title">提交整改</view>
@@ -101,6 +108,23 @@
         </view>
       </view>
     </view>
+
+    <!-- 已整改确认弹窗 -->
+    <view v-if="showCompleteDialog" class="dialog-mask" @click="showCompleteDialog = false">
+      <view class="dialog" @click.stop>
+        <view class="dialog-title">确认整改完成？</view>
+        <textarea
+          class="fix-input"
+          v-model="completeRemark"
+          placeholder="选填：整改完成说明 / 后续注意事项..."
+          rows="3"
+        />
+        <view class="dialog-actions">
+          <button class="btn-cancel" @click="showCompleteDialog = false">取消</button>
+          <button class="btn-primary" @click="submitComplete">确认已整改</button>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -111,11 +135,23 @@ const loading = ref(true)
 const detail = ref(null)
 const showFixDialog = ref(false)
 const fixContent = ref('')
+// 已整改确认弹窗
+const showCompleteDialog = ref(false)
+const completeRemark = ref('')
 
 onMounted(() => {
   const pages = getCurrentPages()
   const currentPage = pages[pages.length - 1]
-  const id = currentPage?.options?.id
+  // 兼容 uni-h5 hash 路由（id 在 ?id= 里，可能挂在 options 或 $page 上）
+  const options = currentPage?.options || currentPage?.$page?.options || {}
+  let id = options.id
+  if (!id) {
+    try {
+      const hash = window.location.hash || ''
+      const qs = hash.includes('?') ? hash.split('?')[1] : (window.location.search || '').replace(/^\?/, '')
+      id = new URLSearchParams(qs).get('id')
+    } catch (_) {}
+  }
   // 优先从列表页传递的数据获取，避免额外请求
   if (currentPage?.$inspectionData) {
     detail.value = currentPage.$inspectionData
@@ -128,13 +164,17 @@ onMounted(() => {
 })
 
 function fetchDetail(id) {
+  // 关键修复：原代码用 `?id=X` 打到列表接口（/api/rectification-issues），
+  // 但列表接口只过滤 project_id，导致拿到的是全部记录中的第一条，
+  // 与用户想看的完全不是同一条。正确做法是打详情接口 /api/rectification-issues/:id
+  // 该接口在 server.js:6236 已实现（GET /api/rectification-issues/:id）。
   uni.request({
-    url: `/api/rectification-issues?id=${id}`,
+    url: `/api/rectification-issues/${id}`,
     success: (res) => {
-      if (res.data && Array.isArray(res.data) && res.data[0]) {
+      if (res.data && (res.data.id || res.data.data)) {
+        detail.value = res.data.data || res.data;
+      } else if (Array.isArray(res.data) && res.data[0]) {
         detail.value = res.data[0];
-      } else if (res.data?.data) {
-        detail.value = res.data.data;
       } else {
         detail.value = null;
       }
@@ -149,6 +189,7 @@ const statusClass = computed(() => {
   if (s.includes('待整改') || s === 'pending') return 'status-pending'
   if (s.includes('已完成') || s === 'completed') return 'status-fixed'
   if (s.includes('已验收') || s === 'verified') return 'status-fixed'
+  if (s.includes('整改中') || s === 'fixing') return 'status-fixing'
   return ''
 })
 
@@ -166,10 +207,44 @@ const severityText = computed(() => {
   return map[detail.value?.level] || '一般'
 })
 
-const isOverdue = computed(() => {
-  if (!detail.value?.due_date) return false
+// urgency 计算：基于 due_date + 当前状态
+// - overdue：已逾期（除了 markup 里完成的）
+// - urgent：3天内到期（含）
+// - normal：否则
+const daysLeft = computed(() => {
+  if (!detail.value?.due_date) return null
+  const due = new Date(detail.value.due_date)
+  const today = new Date()
+  // 仅比较日期部分（去掉时分秒）
+  due.setHours(0, 0, 0, 0)
+  today.setHours(0, 0, 0, 0)
+  return Math.round((due.getTime() - today.getTime()) / 86400000)
+})
+
+const overdueDays = computed(() => {
+  const d = daysLeft.value
+  return d != null && d < 0 ? Math.abs(d) : 0
+})
+
+const urgency = computed(() => {
+  if (!detail.value?.due_date) return 'normal'
   const s = String(detail.value?.rectify_status || detail.value?.status || '').toLowerCase()
-  return new Date(detail.value.due_date) < new Date() && !s.includes('完成') && !s.includes('已完成')
+  if (s.includes('已完成') || s.includes('已验收') || s === 'completed' || s === 'verified') return 'normal'
+  const d = daysLeft.value
+  if (d == null) return 'normal'
+  if (d < 0) return 'overdue'
+  if (d <= 3) return 'urgent'
+  return 'normal'
+})
+
+const isOverdue = computed(() => urgency.value === 'overdue')
+
+// 是否允许整改操作（待整改 / 整改中 都能标记为已整改；已完成/已验收 不能再改）
+const canFix = computed(() => {
+  const s = String(detail.value?.rectify_status || detail.value?.status || '').toLowerCase()
+  if (!detail.value) return false
+  if (s.includes('已完成') || s.includes('已验收') || s === 'completed' || s === 'verified') return false
+  return s.includes('待整改') || s === 'pending' || s.includes('整改中') || s === 'fixing'
 })
 
 function formatDate(str) {
@@ -199,24 +274,64 @@ function submitFix() {
     uni.showToast({ title: '请填写整改内容', icon: 'none' })
     return
   }
-  // 调用真实存在的 API: PUT /api/inspections/:id
+  // 关键修复：原代码 PUT /api/inspections/:id 会改 inspections 表（不是当前这条记录所属的表），
+  // 这里改用 /api/rectification-issues/:id（与 fetchDetail 一致的目标表）。
   uni.request({
-    url: `/api/inspections/${detail.value.id}`,
+    url: `/api/rectification-issues/${detail.value.id}`,
     method: 'PUT',
     data: {
-      rectify_status: '整改中',
+      status: '整改中',
       remark: fixContent.value
     },
     success: (res) => {
-      if (res.data.code === 0 || res.statusCode === 200) {
+      if (res.data && (res.data.code === 0 || res.statusCode === 200)) {
         uni.showToast({ title: '提交成功', icon: 'success' })
         showFixDialog.value = false
-        // 更新本地数据
-        detail.value.rectify_status = '整改中'
+        detail.value.status = '整改中'
         detail.value.remark = fixContent.value
       } else {
-        uni.showToast({ title: res.data?.msg || '提交失败', icon: 'none' })
+        uni.showToast({ title: res.data?.error || res.data?.msg || '提交失败', icon: 'none' })
       }
+    },
+    fail: () => uni.showToast({ title: '网络错误', icon: 'none' })
+  })
+}
+
+// 打开"已整改"确认弹窗
+function confirmComplete() {
+  completeRemark.value = ''
+  showCompleteDialog.value = true
+}
+
+// 提交"已整改"
+function submitComplete() {
+  if (!detail.value?.id) return
+  uni.showLoading({ title: '提交中...' })
+  uni.request({
+    url: `/api/rectification-issues/${detail.value.id}`,
+    method: 'PUT',
+    data: {
+      status: '已整改',
+      finish_date: new Date().toISOString().slice(0, 19).replace('T', ' '),
+      remark: completeRemark.value || '已整改完成'
+    },
+    success: (res) => {
+      uni.hideLoading()
+      if (res.data && (res.data.code === 0 || res.statusCode === 200)) {
+        uni.showToast({ title: '已标记为整改完成', icon: 'success' })
+        showCompleteDialog.value = false
+        // 更新本地状态
+        detail.value.status = '已整改'
+        detail.value.remark = completeRemark.value
+        // 1.2 秒后返回上一页（让用户看到 toast）
+        setTimeout(() => { uni.navigateBack({ delta: 1, fail: () => {} }) }, 1200)
+      } else {
+        uni.showToast({ title: res.data?.error || res.data?.msg || '提交失败', icon: 'none' })
+      }
+    },
+    fail: () => {
+      uni.hideLoading()
+      uni.showToast({ title: '网络错误', icon: 'none' })
     }
   })
 }
@@ -239,6 +354,18 @@ const goBack = () => {
 .status-pending { background: #FFF3E0; color: #FF9800; }
 .status-fixed { background: #E8F5E9; color: #4CAF50; }
 .status-overdue { background: #FFEBEE; color: #F44336; }
+.status-fixing { background: #E3F2FD; color: #1976D2; }
+
+/* urgency 徽标（已逾期 / 加急） */
+.status-urgency { display: flex; align-items: center; }
+.urgency-badge {
+  font-size: 22rpx;
+  padding: 4rpx 14rpx;
+  border-radius: 20rpx;
+  font-weight: 600;
+}
+.urgency-overdue { background: #FEE2E2; color: #B91C1C; border: 1rpx solid #FCA5A5; }
+.urgency-urgent { background: #FFF7ED; color: #C2410C; border: 1rpx solid #FED7AA; }
 .create-time { font-size: 24rpx; color: #999; }
 .card { background: #fff; border-radius: 16rpx; padding: 28rpx; margin-bottom: 20rpx; }
 .card-title { font-size: 28rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 20rpx; }
@@ -256,13 +383,15 @@ const goBack = () => {
 .photo-item { width: 200rpx; height: 200rpx; border-radius: 8rpx; }
 .fix-record { font-size: 28rpx; color: #333; line-height: 1.6; display: block; }
 .fix-time { font-size: 24rpx; color: #999; display: block; margin-top: 12rpx; }
-.action-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 20rpx 40rpx; background: #fff; box-shadow: 0 -2rpx 10rpx rgba(0,0,0,0.05); }
+.action-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 20rpx 40rpx; background: #fff; box-shadow: 0 -2rpx 10rpx rgba(0,0,0,0.05); display: flex; align-items: center; }
+.action-bar .btn-secondary { margin-right: 16rpx; }
 .dialog-mask { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 999; }
 .dialog { width: 600rpx; background: #fff; border-radius: 20rpx; padding: 40rpx; }
 .dialog-title { font-size: 32rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 30rpx; text-align: center; }
 .fix-input { width: 100%; border: 1rpx solid #eee; border-radius: 12rpx; padding: 20rpx; font-size: 28rpx; box-sizing: border-box; }
 .dialog-actions { display: flex; gap: 20rpx; margin-top: 30rpx; }
 .btn-primary { flex: 1; background: #1E3A5F; color: #fff; border-radius: 40rpx; font-size: 28rpx; padding: 0; height: 80rpx; line-height: 80rpx; }
+.btn-secondary { flex: 1; background: #fff; color: #1E3A5F; border: 2rpx solid #1E3A5F; border-radius: 40rpx; font-size: 28rpx; padding: 0; height: 80rpx; line-height: 76rpx; margin-right: 16rpx; }
 .btn-cancel { flex: 1; background: #f5f5f5; color: #666; border-radius: 40rpx; font-size: 28rpx; }
 /* 导航栏 */
 .nav-bar {

@@ -268,7 +268,15 @@ function handleConfirm() {
         if (res.data.code === 0 || res.data.code === undefined) {
           uni.showToast({ title: '报销已完成', icon: 'success' })
           setTimeout(() => {
-            uni.redirectTo({ url: `/pages/purchase/list` })
+            // 关键修复：/pages/purchase/list 是 tabBar 页，uni.redirectTo 不允许跳 tabBar 页，
+            // 静默失败导致用户"原地不动"。必须用 switchTab。
+            // 兜底：万一 switchTab 也失败（理论上不会），回退到首页 tab。
+            uni.switchTab({
+              url: '/pages/purchase/list',
+              fail: () => {
+                uni.switchTab({ url: '/pages/home/index' })
+              }
+            })
           }, 1500)
         } else {
           uni.showToast({ title: res.data.msg || '提交失败', icon: 'none' })

@@ -78,11 +78,20 @@
       <view class="form-label">问题照片/视频</view>
       <view class="photo-grid">
         <view class="photo-item" v-for="(img, idx) in photos" :key="img.id || ('photo_' + idx)">
-          <image class="photo-img" :src="img.url || img" mode="aspectFill" @click="previewImg(idx)"></image>
+          <image
+            class="photo-img"
+            :src="photoSrc(img)"
+            mode="aspectFill"
+            @click="previewImg(idx)"
+            @error="onPhotoImgError($event, idx)"
+          ></image>
           <view class="photo-del" @click="delPhoto(idx)">✕</view>
-          <view class="photo-uploading" v-if="uploadingPhotoIdx === idx">
+          <view class="photo-uploading" v-if="img.status === 'uploading'">
             <view class="photo-uploading-icon">⟳</view>
           </view>
+          <!-- 状态徽标：上传失败 / 仅本地预览 -->
+          <view v-else-if="img.status === 'failed'" class="photo-status-badge badge-failed">未上传</view>
+          <view v-else-if="img.status === 'local-only'" class="photo-status-badge badge-warn">仅预览</view>
         </view>
         <!-- 添加按钮 -->
         <button class="photo-add" type="button" @click.stop="choosePhoto($event)" :disabled="choosingPhoto">
@@ -166,7 +175,10 @@ const onDeadlineChange = (e) => {
   form.deadline = e.detail.value;
 };
 
-// 判断是否是视频
+// 生成稳定唯一 id（避免 Date.now() 在多选照片同毫秒下冲突）
+let _photoSeq = 0;
+const nextPhotoId = () => 'p_' + (Date.now().toString(36)) + '_' + (++_photoSeq).toString(36);
+
 // 选择照片（统一入口，与日志提交页一致）
 const choosePhoto = (e) => {
   e?.preventDefault?.();
@@ -185,9 +197,17 @@ const choosePhoto = (e) => {
       const paths = res.tempFilePaths;
       if (!paths.length) { choosingPhoto.value = false; return; }
 
-      // 2026-10-09 优化：先 push 本地临时路径占位
-      const placeholders = paths.map(p => ({ id: 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), url: p, status: 'uploading' }))
-      photos.value.push(...placeholders)
+      // 关键修复：先 push 本地临时路径占位，缩略图立刻可见。
+      // 用稳定 id 而非 Date.now()，避免多选时同毫秒碰撞。
+      // localUrl 留底，下载完后 serverUrl 写入但 localUrl 保留作为兜底（如果 serverUrl 加载失败）。
+      const placeholders = paths.map((p, i) => ({
+        id: nextPhotoId(),
+        localUrl: p,        // 兜底显示（blob: 或本地 temp 路径）
+        url: p,             // 渲染用：上传成功后会被替换为 serverUrl；失败保留 localUrl
+        serverUrl: '',      // 已上传成功的服务器地址（提交时取这个）
+        status: 'uploading',
+      }));
+      photos.value.push(...placeholders);
 
       // 显示遮罩
       uploadProgress.visible = true;
@@ -210,7 +230,7 @@ const choosePhoto = (e) => {
   });
 };
 
-// 上传单张照片（带进度更新）
+// 上传单张照片（带进度更新 + 失败保留 localUrl 兜底）
 const asyncUploadPhoto = (filePath, index, total, placeholder) => {
   return new Promise((resolve) => {
     uploadingPhotoIdx.value = photos.value.length + index;
@@ -219,16 +239,32 @@ const asyncUploadPhoto = (filePath, index, total, placeholder) => {
       filePath,
       name: 'file',
       success: (res) => {
+        let serverUrl = '';
         try {
-          const data = JSON.parse(res.data);
-          if (data.url && placeholder) {
-            // 2026-10-09 优化：替换占位项
-            const idx = photos.value.findIndex(p => p.id === placeholder.id);
-            if (idx >= 0) photos.value[idx] = { id: placeholder.id, url: data.url, status: 'done' };
-          } else if (data.url) {
-            photos.value.push(data.url);
+          const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+          serverUrl = data?.url || data?.path || '';
+        } catch (e) { /* 解析失败，保持 serverUrl='' */ }
+        const idx = placeholder && placeholder.id
+          ? photos.value.findIndex(p => p.id === placeholder.id)
+          : -1;
+        if (idx >= 0) {
+          if (serverUrl) {
+            // 上传成功：用 serverUrl 渲染（首选），localUrl 留作 src-onerror 兜底
+            photos.value[idx] = {
+              ...photos.value[idx],
+              url: serverUrl,
+              serverUrl,
+              status: 'done',
+            };
+          } else {
+            // 接口返回成功但没给 url：保留 localUrl 显示，标记为失败（提交时跳过）
+            photos.value[idx] = {
+              ...photos.value[idx],
+              status: 'local-only',
+            };
+            uni.showToast({ title: '有图片返回异常，仅本地预览', icon: 'none', duration: 1500 });
           }
-        } catch (e) {}
+        }
         uploadProgress.done++;
         uploadProgress.percent = Math.round((uploadProgress.done / uploadProgress.total) * 100);
         uploadProgress.text = '正在上传 ' + uploadProgress.done + '/' + uploadProgress.total;
@@ -236,9 +272,13 @@ const asyncUploadPhoto = (filePath, index, total, placeholder) => {
       },
       fail: (err) => {
         console.error('上传失败:', err);
-        if (placeholder) {
+        // 关键修复：失败时不再删除占位项，保留 localUrl 让用户继续看到缩略图。
+        // 仅标记 status='failed'，提交时跳过这张。
+        if (placeholder && placeholder.id) {
           const idx = photos.value.findIndex(p => p.id === placeholder.id);
-          if (idx >= 0) photos.value.splice(idx, 1);
+          if (idx >= 0) {
+            photos.value[idx] = { ...photos.value[idx], status: 'failed' };
+          }
         }
         uni.showToast({ title: '有图片上传失败，已跳过', icon: 'none', duration: 1500 });
         uploadProgress.done++;
@@ -258,14 +298,24 @@ const delPhoto = (idx) => {
   photos.value.splice(idx, 1);
 };
 
+// 图片 src 计算：优先 serverUrl，失败兜底 localUrl（@error 触发）
+const photoSrc = (p) => {
+  if (!p) return '';
+  return p.url || p.localUrl || (typeof p === 'string' ? p : '');
+};
+
 // 预览照片
 const previewImg = (idx) => {
-  const urls = photos.value.map(p => {
-    const url = p.url || p;
-    if (url.startsWith('/uploads/') || url.startsWith('http') || url.startsWith('blob:')) return url;
-    return url;
-  });
-  uni.previewImage({ urls, current: idx });
+  const urls = photos.value.map(p => photoSrc(p)).filter(Boolean);
+  uni.previewImage({ urls, current: urls[idx] || urls[0] });
+};
+
+// 图片加载失败时（如 serverUrl 404）回退到 localUrl
+const onPhotoImgError = (e, idx) => {
+  const item = photos.value[idx];
+  if (!item || !item.localUrl || item.url === item.localUrl) return;
+  console.warn('[photo error] server URL 加载失败，回退 localUrl:', item.url);
+  photos.value[idx] = { ...item, url: item.localUrl };
 };
 
 // 提交
@@ -280,11 +330,15 @@ const submit = () => {
   const token = uni.getStorageSync("token");
   const userInfo = uni.getStorageSync('userInfo');
 
-  const imageUrls = photos.value.map(p => {
-    const url = p.url || p;  // 2026-10-09 兼容对象数组
-    if (url.startsWith('/uploads/') || url.startsWith('http')) return url;
-    return url;
-  });
+  const imageUrls = photos.value
+    .map(p => {
+      // 优先取 serverUrl（已上传成功的）；若无（上传失败/未传完）则跳过
+      if (p.serverUrl) return p.serverUrl;
+      if (typeof p === 'string') return p;
+      if (p.url && !p.url.startsWith('blob:')) return p.url;
+      return null;
+    })
+    .filter(Boolean);
 
   uni.request({
     url: "/api/rectification-issues",
@@ -536,6 +590,21 @@ const goBack = () => {
   color: #1E3A5F;
   animation: spin 0.8s linear infinite;
 }
+
+/* 照片状态徽标：未上传 / 仅预览 */
+.photo-status-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.2;
+}
+.badge-failed { background: rgba(220, 38, 38, 0.85); }
+.badge-warn { background: rgba(234, 88, 12, 0.85); }
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

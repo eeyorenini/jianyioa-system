@@ -224,6 +224,7 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 
 const loading = ref(true)
 const detail = ref(null)
@@ -243,7 +244,34 @@ const uploadProgress = reactive({
   text: ''
 })
 
-let currentPage = null
+// 页面参数：通过 onLoad 获取（H5/小程序均支持）
+// 强制从 URL 实时解析 id兜底，确保任何缓存/旧编译版本都能拿到正确的 id
+let pageId = null
+
+const extractIdFromUrl = () => {
+  // 关键修复：uni-h5 默认 createWebHashHistory(routerBase="/m/")，
+  // 跳转后的 URL 形如 http://x/m/#/pages/purchase/detail?id=123
+  // 这里的 id 在 hash 段里，window.location.search 是空的；旧实现只读 search 会拿不到 id。
+  // 兼容：先读 hash 里的 query，再兜底读 search。
+  try {
+    let qs = ''
+    if (typeof window === 'undefined') return null
+    const hash = window.location.hash || ''
+    if (hash.includes('?')) {
+      qs = hash.split('?')[1] || ''
+    } else if (window.location.search) {
+      qs = window.location.search.replace(/^\?/, '')
+    }
+    return new URLSearchParams(qs).get('id') || null
+  } catch { return null }
+}
+
+onLoad((options) => {
+  // 优先用 onLoad 参数，兜底用 URL（防止旧 JS 缓存版本拿不到 options）
+  pageId = options?.id || extractIdFromUrl()
+  if (pageId) loadDetail()
+  else { loading.value = false; uni.showToast({ title: '参数错误:id缺失', icon: 'none' }) }
+})
 
 const statusLabel = (s) => {
   const map = {
@@ -351,10 +379,22 @@ async function uploadImages(urls) {
 function loadDetail() {
   loading.value = true
   const userInfo = uni.getStorageSync('userInfo') || {}
+  // userInfo.id 为空说明未登录，跳转登录页
+  if (!userInfo.id) {
+    loading.value = false
+    uni.showToast({ title: '请重新登录', icon: 'none' })
+    setTimeout(() => { uni.reLaunch({ url: '/pages/login/login' }) }, 1000)
+    return
+  }
   uni.request({
-    url: `/api/purchase-requests/${currentPage.options.id}`,
-    header: { 'x-user-id': userInfo.id },
+    url: `/api/purchase-requests/${pageId}`,
+    header: { 'x-user-id': String(userInfo.id) },
     success: (res) => {
+      if (res.statusCode === 401) {
+        uni.showToast({ title: '登录失效，请重新登录', icon: 'none' })
+        setTimeout(() => { uni.reLaunch({ url: '/pages/login/login' }) }, 1000)
+        return
+      }
       if (res.data && (res.data.code === 0 || res.data.id)) {
         const raw = res.data.data || res.data
         // 展平 items[0] 到顶层（兼容模板的扁平字段）
@@ -370,10 +410,10 @@ function loadDetail() {
         // 清空待上传图片
         pendingImages.value = []
       } else {
-        uni.showToast({ title: '加载失败', icon: 'none' })
+        uni.showToast({ title: res.data?.error || '加载失败', icon: 'none' })
       }
     },
-    fail: () => { uni.showToast({ title: '加载失败', icon: 'none' }) },
+    fail: () => { uni.showToast({ title: '网络错误', icon: 'none' }) },
     complete: () => { loading.value = false }
   })
 }
@@ -411,9 +451,9 @@ function submitDialog() {
   if (dialogType.value === 'approve') {
     uni.request({
       url: `/api/purchase-requests/${id}/approve`,
-      method: 'POST',
+      method: 'PUT',
       header: { 'x-user-id': String(userInfo.id) },
-      data: { comment: dialogComment.value },
+      data: { action: 'approve', comment: dialogComment.value },
       success: (res) => {
         if (res.data.code === 0 || res.data.code === undefined) {
           uni.showToast({ title: '已通过', icon: 'success' })
@@ -430,10 +470,11 @@ function submitDialog() {
 
   if (dialogType.value === 'reject') {
     uni.request({
-      url: `/api/purchase-requests/${id}/reject`,
-      method: 'POST',
+      // 后端审核接口统一为 /approve，通过 body.action 区分通过/拒绝
+      url: `/api/purchase-requests/${id}/approve`,
+      method: 'PUT',
       header: { 'x-user-id': String(userInfo.id) },
-      data: { reason: dialogComment.value },
+      data: { action: 'reject', reason: dialogComment.value },
       success: (res) => {
         if (res.data.code === 0 || res.data.code === undefined) {
           uni.showToast({ title: '已驳回', icon: 'success' })
@@ -608,11 +649,7 @@ function doFinanceConfirm(images) {
   })
 }
 
-onMounted(() => {
-  const pages = getCurrentPages()
-  currentPage = pages[pages.length - 1]
-  loadDetail()
-})
+// onLoad 已通过 pageId 获取页面参数，无需额外 onMounted 逻辑
 </script>
 
 <style lang="scss" scoped>

@@ -275,6 +275,60 @@
         </view>
       </view>
 
+      <!-- 验收 -->
+      <view v-if="curTab === 'accept'" class="tab-panel">
+        <view class="panel-toolbar">
+          <text class="panel-title">验收记录</text>
+          <text class="tool-btn" @click="goAcceptAdd">+ 新建验收</text>
+        </view>
+
+        <view class="loading-state" v-if="acceptancesLoading">
+          <text>加载中...</text>
+        </view>
+        <view class="log-list" v-else-if="acceptances.length">
+          <view class="log-item" v-for="a in acceptances" :key="a.id" @click="goAcceptDetail(a)">
+            <view class="log-row log-row-first">
+              <view class="log-date-bar">
+                <text class="log-date-day">{{ formatDay(a.created_at) }}</text>
+                <text class="log-date-month">{{ formatMonth(a.created_at) }}</text>
+              </view>
+              <view class="log-user-info">
+                <view class="log-user-line">
+                  <text class="log-operator">✅ {{ a.stage || '验收' }}</text>
+                  <text class="log-time">{{ formatFullTime(a.created_at) }}</text>
+                </view>
+                <view class="log-tags-row">
+                  <text class="log-tag-icon status-tag">{{ a.accept_status || '待验收' }}</text>
+                  <text class="log-tag-icon" v-if="a.quality_score != null">⭐ {{ a.quality_score }} 分</text>
+                </view>
+              </view>
+            </view>
+
+            <view class="log-content-area" v-if="a.issues">
+              <view class="log-content-row">
+                <view class="log-tag-box">问题</view>
+                <view class="log-content-text">{{ a.issues }}</view>
+              </view>
+            </view>
+
+            <view class="log-photos" v-if="getAcceptPhotos(a).length">
+              <view
+                class="log-photo"
+                v-for="(photo, idx) in getAcceptPhotos(a)"
+                :key="idx"
+                @click.stop="previewAcceptPhoto(a, idx)"
+              >
+                <image class="log-photo-img" :src="photo" mode="aspectFill" />
+              </view>
+            </view>
+          </view>
+        </view>
+        <view class="empty-state" v-else>
+          <text class="empty-icon">✅</text>
+          <text class="empty-text">暂无验收记录</text>
+        </view>
+      </view>
+
       <!-- 派工 -->
       <view v-if="curTab === 'dispatch'" class="tab-panel">
         <view class="panel-toolbar">
@@ -640,6 +694,7 @@ const tabs = computed(() => [
   { key: 'nodes', label: '进度节点' },
   { key: 'logs', label: '施工日志', badge: logs.value.length || null },
   { key: 'inspect', label: '巡检', badge: issues.value.length || null },
+  { key: 'accept', label: '验收', badge: acceptances.value.length || null },
   { key: 'dispatch', label: '派工', badge: dispatches.value.length || null },
   { key: 'material', label: '材料' },
   { key: 'purchase', label: '采购' },
@@ -655,6 +710,10 @@ const logsLoading = ref(false);
 // 巡检问题列表（从API加载）
 const issues = ref([]);
 const issuesLoading = ref(false);
+
+// 验收记录列表（从API加载）
+const acceptances = ref([]);
+const acceptancesLoading = ref(false);
 
 const dispatches = ref([]);
 const materials = ref([]);
@@ -1384,6 +1443,7 @@ const fetchDetail = async () => {
     // 加载日志、巡检、派工
     fetchLogs();
     fetchInspections();
+    fetchAcceptances();
     loadPurchase();
     loadDispatches();
     loadFinanceData();
@@ -1441,6 +1501,49 @@ const fetchInspections = async () => {
   }
 };
 
+// 加载验收记录
+const fetchAcceptances = async () => {
+  if (!projectId.value) return;
+  acceptancesLoading.value = true;
+  try {
+    const token = uni.getStorageSync("token");
+    const res = await uni.request({
+      url: `/api/acceptance?project_id=${projectId.value}`,
+      header: { Authorization: token },
+    });
+    acceptances.value = Array.isArray(res.data) ? res.data : [];
+  } catch (e) {
+    console.error('加载验收失败:', e);
+    acceptances.value = [];
+  } finally {
+    acceptancesLoading.value = false;
+  }
+};
+
+// 验收附件图片（JSON 字符串数组）
+const getAcceptPhotos = (a) => {
+  if (!a || !a.attachment) return [];
+  try {
+    let p = a.attachment;
+    if (typeof p === 'string') p = JSON.parse(p);
+    if (typeof p === 'string') p = JSON.parse(p);
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()) : [];
+  } catch { return []; }
+};
+
+const previewAcceptPhoto = (a, idx) => {
+  const photos = getAcceptPhotos(a);
+  uni.previewImage({ urls: photos, current: photos[idx] });
+};
+
+const goAcceptAdd = () => {
+  uni.navigateTo({ url: `/pages/acceptance/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
+};
+
+const goAcceptDetail = (a) => {
+  uni.navigateTo({ url: `/pages/acceptance/detail?id=${a.id}` });
+};
+
 // 加载派工单
 const loadDispatches = async () => {
   if (!projectId.value) return;
@@ -1495,6 +1598,9 @@ watch(curTab, (val) => {
   }
   if (val === 'gallery' && projectId.value) {
     loadGalleryStats();
+  }
+  if (val === 'accept' && projectId.value) {
+    fetchAcceptances();
   }
 });
 

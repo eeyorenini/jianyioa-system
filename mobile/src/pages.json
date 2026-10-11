@@ -295,6 +295,13 @@
       }
     },
     {
+      "path": "pages/contracts/approval",
+      "style": {
+        "navigationBarTitleText": "合同审核",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/contracts/collection-add",
       "style": {
         "navigationBarTitleText": "录入催收",
@@ -403,6 +410,13 @@
       "path": "pages/acceptance/add",
       "style": {
         "navigationBarTitleText": "新建验收",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/acceptance/detail",
+      "style": {
+        "navigationBarTitleText": "验收详情",
         "navigationStyle": "custom"
       }
     },

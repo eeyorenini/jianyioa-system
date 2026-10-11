@@ -23,15 +23,38 @@ export function applyRoleTabBar() {
   const store = useUserStore();
   // 客户（业主）使用 pages/customer/* 与自绘导航，不涉及原生 tabBar
   if (store.isCustomer()) return;
+
+  // 关键守卫：uni.setTabBarItem 只在「当前页面是 tabBar 页」时才允许执行。
+  // 在采购详情/审批详情等非 tabBar 页调用会异步 reject：
+  //   "setTabBarItem:fail not TabBar page"
+  // 老代码 try/catch 只接同步异常，异步 reject 漏出来就成了 unhandledrejection。
+  // 这里先用 getCurrentPages 判定当前页是否是 tabBar，是再调 setTabBarItem，
+  // 并给它加 fail 回调/Task.catch 兜底。
+  let pages: any = [];
+  try { pages = typeof getCurrentPages === 'function' ? (getCurrentPages() as any) : []; } catch (_) { pages = []; }
+  const cur = pages && pages.length ? pages[pages.length - 1] : null;
+  // uni-h5 的 route 是 'pages/home/index' 这种不带前杠、不带参数的形态
+  const curRoute = (cur && (cur.route || cur.$page?.fullPath || '')) || '';
+  const isTabBarPage = TAB_BAR_PERMS.some((t) => curRoute === t.path || curRoute.indexOf(t.path + '?') === 0);
+  if (!isTabBarPage) return;
+
   TAB_BAR_PERMS.forEach((tab) => {
     if (!tab.perm) return; // 公共 tab 不动
+    const visible = store.canSee(tab.perm);
     try {
-      uni.setTabBarItem({
+      const task: any = uni.setTabBarItem({
         index: tab.index,
-        visible: store.canSee(tab.perm),
+        visible,
       } as any);
-    } catch (e) {
-      // 平台不支持 visible 时忽略；页面级 guardTab 仍会兜底
+      // 异步 reject 兜底（uni 返回 Task/Promise），catch 后静默
+      if (task && typeof task.then === 'function') {
+        task.catch(() => { /* 平台不支持/权限不足/非 tabBar 页，静默降级 */ });
+      } else if (task && typeof task.on === 'function') {
+        // 小程序侧 Task 形态
+        try { task.on('fail', () => {}); } catch (_) { /* 忽略 */ }
+      }
+    } catch (_) {
+      // 同步异常（参数错误、平台不支持）静默降级；页面级 guardTab 仍会兜底
     }
   });
 }

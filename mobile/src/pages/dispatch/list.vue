@@ -129,6 +129,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { guardTab } from '@/utils/permission'
+import { pickProject } from '@/utils/projectPicker'
 
 const activeTab = ref('my')
 const list = ref([])
@@ -292,8 +293,14 @@ function goDetail(item) {
   uni.navigateTo({ url: `/pages/dispatch/detail?id=${item.id}` })
 }
 
-function goAdd() {
-  uni.navigateTo({ url: '/pages/dispatch/add' })
+async function goAdd() {
+  // 关键修复：派工 tabBar 入口进来也要先选项目，与首页"新建派工"流程对齐。
+  const proj = await pickProject('选择项目后添加派工')
+  if (proj) {
+    uni.navigateTo({
+      url: `/pages/dispatch/add?projectId=${proj.id}&projectName=${encodeURIComponent(proj.name)}`,
+    })
+  }
 }
 
 function handleApprove(item) {

@@ -108,6 +108,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { guardTab } from "@/utils/permission";
+import { pickProject } from "@/utils/projectPicker";
 
 const loading = ref(false);
 const curStatus = ref('');
@@ -205,8 +206,16 @@ const goDetail = (item) => {
   uni.navigateTo({ url: `/pages/inspection/detail?id=${item.id}` });
 };
 
-const goAdd = () => {
-  uni.navigateTo({ url: '/pages/inspection/add' });
+const goAdd = async () => {
+  // 关键修复：巡检 tab 入口进来也要先选项目，与首页"新建巡检"流程对齐。
+  // 之前直接跳 /pages/inspection/add 会让用户在表单里还要回头选，体验割裂。
+  // 用户从「项目详情」入口进来时仍然带着 projectId 直跳（见 projects/detail.vue），保持不变。
+  const p = await pickProject('选择项目后添加巡检');
+  if (p) {
+    uni.navigateTo({
+      url: `/pages/inspection/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}`,
+    });
+  }
 };
 
 const goBack = () => {

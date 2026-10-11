@@ -20,6 +20,20 @@ onLaunch(() => {
     options.header = headers;
     return _origRequest(options);
   };
+
+  // 全局兜底：捕获未处理的 Promise 拒绝（H5 下 navigator.onLine 抖动 /
+  // 第三方库副作用冒出的 reject），避免污染控制台（之前用户反馈"登录后控制台报错"）。
+  // 仅记录到 console.warn，不弹 toast，不影响业务 UX。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('unhandledrejection', (event) => {
+      try {
+        const reason = event && event.reason;
+        const msg = (reason && (reason.message || reason.msg || reason.errMsg)) || (typeof reason === 'string' ? reason : 'unknown');
+        console.warn('[unhandledrejection]', msg);
+        event.preventDefault();
+      } catch (_) { /* 忽略 */ }
+    });
+  }
 });
 
 onShow(() => {
@@ -27,7 +41,11 @@ onShow(() => {
   checkAuth();
   // 已登录时按角色应用底部 tabBar（未登录会被 checkAuth 重定向到登录页，此处跳过）
   if (uni.getStorageSync("token")) {
-    applyRoleTabBar();
+    try {
+      applyRoleTabBar();
+    } catch (e) {
+      console.warn('[applyRoleTabBar] failed:', (e && e.message) || e);
+    }
   }
 });
 

@@ -47,9 +47,8 @@
         </view>
         <view class="stat-divider"></view>
         <view class="stat-card" @click="goFinance">
-          <text v-if="isFinance" class="stat-num">{{ fmtMoney(stats.pendingPayAmount) }}</text>
-          <text v-else class="stat-num">{{ stats.pendingPay }}</text>
-          <text class="stat-label">{{ isFinance ? '待报销金额' : '待回款' }}</text>
+          <text class="stat-num">{{ fmtMoney(stats.pendingReceiveAmount) }}</text>
+          <text class="stat-label">待收款金额</text>
         </view>
       </view>
 
@@ -96,7 +95,12 @@
               <view class="todo-left">
                 <view class="todo-priority" :class="`priority-${todo.priority || 'normal'}`"></view>
                 <view class="todo-content">
-                  <text class="todo-title">{{ todo.title }}</text>
+                  <view class="todo-title-row">
+                    <text class="todo-title">{{ todo.title }}</text>
+                    <!-- 巡检整改 urgency 标签：已逾期=红，加急（≤3天）=红 -->
+                    <text v-if="todo.urgency === 'overdue'" class="todo-badge badge-overdue">已逾期 {{ todo.days_left != null ? Math.abs(todo.days_left) + '天' : '' }}</text>
+                    <text v-else-if="todo.urgency === 'urgent'" class="todo-badge badge-urgent">加急 {{ todo.days_left != null ? todo.days_left + '天' : '' }}</text>
+                  </view>
                   <text class="todo-meta">{{ todo.subtitle || '' }}<text v-if="todo.time"> · {{ todo.time }}</text></text>
                 </view>
               </view>
@@ -221,6 +225,8 @@ const stats = ref({
   inProgress: 0,
   overdue: 0,
   pendingInspect: 0,
+  // 待收款金额（应收 - 已收），所有项目汇总
+  pendingReceiveAmount: 0,
   pendingPay: '¥0',
   pendingPayAmount: 0,
 });
@@ -259,9 +265,9 @@ const loadUnread = async () => {
 onShow(() => {
   loadUnread();
   loadRecentProjects();
-  loadHomeStats();
+  loadHomeStats().catch(() => {}); // async调用，防止未捕获的reject冒泡
   // 权限以服务端为准：刷新后再应用一次 tabBar（角色/借权变化后即时生效）
-  userStore.fetchMe().then(() => applyRoleTabBar());
+  userStore.fetchMe().then(() => applyRoleTabBar()).catch(() => {});
 });
 
 onMounted(() => {
@@ -403,7 +409,9 @@ const handleQuick = (item) => {
       uni.navigateTo({ url: `/pages/dispatch/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'newMaterial': openMaterialPicker(); break;
-    case 'newAccept': uni.navigateTo({ url: '/pages/acceptance/list' }); break;
+    case 'newAccept': openProjectPicker('选择项目后查看验收', (p) => {
+      uni.navigateTo({ url: `/pages/acceptance/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
     case 'newChange': openProjectPicker('选择项目后添加增减项', (p) => {
       uni.navigateTo({ url: `/pages/contracts/contract-change-add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
@@ -501,7 +509,9 @@ const onMaterialSelect = ({ item }) => {
   if (item.value === 'purchase') {
     uni.navigateTo({ url: '/pages/material/purchase' });
   } else if (item.value === 'purchase_list') {
-    uni.navigateTo({ url: '/pages/purchase/list' });
+    // 关键修复：/pages/purchase/list 是 tabBar 页，必须用 switchTab；
+    // navigateTo 跳 tabBar 会被 uni-app 拒绝（console: navigateTo:fail can not navigateTo a tabbar page）。
+    uni.switchTab({ url: '/pages/purchase/list' });
   } else if (item.value === 'inbound') {
     uni.navigateTo({ url: '/pages/material/inbound' });
   }
@@ -573,24 +583,27 @@ const goTodo = (todo) => {
 };
 
 // 通用：根据 todo.url 跳转（兼容字符串与对象）
+// 关键修复：必须把 query string 拼回 url 里再 navigateTo。
+// uni-h5（hash 路由 + /m/ base）对 navigateTo 的 params 字段处理不可靠，
+// 单独传 params 会导致 onLoad(options).id 为 undefined，
+// 进而 /api/purchase-requests/undefined 返回 404 显示「加载失败」。
 const goTodoUrl = (todo) => {
   const u = todo && todo.url
   if (u) {
     if (u.startsWith('/pages/')) {
-      // /pages/.../detail?id=xx&y=zz
-      const [path, qs] = u.split('?')
-      const params = {}
-      if (qs) for (const kv of qs.split('&')) { const [k, v] = kv.split('='); if (k) params[k] = v }
+      const [path] = u.split('?')
       if (path === '/pages/purchase/list' || path === '/pages/projects/list' || path === '/pages/inspection/list') {
+        // tabBar 页面：switchTab 不带 query，改用 redirectTo 保留参数；保持简单直接 switchTab
         uni.switchTab({ url: path })
       } else {
-        uni.navigateTo({ url: path, params, success: () => {}, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } })
+        uni.navigateTo({ url: u, success: () => {}, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } })
       }
     } else {
       uni.navigateTo({ url: u })
     }
     return
   }
+  // 兜底：没有 url 时按类型猜测（旧数据兼容）
   goTodo(todo)
 };
 
@@ -835,12 +848,41 @@ const goProject = (id) => {
   min-width: 0;
 }
 
+.todo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .todo-title {
   font-size: 14px;
   color: #1A1A1A;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 待办 urgency 徽标（巡检整改专用） */
+.todo-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.badge-overdue {
+  background: #FEF2F2;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+}
+.badge-urgent {
+  background: #FFF7ED;
+  color: #EA580C;
+  border: 1px solid #FED7AA;
 }
 
 .todo-meta {

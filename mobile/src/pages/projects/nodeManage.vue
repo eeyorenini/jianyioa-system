@@ -450,7 +450,7 @@ const onStatusSelect = async ({ item }) => {
       });
       if (doUpdate && node.sms_template_id) {
         await uni.request({
-          url: `/api/sms/send`,
+          url: `/api/sms-send`,
           method: "POST",
           header: { Authorization: token },
           data: { node_id: node.id, template_id: node.sms_template_id },

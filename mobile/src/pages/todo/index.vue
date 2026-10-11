@@ -13,7 +13,7 @@
         <text class="summary-num">{{ total }}</text>
         <text class="summary-label">项待处理</text>
       </view>
-      <view class="summary-sub">按你的权限聚合：采购审核 · 报销 · 审批 · 派工</view>
+      <view class="summary-sub">按你的权限聚合：合同 · 增减项 · 采购审核 · 报销 · 审批 · 派工</view>
     </view>
 
     <!-- 分类筛选 -->
