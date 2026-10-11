@@ -286,9 +286,9 @@ onMounted(() => {
     }
   })
 
-  // 加载供应商列表（只取"主材"类型）
+  // v2.3.1：供应商已合并到外部联系人，按 category=供应商 过滤
   uni.request({
-    url: '/api/suppliers',
+    url: '/api/external-contacts?category=' + encodeURIComponent('供应商') + '&is_active=1',
     success: (res) => {
       const all = Array.isArray(res.data) ? res.data : (res.data?.data || [])
       suppliers.value = all.filter(s => s.type === '主材')

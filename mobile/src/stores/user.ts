@@ -33,6 +33,40 @@ const imp = reactive({
   targetRole: "",       // 当前借权对象的角色名
 });
 
+// 客户端（业主）可见配置 —— v2.3.1 P4
+// 8 项开关由后台「客户端可见配置」页控制，全局一份
+const customerVisibility = reactive({
+  loaded: false,
+  project_info: true,
+  project_log: true,
+  inspection: true,
+  acceptance: true,
+  rectification: true,
+  contract_amount: false, // 默认关（敏感财务）
+  family_members: true,
+  messages: true,
+});
+
+/** 从后端拉取客户可见配置。失败时保持默认值（不让登录阻塞） */
+const loadCustomerVisibility = async () => {
+  try {
+    const res: any = await uni.request({ url: '/api/system-settings/customer_visibility' });
+    if (res?.data && typeof res.data === 'object') {
+      Object.assign(customerVisibility, res.data, { loaded: true });
+    } else {
+      customerVisibility.loaded = true;
+    }
+  } catch (e) {
+    customerVisibility.loaded = true; // 默认放行（防止 500 卡住）
+  }
+};
+
+/** 客户端某一类是否可见（如 'project_log'） */
+const canCustomerSee = (key: keyof typeof customerVisibility): boolean => {
+  if (key === 'loaded') return true;
+  return !!(customerVisibility as any)[key];
+};
+
 const parsePerms = (perms: any): string[] => {
   if (!perms) return [];
   if (typeof perms === "string") {
@@ -246,6 +280,9 @@ export const useUserStore = () => {
   return {
     state,
     imp,
+    customerVisibility,
+    loadCustomerVisibility,
+    canCustomerSee,
     setUser,
     loadUser,
     fetchMe,

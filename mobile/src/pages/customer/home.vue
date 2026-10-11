@@ -89,6 +89,8 @@ import customerTabbar from "@/components/customer-tabbar.vue";
 import customerGridMenu from "@/components/customer-grid-menu.vue";
 import customerDynamicFeed from "@/components/customer-dynamic-feed.vue";
 import customerEmptyState from "@/components/customer-empty-state.vue";
+import { useUserStore } from "@/stores/user";
+const userStore = useUserStore();
 
 const pageLoading = ref(true);
 const hasProject = ref(false);
@@ -184,8 +186,13 @@ const loadDynamicList = async () => {
   
   try {
     const allDynamics = [];
-    
+    // v2.3.1 P4：客户可见配置 —— 后台开关关掉就不拉对应数据
+    const showLog = userStore.canCustomerSee('project_log');
+    const showInspect = userStore.canCustomerSee('inspection');
+    const showAccept = userStore.canCustomerSee('acceptance');
+
     // 1. 获取施工日志
+    if (showLog) {
     try {
       const logRes = await uni.request({
         url: `/api/project-logs/${projectId.value}?page=1&page_size=20`,
@@ -208,8 +215,10 @@ const loadDynamicList = async () => {
     } catch (e) {
       console.log('日志加载失败', e);
     }
-    
+    }
+
     // 2. 获取巡检记录
+    if (showInspect) {
     try {
       const inspectRes = await uni.request({
         url: `/api/inspections?project_id=${projectId.value}`,
@@ -229,8 +238,10 @@ const loadDynamicList = async () => {
     } catch (e) {
       console.log('巡检加载失败', e);
     }
-    
+    }
+
     // 3. 获取验收记录
+    if (showAccept) {
     try {
       const acceptRes = await uni.request({
         url: `/api/acceptance?project_id=${projectId.value}`,
@@ -249,6 +260,7 @@ const loadDynamicList = async () => {
       }
     } catch (e) {
       console.log('验收加载失败', e);
+    }
     }
     
     // 4. 获取节点状态变更（从项目节点中提取已完成的节点作为动态）
@@ -375,7 +387,8 @@ const handleLogout = () => {
 
 // 页面加载
 onMounted(() => {
-  loadData();
+  // v2.3.1 P4：先拉客户可见配置（失败时默认全放行，不阻塞）
+  userStore.loadCustomerVisibility().finally(loadData);
 });
 </script>
 

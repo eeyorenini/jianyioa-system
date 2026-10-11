@@ -80,6 +80,8 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
+import { useUserStore } from "@/stores/user";
+const userStore = useUserStore();
 
 const projectId = ref(0);
 const logs = ref([]);
@@ -90,7 +92,14 @@ onMounted(() => {
   const current = pages[pages.length - 1];
   const options = current.options || {};
   projectId.value = parseInt(options.projectId || '0');
-  fetchLogs();
+  // v2.3.1 P4：施工日志开关关掉 → 直接提示无权限（按 §4.6 配置）
+  userStore.loadCustomerVisibility().finally(() => {
+    if (!userStore.canCustomerSee('project_log')) {
+      loading.value = false;
+      return;
+    }
+    fetchLogs();
+  });
 });
 
 function fetchLogs() {

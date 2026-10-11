@@ -254,9 +254,10 @@ const goMessage = () => {
 const loadUnread = async () => {
   try {
     const res = await uni.request({ url: '/api/notifications/unread-count' });
-    if (res.data?.code === 0 || res.data?.code === undefined) {
-      unreadCount.value = res.data?.data ?? 0;
-    }
+    // uni.request 返回完整 envelope { data, statusCode }，res.data 才是后端业务 body
+    // 后端直接 res.json({count})，所以是 {count} —— 注意这里不要再 .data
+    const body = (res && res.data) || {}
+    unreadCount.value = Number(body.count || 0)
   } catch (e) {
     // 忽略
   }
@@ -301,10 +302,11 @@ const loadHomeStats = async () => {
     }
     todos.value = merged;
     todosLoaded.value = true;
-    // 角标 = 审批流待办 + 项目事项 + 预警的总和
+    // 角标 = 审批流待办 + 项目事项的总和（与下方待办列表完全同口径）
+    // 2026-10-12：逾期预警不再计入 —— 预警单独展示在预警区块，列表里看不到
+    // 会导致"角标 6、列表只有 4"的错觉
     const projItems = (d.home?.sections || []).reduce((s, x) => s + (x.items?.length || 0), 0)
-    const warnCount = (d.home?.warnings || []).length
-    todoTotal.value = (d.total || 0) + projItems + warnCount
+    todoTotal.value = (d.total || 0) + projItems
   } catch (e) {
     console.error('加载首页统计失败', e);
     todosLoaded.value = true;
@@ -610,22 +612,6 @@ const goTodoUrl = (todo) => {
 // 待办中心：汇总各模块待我处理的事项（按权限聚合）
 const goTodoCenter = () => {
   uni.navigateTo({ url: '/pages/todo/index' });
-};
-
-const loadTodoCount = async () => {
-  try {
-    const res = await uni.request({
-      url: '/api/todo/count',
-      header: {
-        'x-user-id': String(userStore.state.id),
-      }
-    });
-    if (res.data && res.data.code === 0) {
-      todoTotal.value = res.data.total || 0;
-    }
-  } catch (e) {
-    // 忽略
-  }
 };
 
 const goProject = (id) => {

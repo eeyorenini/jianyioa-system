@@ -195,7 +195,7 @@ onMounted(() => {
 
   // 加载供应商列表（主材类型）
   uni.request({
-    url: '/api/suppliers',
+    url: '/api/external-contacts?category=' + encodeURIComponent('供应商') + '&is_active=1',
     success: (res) => {
       const all = Array.isArray(res.data) ? res.data : (res.data?.data || [])
       supplierList = all.filter(s => s.type === '主材')

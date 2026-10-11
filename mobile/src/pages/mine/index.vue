@@ -79,7 +79,7 @@
 
     <!-- 版本信息 -->
     <view class="version-info">
-      <text>简逸装饰 · 工地管理系统 v1.0</text>
+      <text>简逸装饰 · 工地管理系统 v2.3.2</text>
     </view>
 
     <!-- 借权对象选择弹窗（员工列表） -->
@@ -116,11 +116,11 @@ const loadUnread = () => {
     success: (res) => {
       const count = res.data?.count || 0;
       unreadCount.value = count;
-      // 设置 TabBar 第5个tab（index=4）的badge
+      // 设置 TabBar「我的」tab 的badge —— tabBar 共6项：首页0 项目1 巡检2 派工3 采购4 我的5
       if (count > 0) {
-        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
+        uni.setTabBarBadge({ index: 5, text: count > 99 ? '99+' : String(count) });
       } else {
-        uni.removeTabBarBadge({ index: 4 });
+        uni.removeTabBarBadge({ index: 5 });
       }
     },
     fail: () => {}

@@ -64,6 +64,8 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
+import { useUserStore } from "@/stores/user";
+const userStore = useUserStore();
 
 const list = ref([]);
 const loading = ref(false);
@@ -215,7 +217,11 @@ const openMessage = async (item) => {
 onMounted(() => {
   phone.value = getPhone();
   loading.value = true;
-  fetchList(true).finally(() => { loading.value = false; });
+  // v2.3.1 P4：消息开关关掉 → 列表置空，不显示消息页
+  userStore.loadCustomerVisibility().finally(() => {
+    if (!userStore.canCustomerSee('messages')) { loading.value = false; return; }
+    fetchList(true).finally(() => { loading.value = false; });
+  });
 });
 </script>
 

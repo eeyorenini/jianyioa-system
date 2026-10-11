@@ -4,7 +4,8 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">消息通知</text>
-      <view class="nav-placeholder"></view>
+      <text v-if="hasUnread" class="nav-action" @click="markAllRead">全部已读</text>
+      <view v-else class="nav-placeholder"></view>
     </view>
 
     <!-- 下拉刷新 -->
@@ -68,7 +69,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 
 const messages = ref([])
@@ -262,6 +263,30 @@ const goBack = () => {
   uni.switchTab({ url: '/pages/mine/index' });
 };
 
+// 是否存在未读消息（决定"全部已读"按钮显隐）
+const hasUnread = computed(() => messages.value.some(m => !m.is_read))
+
+// 一键全部已读（2026-10-12）
+function markAllRead() {
+  uni.showModal({
+    title: '全部已读',
+    content: '确定把所有消息标为已读？',
+    success: (res) => {
+      if (!res.confirm) return
+      uni.request({
+        url: '/api/messages/read-all',
+        method: 'PUT',
+        header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
+        success: () => {
+          messages.value = messages.value.map(m => ({ ...m, is_read: 1 }))
+          uni.showToast({ title: '已全部标为已读', icon: 'success' })
+        },
+        fail: () => uni.showToast({ title: '操作失败', icon: 'none' })
+      })
+    }
+  })
+}
+
 const refreshUnreadBadge = () => {
   // 注意：message/list 不是 TabBar 页面，不能调用 setTabBarBadge
   // TabBar badge 由 mine/index.vue 的 onShow 统一设置
@@ -370,5 +395,12 @@ const refreshUnreadBadge = () => {
 
 .nav-placeholder {
   width: 40px;
+}
+
+.nav-action {
+  font-size: 14px;
+  color: #fff;
+  min-width: 40px;
+  text-align: right;
 }
 </style>
