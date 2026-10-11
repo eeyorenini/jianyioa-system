@@ -19,7 +19,20 @@ const puppeteer = require('puppeteer');
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-app.use(cors());
+// CORS 白名单：允许的来源域名
+// 可通过 CORS_ORIGINS 环境变量覆盖（多个用逗号分隔）；默认仅允许已知生产域名
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://erp.fujinwanjia.com,http://116.204.19.53:7780').split(',').map(s => s.trim());
+app.use(cors({
+  origin: (origin, callback) => {
+    // 允许没有 origin 的请求（如 Postman、curl、本地直接调用）
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // 允许本地开发请求（localhost / 127.0.0.1）
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS policy'));
+  },
+  credentials: true,
+}));
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
@@ -3736,7 +3749,9 @@ app.post('/api/employees/login', async (req, res) => {
   `);
   const user = await stmt.get(username, password);
   if (user) {
-    res.json({ success: true, user });
+    // 剔除 password 字段，防止登录响应泄露明文密码
+    const { password: _, ...safeUser } = user;
+    res.json({ success: true, user: safeUser });
   } else {
     res.json({ success: false, message: '用户名或密码错误' });
   }
