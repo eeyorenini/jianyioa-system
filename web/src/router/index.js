@@ -18,6 +18,8 @@ const Budgets = () => import('../views/Budgets.vue')
 const MaterialOrders = () => import('../views/MaterialOrders.vue')
 const Employees = () => import('../views/Employees.vue')
 const Roles = () => import('../views/Roles.vue')
+const CustomerVisibility = () => import('../views/CustomerVisibility.vue')
+const ExternalContacts = () => import('../views/ExternalContacts.vue')
 const Departments = () => import('../views/Departments.vue')
 const SystemSettings = () => import('../views/SystemSettings.vue')
 const Approvals = () => import('../views/Approvals.vue')
@@ -34,7 +36,7 @@ const Login = () => import('../views/Login.vue')
 const MessageCenter = () => import('../views/MessageCenter.vue')
 const ProjectLogs = () => import('../views/ProjectLogs.vue')
 const InspectionLogs = () => import('../views/InspectionLogs.vue')
-const Suppliers = () => import('../views/Suppliers.vue')
+// const Suppliers = () => import('../views/Suppliers.vue')  // v2.3.1 已合并到外部联系人
 const PurchaseRequests = () => import('../views/PurchaseRequests.vue')
 const ChangeOrders = () => import('../views/ChangeOrders.vue')
 const FinanceProjectList = () => import('../views/FinanceProjectList.vue')
@@ -65,7 +67,7 @@ const routes = [
   { path: '/progress-node-templates', name: 'ProgressNodeTemplates', component: ProgressNodeTemplates, meta: { perm: 'project' } },
 
   { path: '/main-materials', name: 'MainMaterials', component: MainMaterials, meta: { perm: 'warehouse' } },
-  { path: '/suppliers', name: 'Suppliers', component: Suppliers, meta: { perm: 'supplier' } },
+  // { path: '/suppliers', name: 'Suppliers', component: Suppliers, meta: { perm: 'supplier' } }, // v2.3.1 已合并到外部联系人
   { path: '/warehouse', name: 'Warehouse', component: Warehouse, meta: { perm: 'warehouse' } },
   { path: '/material-orders', name: 'MaterialOrders', component: MaterialOrders, meta: { perm: 'purchase' } },
   { path: '/purchase-requests', name: 'PurchaseRequests', component: PurchaseRequests, meta: { perm: 'purchase' } },
@@ -75,7 +77,11 @@ const routes = [
   { path: '/notices', name: 'Notices', component: Notices, meta: { perm: 'notice' } },
 
   { path: '/employees', name: 'Employees', component: Employees, meta: { perm: 'employee' } },
+  // v2.3.1 外部联系人（工人/供应商/设计师等）：独立模块
+  { path: '/external-contacts', name: 'ExternalContacts', component: ExternalContacts, meta: { perm: 'external_contact' } },
   { path: '/roles', name: 'Roles', component: Roles, meta: { perm: 'role' } },
+  // v2.3.1 客户端可见配置（业主 App 8 项开关，全局一份）
+  { path: '/customer-visibility', name: 'CustomerVisibility', component: CustomerVisibility, meta: { perm: 'settings' } },
   { path: '/departments', name: 'Departments', component: Departments, meta: { perm: 'department' } },
 
   { path: '/finance', name: 'Finance', component: Finance, meta: { perm: 'finance' } },

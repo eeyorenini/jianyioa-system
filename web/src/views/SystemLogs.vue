@@ -39,7 +39,7 @@
         <span class="hint-item"><code>/api/invoices</code> 发票</span>
         <span class="hint-item"><code>/api/warranties</code> 保修</span>
         <span class="hint-item"><code>/api/channels</code> 渠道</span>
-        <span class="hint-item"><code>/api/suppliers</code> 供应商</span>
+        <span class="hint-item"><code>/api/external-contacts?category=供应商</code> 供应商（已合并到外部联系人）</span>
         <span class="hint-item"><code>/api/purchases</code> 采购</span>
         <span class="hint-item"><code>/api/cost-records</code> 成本记录</span>
         <span class="hint-item"><code>/api/design-measurements</code> 设计测量</span>

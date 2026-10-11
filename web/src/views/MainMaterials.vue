@@ -399,8 +399,9 @@ onMounted(async () => {
   loadData()
   const res = await axios.get('/api/main-materials/categories')
   categoryOptions.value = res.data || []
-  const sRes = await axios.get('/api/suppliers')
-  supplierOptions.value = sRes.data || []
+  // v2.3.1：供应商已合并到外部联系人；按 category=供应商 过滤
+  const sRes = await axios.get('/api/external-contacts', { params: { category: '供应商', is_active: 1 } })
+  supplierOptions.value = sRes.data?.list || []
 })
 </script>
 

@@ -52,7 +52,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.3.1</div>
+      <div class="sidebar-version">v 2.3.2</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -81,7 +81,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.3.1</div>
+      <div class="sidebar-version">v 2.3.2</div>
     </div>
 
     <!-- 主内容区 -->
@@ -167,7 +167,7 @@ const menuConfig = [
     type: 'group', index: 'material-group', icon: 'Box', title: '材料管理',
     children: [
       { path: '/main-materials', title: '主材管理', perm: 'warehouse' },
-      { path: '/suppliers', title: '供应商管理', perm: 'supplier' },
+      // { path: '/suppliers', title: '供应商管理', perm: 'supplier' }, // v2.3.1 已合并到外部联系人
       { path: '/warehouse', title: '仓库管理', perm: 'warehouse' },
       { path: '/material-orders', title: '采购订单', perm: 'purchase' },
       { path: '/purchase-requests', title: '采购申请', perm: 'purchase' }
@@ -185,7 +185,10 @@ const menuConfig = [
     type: 'group', index: 'org-group', icon: 'Grid', title: '组织结构',
     children: [
       { path: '/employees', title: '员工管理', perm: 'employee' },
+      // v2.3.1 外部联系人：工人/供应商/设计师等独立模块（在员工管理下）
+      { path: '/external-contacts', title: '外部联系人', perm: 'external_contact' },
       { path: '/roles', title: '角色权限', perm: 'role' },
+      { path: '/customer-visibility', title: '客户端可见配置', perm: 'settings' },
       { path: '/departments', title: '部门管理', perm: 'department' }
     ]
   },
@@ -245,7 +248,8 @@ const pageTitle = computed(() => {
     '/finance': '财务管理', '/finance-projects': '财务管理', '/projects': '工程管理',
     '/quotes': '报价管理', '/main-materials': '主材管理',
     '/warehouse': '仓库管理', '/material-orders': '采购订单',
-    '/suppliers': '供应商管理', '/purchase-requests': '采购申请',
+    // '/suppliers': '供应商管理（已合并到外部联系人）',
+    '/purchase-requests': '采购申请',
     '/change-orders': '增减项管理',
     '/approvals': '审批管理', '/reports': '工作汇报',
     '/notices': '公告管理', '/acceptance': '验收管理',

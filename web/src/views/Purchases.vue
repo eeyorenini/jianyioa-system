@@ -123,12 +123,16 @@ const getStatusType = (status) => {
 
 const loadData = async () => {
   try {
+    // v2.3.1：供应商已合并到外部联系人，按 category=供应商 过滤
     const [purchasesRes, suppliersRes, projectsRes] = await Promise.all([
-      fetch('/api/purchases'), fetch('/api/suppliers'), fetch('/api/projects')
+      fetch('/api/purchases'),
+      fetch('/api/external-contacts?category=' + encodeURIComponent('供应商') + '&is_active=1'),
+      fetch('/api/projects')
     ])
     let data = await purchasesRes.json()
-    const supplierData = await suppliersRes.json()
+    const supplierData = (await suppliersRes.json())?.list || []
     const projectData = await projectsRes.json()
+    // 适配主材页：保留 {id, name} 形态；外部联系人表 id 主键足够
     suppliers.value = supplierData
     projects.value = projectData
     if (searchForm.value.purchase_no) data = data.filter(d => d.purchase_no?.includes(searchForm.value.purchase_no))

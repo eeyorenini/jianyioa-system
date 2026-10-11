@@ -130,17 +130,10 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="薪资" width="70">
-              <template #default="scope">
-                <el-checkbox
-                  v-model="scope.row.salary"
-                  :disabled="isAllPermission || !scope.row.hasSalary"
-                />
-              </template>
-            </el-table-column>
           </el-table>
           <div style="margin-top: 10px; color: #909399; font-size: 12px;">
-            注：「全部数据」指可查看该模块的全部数据（read_all），不勾选则只能查看自己创建/相关的数据；「财务」列用于<b>金额类业务</b>（采购 / 合同 / 项目合同 / 增减项 / 催收），勾选后可进行财务受理与收款相关操作；「薪资」列仅员工模块可用，勾选后可查看员工薪资与身份证（敏感字段），不勾选则列表脱敏（本人始终可见自己的）。admin 角色拥有全部权限，无需单独设置。
+            注：「全部数据」指可查看该模块的全部数据（read_all），不勾选则只能查看自己创建/相关的数据；「财务」列用于<b>金额类业务</b>（采购 / 合同 / 项目合同 / 增减项 / 催收），勾选后可进行财务受理与收款相关操作；「工资」列仅员工模块可用，勾选后可查看员工工资与身份证（敏感字段），不勾选则列表脱敏（本人始终可见自己的）。<br/>
+            <b>员工模块（通讯录）</b>口径：勾「读」= 全内部员工可见；勾「全部数据」= 含外部人员；勾「工资」= 可见工资身份证；不勾读= 仅本人。可结合下方"可管理部门"页签收窄到指定部门。
           </div>
         </el-tab-pane>
 
@@ -166,8 +159,9 @@
         <el-tab-pane label="可管理部门" name="departments">
           <el-alert type="info" :closable="false" show-icon style="margin-bottom: 14px;">
             <div style="line-height: 1.6; font-size: 13px;">
-              勾选后，该角色即使没有「员工管理 · 全部数据」权限，也能查看<b>所辖部门（含下级部门）</b>的员工与移动端通讯录；
-              不勾选则不启用，保持原有权限逻辑。适用于部门负责人 / 项目经理等需要管理下属的场景。
+              <b>作用</b>：对<b>通讯录（员工模块）</b>做范围<b>收窄</b>。勾选后，该角色在通讯录里只能看到<b>所辖部门（含下级部门）</b>的员工 + 始终能看到自己。
+              <br/>不勾选则不启用，按「员工模块 · 读」权限的口径：勾"读"= 全内部员工、勾"全部数据"= 含外部、不勾= 仅本人。
+              <br/>适用：部门负责人 / 项目经理 / 财务需要限制查看范围时配置。
             </div>
           </el-alert>
           <el-checkbox-group v-model="selectedDepartments">
@@ -189,6 +183,24 @@
           <div v-if="!departments.length" style="color: #909399; font-size: 13px; padding: 6px 0;">
             暂无部门，请先在「部门管理」中创建部门。
           </div>
+        </el-tab-pane>
+
+        <!-- Tab5 - 客户端可见（v2.3.1 新增）——
+             业主（customers 表）不属于 roles，8 个开关是"全局一份"，存在 system_settings。
+             这里只是入口跳转，不在角色内编辑；详见「客户端可见配置」独立页。 -->
+        <el-tab-pane label="客户端可见" name="customer_visibility">
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom: 14px;">
+            <div style="line-height: 1.6; font-size: 13px;">
+              业主（clients）从 <code>/api/customers/login</code> 登录，<b>不在「角色」表中</b>，
+              其可见的 8 项内容（项目信息、施工日志、巡检记录、验收记录、整改单、合同金额、家庭成员、消息通知）
+              是 <b>全局一份</b>，存在 <code>system_settings.category='customer_visibility'</code>。
+              <br/>⚠️ 前提：业主必须与项目相关联才谈得上"开不开"；不相关项目，开关不生效。
+            </div>
+          </el-alert>
+          <el-button type="primary" plain @click="goCustomerVisibility">
+            <el-icon><Setting /></el-icon>
+            打开「客户端可见配置」页面
+          </el-button>
         </el-tab-pane>
       </el-tabs>
 
@@ -222,10 +234,14 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { Setting } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 
 const roleList = ref([])
 const departments = ref([])
+const router = useRouter()
+const goCustomerVisibility = () => router.push('/customer-visibility')
 
 // 部门选项：按 parent_id 组织为层级并缩进展示（便于识别上下级部门）
 const deptOptions = computed(() => {
@@ -350,6 +366,8 @@ const moduleList = ref([
   { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'project_contract', name: '项目合同', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'project', name: '项目管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  // v2.3.1 新增：施工日志（从 project 拆出来单独配置）
+  { key: 'project_log', name: '施工日志', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'quote', name: '报价管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'inspection', name: '巡检验房', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
@@ -359,12 +377,18 @@ const moduleList = ref([
   { key: 'report', name: '报表管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
   { key: 'budget', name: '预算管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'finance', name: '财务管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  // v2.3.1 新增：催收记录（从 finance 拆出来单独配置）
+  { key: 'collection', name: '催收记录', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'purchase', name: '采购管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'warehouse', name: '仓库管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'supplier', name: '供应商管理', hasAll: false, read: false, write: false, delete: false, hasDelete: false, hasResetPassword: false },
+  // v2.3.1 新增：主材管理（从 purchase 拆出来单独配置）
+  { key: 'material', name: '主材管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
+  // { key: 'supplier', name: '供应商管理', hasAll: false, ... } -- 已合并到 external_contact
   { key: 'invoice', name: '发票管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'dispatch', name: '派工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
-  { key: 'employee', name: '员工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true, hasSalary: true, salary: false },
+  { key: 'employee', name: '员工管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: true },
+  // v2.3.1 新增：外部联系人（独立模块，工人/供应商/设计师）
+  { key: 'external_contact', name: '外部联系人', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'role', name: '角色管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'department', name: '部门管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'sms', name: '短信模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
@@ -377,16 +401,36 @@ const notificationTypes = [
   { value: 'contract_updated', label: '合同变更' },
   { value: 'project_created', label: '新增项目' },
   { value: 'project_status_changed', label: '项目状态变更' },
+  { value: 'project_archived', label: '项目归档/完成' },
   { value: 'node_status_changed', label: '节点状态变更' },
+  { value: 'node_started', label: '节点开始' },
+  { value: 'node_completed', label: '节点通过（验收合格自动）' },
+  { value: 'node_overdue', label: '节点逾期' },
   { value: 'project_progress', label: '项目进展' },
+  { value: 'log_submitted', label: '施工日志提交' },
   { value: 'inspection_submit', label: '巡检提交' },
+  { value: 'rectification_created', label: '整改发起' },
+  { value: 'rectification_done', label: '整改完成' },
+  { value: 'rectification_passed', label: '整改复查通过' },
   { value: 'acceptance_submit', label: '验收提交' },
+  { value: 'acceptance_passed', label: '验收合格（→ 节点自动通过）' },
+  { value: 'acceptance_rejected', label: '验收不合格/驳回' },
   { value: 'dispatch_created', label: '新增派工' },
   { value: 'dispatch_status_changed', label: '派工状态变更' },
+  { value: 'dispatch_completed', label: '派工完成' },
+  { value: 'change_submitted', label: '增减项提交' },
+  { value: 'change_approved', label: '增减项审核通过' },
+  { value: 'change_rejected', label: '增减项审核驳回' },
+  { value: 'contract_approved', label: '合同审核通过' },
+  { value: 'contract_rejected', label: '合同审核驳回' },
+  { value: 'collection_created', label: '催收记录' },
+  { value: 'receivable_due', label: '待收款提醒/逾期' },
   { value: 'approval_submit', label: '审批提交' },
   { value: 'approval_result', label: '审批结果' },
   { value: 'notice_published', label: '发布公告' },
   { value: 'customer_follow', label: '客户跟进' },
+  { value: 'customer_created', label: '新增客户' },
+  { value: 'material_inbound', label: '主材入库' },
   { value: 'invoice_created', label: '新增发票' },
   { value: 'system_notice', label: '系统通知' },
   // 采购流程

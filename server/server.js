@@ -16,6 +16,12 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const puppeteer = require('puppeteer');
 
+// 权限核心（v2.3.1 P2）—— 替代旧 checkPermission 实现，
+// 提供 canAction / canReadAll / visibleScope / relatedProjectIds / requirePerm
+// v2.3.1 P2 加 buildProjectScopeClause / buildProjectScopeOrSelfClause
+const permCore = require('./middleware/perm');
+const { buildProjectScopeClause, buildProjectScopeOrSelfClause } = permCore;
+
 const app = express();
 const PORT = process.env.PORT || 3002;
 
@@ -717,9 +723,93 @@ function getDefaultNotificationRules() {
 // 4. 管理员无论如何都收到
 // 5. 消息写入 notifications 表（receiver_phone=员工phone）
 // 6. 按通知规则的 channels 决定发送渠道（inapp写库 / sms发短信 / wechat发微信）
-async function notifyProject(type, projectId, title, content, sourceId, sourceType, templateId) {
+// ============ 消息提醒 · 关联判定 helper（v2.3.1 P2） ============
+// 返回某项目关联的员工 user_id 集合（含创建人/设计师/监理/工长/项目经理）；
+// 客户端（业主）不计 user_id（手机号仍会走 projectTargets 分支）。
+async function getProjectRelatedUserIds(projectId) {
+  if (!projectId) return new Set();
+  try {
+    const [rows] = await pool.query(
+      `SELECT creator_id, designer_id, supervisor_id, manager_id, foreman_id
+       FROM projects WHERE id = ? LIMIT 1`,
+      [projectId]
+    );
+    if (!rows[0]) return new Set();
+    const r = rows[0];
+    return new Set([r.creator_id, r.designer_id, r.supervisor_id, r.manager_id, r.foreman_id].filter(Boolean));
+  } catch (e) {
+    console.error('[getProjectRelatedUserIds] failed:', e.message);
+    return new Set();
+  }
+}
+
+// 2026-10-12：按权限码找"该审核的人"（单一真源 roles.permissions JSON，与 permCore 同源；'*' 为 admin 直通）
+async function getUserIdsByPermission(code) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT e.id, r.permissions FROM employees e JOIN roles r ON r.id = e.role_id
+       WHERE e.status = '在职' AND e.phone IS NOT NULL AND e.phone != ''`
+    );
+    const ids = [];
+    for (const row of (rows || [])) {
+      let perms = [];
+      try { perms = typeof row.permissions === 'string' ? JSON.parse(row.permissions) : (row.permissions || []); } catch { perms = []; }
+      if (Array.isArray(perms) && (perms.includes(code) || perms.includes('*'))) ids.push(row.id);
+    }
+    return ids;
+  } catch (e) {
+    console.error(`[getUserIdsByPermission] ${code} 查询失败:`, e.message);
+    return [];
+  }
+}
+
+// 审核提交类通知（陛下批示 2026-10-12）：审批权限人 + 提交人 + 项目经理，客户不收
+async function notifyReviewSubmitted(type, projectId, title, content, sourceId, sourceType, submitterId, permCodes) {
+  const ids = [submitterId];
+  for (const code of (permCodes || [])) ids.push(...await getUserIdsByPermission(code));
+  if (projectId) {
+    try {
+      const [[p]] = await pool.query('SELECT manager_id FROM projects WHERE id = ?', [projectId]);
+      if (p && p.manager_id) ids.push(p.manager_id);
+    } catch {}
+  }
+  return notifyProject(type, projectId, title, content, sourceId, sourceType, null, { mode: 'participants', userIds: ids });
+}
+
+// 审核结果类通知：仅提交人（谁发起，反馈给谁）
+async function notifySubmitter(type, projectId, title, content, sourceId, sourceType, submitterId) {
+  return notifyProject(type, projectId, title, content, sourceId, sourceType, null, { mode: 'participants', userIds: [submitterId] });
+}
+
+async function notifyProject(type, projectId, title, content, sourceId, sourceType, templateId, opts = {}) {
   // 2026-10-09 修复：收集短信发送结果，函数末尾返回给调用方
   const smsResults = [];
+  // 2026-10-12 通知模式（陛下批示）：
+  //   'participants' — 事件当事人：仅通知 opts.userIds（+管理员兜底）。
+  //                    用于审核提交（审批人+提交人+项目经理）与审核结果（仅提交人）
+  //   'subscribers'  — 按 PC「角色消息订阅」设置：客户 + 管理员 + 订阅了该类型的角色∩项目关联人。
+  //                    用于项目级事件（项目创建/状态变更/节点状态/进展）
+  //   默认 'related' — 全部项目关联人（巡检/整改/验收类维持现状）
+  opts = (opts && typeof opts === 'object') ? opts : {};
+  const notifyMode = opts.mode || 'related';
+  // 事件当事人模式的显式接收人（审核提交/审核结果专用）
+  const explicitTargets = [];
+  if (notifyMode === 'participants' && Array.isArray(opts.userIds) && opts.userIds.length > 0) {
+    const __ids = [...new Set(opts.userIds.filter(Boolean))];
+    if (__ids.length > 0) {
+      try {
+        const [emps] = await pool.query(
+          `SELECT id, phone, name FROM employees WHERE id IN (${__ids.map(() => '?').join(',')}) AND phone IS NOT NULL AND phone != ''`,
+          __ids
+        );
+        for (const e of (emps || [])) {
+          explicitTargets.push({ phone: e.phone, name: e.name || '', role: 'staff', user_id: e.id });
+        }
+      } catch (e) {
+        console.error('[notifyProject] 当事人查询失败:', e.message);
+      }
+    }
+  }
   try {
     // 0. 读取通知规则
     let notifRules = {};
@@ -758,36 +848,62 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
       console.log(`[notifyProject] 角色订阅查询失败（可能notification_types列不存在）: ${e.message}`);
     }
 
-    // 2. 查这些角色的所有员工手机号（如果没有任何角色订阅，则为空数组，不阻断后续逻辑）
+    // 2. 查这些角色的所有员工手机号 —— P2 §8.2 改造：
+    //    有 projectId 时，"角色订阅员工" 与 "项目关联人" 取交集（且与 sourceId 提交人取并集）；
+    //    无 projectId 时（公告 / 系统通知），仍按角色订阅广播。
+    //    P2 §8.3 第 2 步原状：原代码无条件把订阅角色全员加上，改造后按 projectId 分支处理。
     let staffTargets = [];
-    if (roles && roles.length > 0) {
+    if (roles && roles.length > 0 && notifyMode !== 'participants') {
       const roleIds = roles.map(r => r.id);
       const rolePlaceholders = roleIds.map(() => '?').join(',');
-      const [employees] = await db.prepare(
-        `SELECT DISTINCT e.id as user_id, e.phone, e.name FROM employees e WHERE e.role_id IN (${rolePlaceholders}) AND e.phone IS NOT NULL AND e.phone != ''`
-      ).all(...roleIds);
-      if (employees) {
-        for (const e of employees) {
-          if (e.phone) staffTargets.push({ phone: e.phone, name: e.name || '', role: 'staff', user_id: e.user_id || null });
+      let candidates = [];
+      if (!projectId) {
+        // 无项目归属：按角色订阅广播
+        candidates = roleIds;
+      } else {
+        // 有项目归属：仅保留与该项目关联的员工
+        // 先拿相关人 user_id 集
+        const linkedUserIds = await getProjectRelatedUserIds(projectId);
+        if (linkedUserIds && linkedUserIds.size > 0) {
+          const [employees] = await db.prepare(
+            `SELECT DISTINCT e.id as user_id, e.phone, e.name FROM employees e WHERE e.role_id IN (${rolePlaceholders}) AND e.id IN (?) AND e.phone IS NOT NULL AND e.phone != ''`,
+            [...roleIds, Array.from(linkedUserIds)]
+          ).all();
+          candidates = (employees || []).map((e) => e.id);
+        }
+      }
+      if (candidates.length > 0) {
+        const [employees] = await db.prepare(
+          `SELECT DISTINCT e.id as user_id, e.phone, e.name FROM employees e WHERE e.id IN (${candidates.map(() => '?').join(',')}) AND e.phone IS NOT NULL AND e.phone != ''`
+        ).all(...candidates);
+        if (employees) {
+          for (const e of employees) {
+            if (e.phone) staffTargets.push({ phone: e.phone, name: e.name || '', role: 'staff', user_id: e.user_id || null });
+          }
         }
       }
     }
 
-    // 3. 如果有 projectId，查项目相关人（设计师/监理/客户）——用 MySQL 直查（projects表在MySQL不在SQLite）
+    // 3. 如果有 projectId，查项目相关人（设计师/监理/客户/项目经理/工长/创建人）—— P2 §8.3 第 3 步：补 creator + foreman
+    //    2026-10-12：participants 模式跳过；subscribers 模式仅保留客户（员工改由角色订阅决定）
     let projectTargets = [];
-    if (projectId) {
+    if (projectId && notifyMode !== 'participants') {
       try {
         const [proj] = await mysqlPool.query(`
           SELECT c.phone as customer_phone, c.name as customer_name,
           des.phone as designer_phone, des.name as designer_name,
           sup.phone as supervisor_phone, sup.name as supervisor_name,
           mgr.id as manager_user_id, mgr.phone as manager_phone, mgr.name as manager_name,
-          des.id as designer_user_id, sup.id as supervisor_user_id
+          des.id as designer_user_id, sup.id as supervisor_user_id,
+          cre.id as creator_user_id, cre.phone as creator_phone, cre.name as creator_name,
+          for.id as foreman_user_id, for.phone as foreman_phone, for.name as foreman_name
           FROM projects p
           LEFT JOIN customers c ON p.customer_id = c.id
           LEFT JOIN employees des ON p.designer_id = des.id
           LEFT JOIN employees sup ON p.supervisor_id = sup.id
           LEFT JOIN employees mgr ON p.manager_id = mgr.id
+          LEFT JOIN employees cre ON p.creator_id = cre.id
+          LEFT JOIN employees for ON p.foreman_id = for.id
           WHERE p.id = ?
         `, [projectId]);
 
@@ -795,10 +911,16 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
 
         if (proj && proj[0]) {
           const p = proj[0];
-          if (p.designer_phone) projectTargets.push({ phone: p.designer_phone, name: p.designer_name, role: 'designer', user_id: p.designer_user_id || null });
-          if (p.supervisor_phone) projectTargets.push({ phone: p.supervisor_phone, name: p.supervisor_name, role: 'supervisor', user_id: p.supervisor_user_id || null });
-          if (p.manager_phone) projectTargets.push({ phone: p.manager_phone, name: p.manager_name, role: 'manager', user_id: p.manager_user_id || null });
+          // subscribers 模式（项目级事件按 PC 订阅设置走）：员工不再无条件全发，仅客户必达；
+          // 员工是否接收由「角色订阅」决定（见 step 2 staffTargets）
+          const pushAllStaff = notifyMode !== 'subscribers';
+          // 关联人：与 7.3 一致 —— 设计师 / 监理 / 项目经理 / 客户 / 创建人 / 工长
+          if (pushAllStaff && p.designer_phone) projectTargets.push({ phone: p.designer_phone, name: p.designer_name, role: 'designer', user_id: p.designer_user_id || null });
+          if (pushAllStaff && p.supervisor_phone) projectTargets.push({ phone: p.supervisor_phone, name: p.supervisor_name, role: 'supervisor', user_id: p.supervisor_user_id || null });
+          if (pushAllStaff && p.manager_phone) projectTargets.push({ phone: p.manager_phone, name: p.manager_name, role: 'manager', user_id: p.manager_user_id || null });
           if (p.customer_phone) projectTargets.push({ phone: p.customer_phone, name: p.customer_name, role: 'customer', user_id: null });
+          if (pushAllStaff && p.creator_phone) projectTargets.push({ phone: p.creator_phone, name: p.creator_name, role: 'creator', user_id: p.creator_user_id || null });
+          if (pushAllStaff && p.foreman_phone) projectTargets.push({ phone: p.foreman_phone, name: p.foreman_name, role: 'foreman', user_id: p.foreman_user_id || null });
         }
       } catch(e) {
         console.log(`[notifyProject] 项目相关人查询失败: ${e.message}`);
@@ -809,7 +931,7 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
     // 4. 合并去重（按phone去重）
     const phoneSet = new Set();
     const allTargets = [];
-    for (const t of [...staffTargets, ...projectTargets]) {
+    for (const t of [...explicitTargets, ...staffTargets, ...projectTargets]) {
       if (t.phone && !phoneSet.has(t.phone)) {
         phoneSet.add(t.phone);
         allTargets.push(t);
@@ -858,8 +980,8 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
         }
       }
 
-      // 短信渠道
-      if (enabledChannels.includes('sms') && templateId) {
+      // 短信渠道 —— P2 §8.3 渠道规则：仅对客户（业主）发送，员工一律不发短信（陛下四次批示）
+      if (enabledChannels.includes('sms') && templateId && t.role === 'customer') {
         try {
           const smsRes = await sendSmsFromNotify(t.phone, t.name, title, content, templateId);
           smsResults.push({ phone: t.phone, name: t.name, ...smsRes });
@@ -1285,9 +1407,14 @@ app.get('/api/contracts', async (req, res) => {
     const [rowsRaw] = await pool.query(`SELECT ${listFields} FROM contracts ORDER BY id DESC LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`);
     rows = rowsRaw;
   } else if (userId) {
-    const [countRows] = await pool.query('SELECT COUNT(*) as total FROM contracts WHERE created_by = ?', [userId]);
+    // P2 §4.5：合同可见性 = (创建人 ∪ 关联项目)；project_id IS NULL 的历史合同按创建人走
+    const relatedIds = Array.from(await permCore.relatedProjectIds(userId));
+    const placeholders = relatedIds.length ? relatedIds.map(() => '?').join(',') : '';
+    const cond = `(created_by = ? ${relatedIds.length ? ` OR project_id IN (${placeholders})` : ''})`;
+    const params = [userId, ...relatedIds];
+    const [countRows] = await pool.query(`SELECT COUNT(*) as total FROM contracts WHERE ${cond}`, params);
     total = Number(countRows[0]?.total) || 0;
-    const [rowsRaw] = await pool.query(`SELECT ${listFields} FROM contracts WHERE created_by = ? ORDER BY id DESC LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`, [userId]);
+    const [rowsRaw] = await pool.query(`SELECT ${listFields} FROM contracts WHERE ${cond} ORDER BY id DESC LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`, params);
     rows = rowsRaw;
   } else {
     total = 0;
@@ -1866,34 +1993,8 @@ async function hasReadAllPermission(userId, moduleKey) {
   return perms.includes(`${moduleKey}:read_all`);
 }
 
-// 员工「敏感字段」字段级权限：薪资 / 身份证
-// 可见条件：管理员、employee:read_all（全部数据）、或显式授予 employee:salary
-async function canSeeEmployeeSensitive(userId) {
-  if (!userId) return false;
-  try {
-    if (await isAdmin(userId)) return true;
-    const perms = await getUserPermissions(userId);
-    return perms.includes('*') || perms.includes('employee:read_all') || perms.includes('employee:salary');
-  } catch (e) {
-    console.error('canSeeEmployeeSensitive 判定失败:', e.message);
-    return false;
-  }
-}
-
-// 员工敏感字段清单（脱敏时置空）
-const EMPLOYEE_SENSITIVE_FIELDS = ['salary', 'id_card'];
-
-// 对员工列表脱敏：无字段级权限时，隐藏他人（selfId 除外）的敏感字段
-function maskEmployeeSensitive(rows, canSee, selfId) {
-  if (canSee || !Array.isArray(rows)) return rows;
-  return rows.map(r => {
-    if (!r || typeof r !== 'object') return r;
-    if (selfId && r.id === selfId) return r;
-    const copy = { ...r };
-    for (const f of EMPLOYEE_SENSITIVE_FIELDS) copy[f] = null;
-    return copy;
-  });
-}
+// 员工「敏感字段」已移除：工资/身份证/紧急联系/电话 字段不在 employees 表；
+// 字段级脱敏 helper 已删除（v2.3.1 清理）。如需此类数据，外部联系人走独立模块。
 
 // ============ 数据范围：角色「可管理部门」(managed_department_ids) ============
 // 语义：
@@ -2395,9 +2496,15 @@ app.get('/api/projects', async (req, res) => {
       conditions.push('p.customer_id = ?');
       params.push(customer_id);
     } else if (!hasAll) {
-      // 非admin且无read_all权限时，只看自己创建的项目（也包含creator_id为null的历史项目）
-      conditions.push('(p.creator_id = ? OR p.creator_id IS NULL)');
-      params.push(userId);
+      // P2 §4.2：仅关联项目（创建人/设计师/监理/工长/项目经理/客户）
+      // 客户表通过 phone 关联
+      const ids = Array.from(await permCore.relatedProjectIds(userId));
+      if (!ids.length) {
+        // 无任何关联项目：返回空（不返回 null project）
+        return res.json([]);
+      }
+      conditions.push(`p.id IN (${ids.map(() => '?').join(',')})`);
+      params.push(...ids);
     }
 
     if (status) {
@@ -2480,7 +2587,7 @@ app.post('/api/projects', checkPermission('project:write'), async (req, res) => 
     notifyProject('project_created', projectId,
       `新项目创建：${name}`,
       `项目「${name}」已创建，客户ID：${customer_id || ''}，请相关人员及时跟进。`,
-      projectId, 'project'
+      projectId, 'project', null, { mode: 'subscribers' }
     ).catch(console.error);
     res.json({ id: projectId, message: '添加成功' });
   } catch (err) {
@@ -2504,7 +2611,7 @@ app.put('/api/projects/:id', checkPermission('project:write'), async (req, res) 
       notifyProject('project_status_changed', parseInt(req.params.id),
         `项目状态变更：${name}`,
         `项目「${name}」状态已变更为「${status}」，请知悉。`,
-        parseInt(req.params.id), 'project'
+        parseInt(req.params.id), 'project', null, { mode: 'subscribers' }
       ).catch(console.error);
     }
     res.json({ message: '更新成功' });
@@ -2587,7 +2694,7 @@ app.post('/api/project-stages', async (req, res) => {
         notifyProject('node_status_changed', project_id,
           `新增项目节点：${node_name}`,
           `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
-          nodeId, 'node'
+          nodeId, 'node', null, { mode: 'subscribers' }
         ).catch(console.error);
         await addLog(userId, '', '新增', '项目节点', nodeId, node_name, `新增节点: ${node_name}`, req.ip);
         return res.json({ id: nodeId, message: '添加成功' });
@@ -2601,7 +2708,7 @@ app.post('/api/project-stages', async (req, res) => {
     notifyProject('node_status_changed', project_id,
       `新增项目节点：${node_name}`,
       `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
-      nodeId, 'node'
+      nodeId, 'node', null, { mode: 'subscribers' }
     ).catch(console.error);
     res.json({ id: nodeId, message: '添加成功' });
   } catch (err) {
@@ -2641,8 +2748,8 @@ app.put('/api/project-stages/:id', async (req, res) => {
       const content = `项目「${row.node_name}」已变更为「${statusLabel[updated.status] || updated.status}」，请知悉。`;
       const smsNotify = parseInt(req.body.sms_notify || 0);
       if (smsNotify) {
-        // 用户选择发送短信：用节点绑定的模板发短信
-        smsResults = await notifyProject(type, row.project_id, title, content, row.id, 'node', null, updated.sms_template_id);
+        // 用户选择发送短信：用节点绑定的模板发短信（第7参=短信模板ID；2026-10-12 修复原先模板传位错误）
+        smsResults = await notifyProject(type, row.project_id, title, content, row.id, 'node', updated.sms_template_id, { mode: 'subscribers' });
       }
       // 无论是否发短信，都写一条应用内消息记录状态变更
       await insertInAppNotification(row.project_id, title, content, row.id, 'node');
@@ -2674,8 +2781,7 @@ app.delete('/api/project-stages/:id', async (req, res) => {
 app.get('/api/project-logs', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const userRole = req.headers['x-user-role'] || '';
-    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+    if (!userId) return res.status(401).json({ error: '未登录' });
 
     const { type, project_id, page = 1, page_size = 20 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(page_size);
@@ -2688,16 +2794,23 @@ app.get('/api/project-logs', async (req, res) => {
       params.push(type);
     }
     if (project_id) {
+      // 即使传 project_id 也要校验它在可见范围内
+      const ids = Array.from(await permCore.relatedProjectIds(userId));
+      const admin = await permCore.canReadAll(userId, 'project_log');
+      if (!admin && !ids.includes(Number(project_id))) return res.status(403).json({ error: '该项目不在可见范围内' });
       where.push('l.project_id = ?');
       params.push(project_id);
+    } else {
+      // P2 §4.4：施工日志的可见性继承 project 模块
+      const scope = await buildProjectScopeOrSelfClause(userId, 'project_log', 'l', 'project_id', 'creator_id');
+      if (scope.sql) {
+        where.push(scope.sql.replace(/^ AND/, ''));
+        params.push(...scope.params);
+      } else if (!(await permCore.canReadAll(userId, 'project_log'))) {
+        // 既非 read_all 又无关联项目：返回空
+        return res.json({ list: [], total: 0, page: 1, page_size: parseInt(page_size) });
+      }
     }
-    // 非管理员只看自己的日志
-    if (!userIsAdmin && userId) {
-      where.push('l.creator_id = ?');
-      params.push(userId);
-    }
-
-    const whereSql = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
 
     const countStmt = db.prepare(`SELECT COUNT(*) as total FROM project_logs l ${whereSql}`);
     const [{ total }] = await countStmt.all(...params);
@@ -2791,7 +2904,7 @@ app.post('/api/project-logs', async (req, res) => {
     await notifyProject('project_progress', project_id,
       `项目新进展`,
       `「${proj.name}」有新进展：${content ? content.substring(0, 50) : ''}...`,
-      logId, 'project_log');
+      logId, 'project_log', null, { mode: 'subscribers' });
   }
 
   res.json({ id: logId, message: '添加成功' });
@@ -3741,25 +3854,38 @@ app.get('/api/employees', async (req, res) => {
   const userRole = req.headers['x-user-role'] || '';
   const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
   const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'employee');
-  // 字段级权限：薪资 / 身份证（无权限则脱敏，本人除外）
-  const canSensitive = await canSeeEmployeeSensitive(userId);
+  // v2.3.1 P2 §3：外部人员默认不显示在通讯录，除非显式 ?include_external=1
+  const includeExternal = String(req.query.include_external) === '1';
+  const externalFilter = includeExternal ? '' : ' AND COALESCE(e.is_external, 0) = 0';
+
+  // §5 通讯录默认范围：全员内部可见（不在 employees 表不算），
+  // 配了 employee:read_all 才包含外部；配了 managed_department_ids 才收窄到部门范围。
   if (hasAll) {
-    const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id ORDER BY e.created_at DESC`);
-    return res.json(maskEmployeeSensitive(await stmt.all(), canSensitive, userId));
+    const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.is_external, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE 1=1${externalFilter} ORDER BY e.created_at DESC`);
+    return res.json(await stmt.all());
   }
-  // 数据范围：角色配置了「可管理部门」→ 可查看这些部门（含子部门）的员工
+
+  // 默认：全部内部员工（满足 employee:read 或 admin）
+  const perms = await getUserPermissions(userId);
+  const canReadEmployee = userIsAdmin || perms.includes('*') || perms.includes('employee:read_all') || perms.includes('employee:read');
+  if (!canReadEmployee) {
+    const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.is_external, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ?${externalFilter} ORDER BY e.created_at DESC`);
+    return res.json(await stmt.all(userId));
+  }
+
+  // ② 有权限时，看是否配了「可管理部门」（managed_department_ids）→ 收窄到这些部门（含子部门）
   const managedDeptIds = await getManagedDepartmentIds(userId);
   if (managedDeptIds && managedDeptIds.length) {
     const deptIds = await expandDepartmentIds(managedDeptIds);
     if (deptIds.length) {
       const placeholders = deptIds.map(() => '?').join(',');
-      const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.department_id IN (${placeholders}) OR e.id = ? ORDER BY e.created_at DESC`);
-      return res.json(maskEmployeeSensitive(await stmt.all([...deptIds, userId]), canSensitive, userId));
+      const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.is_external, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE (e.department_id IN (${placeholders}) OR e.id = ?)${externalFilter} ORDER BY e.created_at DESC`);
+      return res.json(await stmt.all([...deptIds, userId]));
     }
   }
-  // 默认：仅本人
-  const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.salary, e.id_card, e.emergency_contact, e.emergency_phone, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE e.id = ? ORDER BY e.created_at DESC`);
-  res.json(maskEmployeeSensitive(await stmt.all(userId), canSensitive, userId));
+  // ③ 默认全内部（不含外部）
+  const stmt = db.prepare(`SELECT e.id, e.username, e.name, e.phone, e.email, e.department_id, e.position, e.role_id, e.status, e.entry_date, e.is_external, e.avatar, e.created_at, d.name as department_name, r.name as role_name FROM employees e LEFT JOIN departments d ON e.department_id = d.id LEFT JOIN roles r ON e.role_id = r.id WHERE 1=1${externalFilter} ORDER BY e.created_at DESC`);
+  res.json(await stmt.all());
 });
 
 // GET /api/employees/grouped-by-department — 按部门分组的员工列表，供项目编辑页下拉用
@@ -3797,49 +3923,42 @@ function passwordFromPhone(phone) {
 
 app.post('/api/employees', checkPermission('employee:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
-    
+
   const userId = getUserId(req);
-  const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  const { name, phone, email, department_id, position, role_id, status, entry_date, is_external } = req.body;
   if (!phone) return res.status(400).json({ error: '手机号必填' });
   if (!name) return res.status(400).json({ error: '姓名必填' });
 
   // 用户名=电话，初始密码=电话后6位
   const username = phone;
   const password = passwordFromPhone(phone);
+  // v2.3.1：is_external 字段保留但不再单独使用，外部人员走独立「外部联系人」模块管理
+  const ext = (Number(is_external) === 1) ? 1 : 0;
 
   const stmt = db.prepare(`
-    INSERT INTO employees (username, password, name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO employees (username, password, name, phone, email, department_id, position, role_id, status, entry_date, is_external)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const result = await stmt.run(username, password, name, phone, email, department_id, position, role_id, status || '在职', entry_date, salary, id_card, emergency_contact, emergency_phone);
-  await addLog(userId, '', '新增', '员工管理', result.lastInsertRowid, name, `员工姓名: ${name}，用户名: ${username}，初始密码: ${password}`, req.ip);
+  const result = await stmt.run(username, password, name, phone, email, department_id, position, role_id, status || '在职', entry_date, ext);
+  await addLog(userId, '', '新增', '员工管理', result.lastInsertRowid, name, `员工姓名: ${name}，用户名: ${username}，初始密码: ${password}，外部=${ext}`, req.ip);
   clearAuthRoleCache();
   res.json({ id: result.lastInsertRowid, message: '添加成功', password });
 });
 
 app.put('/api/employees/:id', checkPermission('employee:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
-    
+
   const userId = getUserId(req);
-  const { name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone } = req.body;
+  const { name, phone, email, department_id, position, role_id, status, entry_date, is_external } = req.body;
   if (!name) return res.status(400).json({ error: '姓名必填' });
 
-  // 字段级权限：无「薪资/身份证」权限者不得覆盖这两个字段（列表已脱敏，防止把真实值抹成空）
-  const canSensitive = await canSeeEmployeeSensitive(userId);
-  if (canSensitive) {
-    const stmt = db.prepare(`
-      UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, salary=?, id_card=?, emergency_contact=?, emergency_phone=?
-      WHERE id=?
-    `);
-    await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, salary, id_card, emergency_contact, emergency_phone, req.params.id);
-  } else {
-    const stmt = db.prepare(`
-      UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, emergency_contact=?, emergency_phone=?
-      WHERE id=?
-    `);
-    await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, emergency_contact, emergency_phone, req.params.id);
-  }
-  await addLog(userId, '', '编辑', '员工管理', req.params.id, name || '', `更新员工: ${name || req.params.id}`, req.ip);
+  const ext = (Number(is_external) === 1) ? 1 : 0;
+  const stmt = db.prepare(`
+    UPDATE employees SET name=?, phone=?, email=?, department_id=?, position=?, role_id=?, status=?, entry_date=?, is_external=?
+    WHERE id=?
+  `);
+  await stmt.run(name, phone, email, department_id, position, role_id, status, entry_date, ext, req.params.id);
+  await addLog(userId, '', '编辑', '员工管理', req.params.id, name || '', `更新员工: ${name || req.params.id}，外部=${ext}`, req.ip);
   clearAuthRoleCache();
   clearUserPermCache(parseInt(req.params.id));
   res.json({ message: '更新成功' });
@@ -3895,6 +4014,95 @@ app.delete('/api/employees/:id', checkPermission('employee:delete'), async (req,
   await addLog(userId, '', '删除', '员工管理', req.params.id, empName, `删除员工: ${empName}`, req.ip);
   clearAuthRoleCache();
   res.json({ message: '删除成功' });
+});
+
+// ==================== 外部联系人（v2.3.1 新模块 external_contact）====================
+// 独立表 external_contacts：管理外部工人/供应商/设计师等不参与登录系统的联系人。
+// 权限码：external_contact:read / write / delete / read_all（语义同其它模块）。
+app.get('/api/external-contacts', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const userRole = req.headers['x-user-role'] || '';
+    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+    const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'external_contact');
+    const { category, search, is_active } = req.query;
+    const where = [];
+    const params = [];
+    if (hasAll) {
+      // 看全部
+    } else if (await permCore.canAction(userId, 'external_contact', 'read')) {
+      // read 权限可看全部（外部联系人不分关联，按模块整体权限）
+    } else {
+      return res.status(403).json({ error: '无权限查看外部联系人' });
+    }
+    if (category) { where.push('category = ?'); params.push(category); }
+    if (is_active != null && is_active !== '') {
+      where.push('is_active = ?'); params.push(Number(is_active) === 0 ? 0 : 1);
+    }
+    if (search) {
+      where.push('(name LIKE ? OR phone LIKE ? OR company LIKE ? OR role LIKE ? OR remark LIKE ?)');
+      const s = `%${search}%`;
+      params.push(s, s, s, s, s);
+    }
+    const sql = `SELECT * FROM external_contacts
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY is_active DESC, id DESC`;
+    const [rows] = await pool.query(sql, params);
+    res.json({ list: rows, total: rows.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/external-contacts', checkPermission('external_contact:write'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const { name, phone, category, company, role, remark } = req.body;
+    if (!name) return res.status(400).json({ error: '姓名必填' });
+    const [r] = await pool.query(
+      `INSERT INTO external_contacts (name, phone, category, company, role, remark, is_active, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())`,
+      [name, phone || null, category || '工人', company || null, role || null, remark || null, userId]
+    );
+    await addLog(userId, '', '新增', '外部联系人', r.insertId, name, `分类: ${category || '工人'}，姓名: ${name}`, req.ip);
+    res.json({ id: r.insertId, message: '添加成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/external-contacts/:id', checkPermission('external_contact:write'), async (req, res) => {
+  try {
+    const { name, phone, category, company, role, remark, is_active } = req.body;
+    if (!name) return res.status(400).json({ error: '姓名必填' });
+    const fields = [];
+    const params = [];
+    for (const key of ['name','phone','category','company','role','remark']) {
+      if (req.body[key] !== undefined) {
+        fields.push(`${key}=?`);
+        params.push(req.body[key] || null);
+      }
+    }
+    if (is_active !== undefined) {
+      fields.push('is_active=?');
+      params.push(Number(is_active) === 0 ? 0 : 1);
+    }
+    if (!fields.length) return res.json({ message: '无更新字段' });
+    fields.push('updated_at=NOW()');
+    params.push(req.params.id);
+    await pool.query(`UPDATE external_contacts SET ${fields.join(', ')} WHERE id=?`, params);
+    const userId = getUserId(req);
+    await addLog(userId, '', '编辑', '外部联系人', parseInt(req.params.id), name || '', `更新外部联系人: ${name || req.params.id}`, req.ip);
+    res.json({ message: '更新成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/external-contacts/:id', checkPermission('external_contact:delete'), async (req, res) => {
+  try {
+    const [c] = await pool.query('SELECT name FROM external_contacts WHERE id=?', [req.params.id]);
+    const cName = c && c[0] ? c[0].name : req.params.id;
+    await pool.query('DELETE FROM external_contacts WHERE id=?', [req.params.id]);
+    const userId = getUserId(req);
+    await addLog(userId, '', '删除', '外部联系人', parseInt(req.params.id), cName, `删除外部联系人: ${cName}`, req.ip);
+    res.json({ message: '删除成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/employees/login', async (req, res) => {
@@ -5733,15 +5941,26 @@ app.delete('/api/notices/:id', checkPermission('notice:delete'), async (req, res
 });
 
 app.get('/api/inspections', async (req, res) => {
+  const userId = getUserId(req);
+  if (!userId) return res.status(401).json({ error: '未登录' });
   const { project_id } = req.query;
-  let stmt;
+  const scope = await buildProjectScopeClause(userId, 'inspection', '', 'project_id');
+  // 即使传了 project_id，仍校验它在可见集内
   if (project_id) {
-    stmt = db.prepare('SELECT * FROM inspections WHERE project_id = ? ORDER BY created_at DESC');
-    res.json(await stmt.all(project_id));
-  } else {
-    stmt = db.prepare('SELECT * FROM inspections ORDER BY created_at DESC');
-    res.json(await stmt.all());
+    const ids = Array.from(await permCore.relatedProjectIds(userId));
+    const admin = await permCore.canReadAll(userId, 'inspection');
+    if (!admin && !ids.includes(Number(project_id))) return res.status(403).json({ error: '该项目不在可见范围内' });
+    const [rows] = await pool.query(
+      `SELECT * FROM inspections WHERE project_id = ? ORDER BY created_at DESC`,
+      [project_id]
+    );
+    return res.json(rows);
   }
+  const [rows] = await pool.query(
+    `SELECT * FROM inspections WHERE 1=1${scope.sql} ORDER BY created_at DESC`,
+    scope.params
+  );
+  res.json(rows);
 });
 
 app.post('/api/inspections', checkPermission('inspection:write'), async (req, res) => {
@@ -5836,16 +6055,33 @@ app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (
 // 说明：GET 暂不强制 checkPermission（与 /api/inspections 现状保持一致），仅要求登录；
 //       支持 project_id / status / mine 过滤，并 JOIN 出创建人姓名。
 //       服务端强制校验将在权限体系 P2 阶段统一补齐。
+// ==================== 验收管理（v2.3.1 P2：严格按动作 + 三档可见性） ====================
+
+// 列表：登录即需；可见性 = read_all(全部) / read(关联项目 + 自己提交) / 无权限→403
 app.get('/api/acceptance', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
+    const scope = await permCore.visibleScope(userId, 'acceptance');
+    if (scope === 'none') return res.status(403).json({ error: '无权限查看验收' });
     const { project_id, status, mine } = req.query;
     const where = [];
     const params = [];
     if (project_id) { where.push('a.project_id = ?'); params.push(project_id); }
     if (status) { where.push('a.accept_status = ?'); params.push(status); }
     if (String(mine) === '1') { where.push('a.creator_id = ?'); params.push(userId); }
+    if (scope === 'related') {
+      // 仅关联项目 + 我提交的
+      const rel = await permCore.relatedProjectIds(userId);
+      if (!rel.size) {
+        where.push('(a.project_id IN (?) OR a.creator_id = ?)');
+        // 占位（IN 0 用 -1 兼容空集）
+        params.push([-1], userId);
+      } else {
+        where.push('(a.project_id IN (?) OR a.creator_id = ?)');
+        params.push(Array.from(rel), userId);
+      }
+    }
     const sql = `SELECT a.*, e.name AS creator_name
                  FROM acceptance a
                  LEFT JOIN employees e ON e.id = a.creator_id
@@ -5859,25 +6095,42 @@ app.get('/api/acceptance', async (req, res) => {
   }
 });
 
+// 详情：登录 + (read_all OR 关联项目 OR 我提交) 才允许
 app.get('/api/acceptance/:id', async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
     const [rows] = await pool.query(
       `SELECT a.*, e.name AS creator_name
        FROM acceptance a
        LEFT JOIN employees e ON e.id = a.creator_id
        WHERE a.id = ?`, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: '验收记录不存在' });
-    res.json(rows[0]);
+    const a = rows[0];
+    const scope = await permCore.visibleScope(userId, 'acceptance');
+    if (scope === 'none') return res.status(403).json({ error: '无权限查看' });
+    if (scope === 'related') {
+      const rel = await permCore.relatedProjectIds(userId);
+      const ok = (a.project_id && rel.has(a.project_id)) || a.creator_id === userId;
+      if (!ok) return res.status(403).json({ error: '无权限查看该验收记录' });
+    }
+    res.json(a);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
   const userId = getUserId(req);
   const { project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment } = req.body;
+  // 写权限校验：要求 acceptance:write；项目必须在我可见范围内（read_all OR 关联 OR 是创建人）
+  if (!project_id) return res.status(400).json({ error: '缺少 project_id' });
+  const scope = await permCore.visibleScope(userId, 'project');
+  if (scope === 'none') return res.status(403).json({ error: '无项目可见权限' });
+  if (scope === 'related') {
+    const rel = await permCore.relatedProjectIds(userId);
+    if (!rel.has(Number(project_id))) return res.status(403).json({ error: '仅可对关联项目提交验收' });
+  }
   // 归一化附件：数组 -> JSON 字符串（只 stringify 一次，避免双重编码）
   const attachmentVal = Array.isArray(attachment) ? JSON.stringify(attachment) : (attachment ?? null);
   const stmt = db.prepare('INSERT INTO acceptance (project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
@@ -5892,12 +6145,10 @@ app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res
 });
 
 app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
   const userId = getUserId(req);
   const { stage, accept_status, accept_date, quality_score, issues, attachment } = req.body;
   // 权限检查
-  const [existing] = await db.prepare('SELECT project_name, creator_id, accept_status FROM acceptance WHERE id = ?').all(req.params.id);
+  const [existing] = await db.prepare('SELECT project_id, project_name, creator_id, accept_status FROM acceptance WHERE id = ?').all(req.params.id);
   if (!existing) return res.status(404).json({ error: '验收记录不存在' });
   if (existing.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权修改他人的数据' });
   const aName = existing.project_name;
@@ -5918,7 +6169,7 @@ app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, 
   await pool.query(`UPDATE acceptance SET ${fields.join(', ')} WHERE id=?`, params);
   await addLog(userId, '', '编辑', '验收管理', req.params.id, aName, `更新验收: ${aName}`, req.ip);
   if (accept_status !== undefined && existing.accept_status !== accept_status) {
-    notifyProject('acceptance_submit', null,
+    notifyProject('acceptance_submit', existing.project_id,
       `验收状态变更：${aName}`,
       `验收「${aName}」状态已变更为「${accept_status}」，请知悉。`,
       parseInt(req.params.id), 'acceptance'
@@ -5928,8 +6179,6 @@ app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, 
 });
 
 app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
   const userId = getUserId(req);
   const [a] = await db.prepare('SELECT project_name, creator_id FROM acceptance WHERE id = ?').all(req.params.id);
   if (!a) return res.status(404).json({ error: '记录不存在' });
@@ -5944,18 +6193,26 @@ app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (r
 // ==================== 派工管理 ====================
 app.get('/api/dispatches', async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
     const { status, project_id } = req.query;
+    // P2 §7.3：派工列表按关联项目 + 提交人(申请单) 收窄
+    const scope = await buildProjectScopeOrSelfClause(userId, 'dispatch', 'd', 'project_id', 'applicant_id');
     let sql = `SELECT d.*, e.name as applicant_name FROM dispatches d LEFT JOIN employees e ON d.applicant_id = e.id`;
     const params = [];
     const conditions = [];
     if (status) {
-      // 2026-10-10 修复：加 d. 表前缀，避免与 employees.status 冲突（ambiguous）
       conditions.push('d.status = ?');
       params.push(status);
     }
     if (project_id) {
       conditions.push('d.project_id = ?');
       params.push(project_id);
+    }
+    // 把 §7.3 条件拼到 WHERE（去掉前缀的 AND，改为直接用 conditions 串接）
+    if (scope.sql) {
+      conditions.push(scope.sql.replace(/^ AND/, ''));
+      params.push(...scope.params);
     }
     if (conditions.length > 0) {
       sql += ' WHERE ' + conditions.join(' AND ');
@@ -5978,10 +6235,11 @@ app.post('/api/dispatches', checkPermission('dispatch:write'), async (req, res) 
       [project_id, project_name || '', content, location || '', worker || '', fee || '', start_date || null, requirement || '', 'pending', userId || 0]
     );
     await addLog(userId, '', '新增', '派工管理', result.insertId, content, `派工内容: ${content}`, req.ip);
-    notifyProject('dispatch_created', project_id,
+    // 2026-10-12：审核提交类 → 通知派工审批人 + 提交人 + 项目经理（不再广播全部关联人/客户）
+    notifyReviewSubmitted('dispatch_created', project_id,
       `新派工通知：${content}`,
       `派工内容：${content || ''}，工人：${worker || ''}，项目：${project_name || ''}，请及时处理。`,
-      result.insertId, 'dispatch'
+      result.insertId, 'dispatch', userId, ['dispatch:approve']
     ).catch(console.error);
     res.json({ id: result.insertId, message: '添加成功' });
   } catch (err) {
@@ -6113,15 +6371,16 @@ app.put('/api/dispatches/:id', checkPermission('dispatch:write'), async (req, re
   try {
     const userId = getUserId(req);
     const { status, content, location, worker, fee, start_date, requirement } = req.body;
-    const [[d]] = await pool.query('SELECT content, status FROM dispatches WHERE id = ?', [req.params.id]);
+    const [[d]] = await pool.query('SELECT content, status, applicant_id FROM dispatches WHERE id = ?', [req.params.id]);
     const dName = d ? d.content : req.params.id;
     await pool.query('UPDATE dispatches SET status=?, content=?, location=?, worker=?, fee=?, start_date=?, requirement=? WHERE id=?', [status, content, location, worker, fee, start_date, requirement, req.params.id]);
     await addLog(userId, '', '编辑', '派工管理', req.params.id, dName, `更新派工: ${dName}`, req.ip);
     if (d && d.status !== status) {
-      notifyProject('dispatch_status_changed', null,
+      // 2026-10-12：审核结果类 → 仅通知派工申请人（谁发起，反馈给谁）
+      notifySubmitter('dispatch_status_changed', null,
         `派工状态变更：${dName}`,
         `派工「${dName}」状态已变更为「${status}」，请知悉。`,
-        parseInt(req.params.id), 'dispatch'
+        parseInt(req.params.id), 'dispatch', d.applicant_id
       ).catch(console.error);
     }
     res.json({ message: '更新成功' });
@@ -6319,37 +6578,9 @@ app.delete('/api/marketing-cases/:id', async (req, res) => {
 });
 
 // 供应商管理
-app.get('/api/suppliers', async (req, res) => {
-  const stmt = db.prepare('SELECT * FROM suppliers ORDER BY created_at DESC');
-  res.json(await stmt.all());
-});
-
-app.post('/api/suppliers', checkPermission('supplier:write'), async (req, res) => {
-  const { name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark } = req.body;
-  const stmt = db.prepare('INSERT INTO suppliers (name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(name, type, contact_person, contact_phone, address, bank_account, tax_number, status || '合作中', remark);
-  const userId = getUserId(req);
-  await addLog(userId, '', '新增', '供应商管理', result.lastInsertRowid, name, `新增供应商: ${name}`, req.ip);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
-});
-
-app.put('/api/suppliers/:id', checkPermission('supplier:write'), async (req, res) => {
-  const userId = getUserId(req);
-  const { name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark } = req.body;
-  await db.prepare('UPDATE suppliers SET name=?, type=?, contact_person=?, contact_phone=?, address=?, bank_account=?, tax_number=?, status=?, remark=? WHERE id=?')
-    .run(name, type, contact_person, contact_phone, address, bank_account, tax_number, status, remark, req.params.id);
-  await addLog(userId, '', '编辑', '供应商管理', req.params.id, name, `更新供应商: ${name}`, req.ip);
-  res.json({ message: '更新成功' });
-});
-
-app.delete('/api/suppliers/:id', checkPermission('supplier:write'), async (req, res) => {
-  const userId = getUserId(req);
-  const [s] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(req.params.id);
-  const sName = s ? s.name : req.params.id;
-  await db.prepare('DELETE FROM suppliers WHERE id = ?').run(req.params.id);
-  await addLog(userId, '', '删除', '供应商管理', req.params.id, sName, `删除供应商: ${sName}`, req.ip);
-  res.json({ message: '删除成功' });
-});
+// ==================== 供应商管理（已合并到外部联系人 v2.3.1）====================
+// 原 /api/suppliers/* 路由已废弃；统一走 /api/external-contacts?category=供应商。
+// 历史 suppliers 表数据已迁移到 external_contacts（见 migrations/v2_3_1_merge_suppliers.js）。
 
 // 采购单
 app.get('/api/purchases', async (req, res) => {
@@ -6478,11 +6709,11 @@ app.post('/api/rectification-issues', async (req, res) => {
   );
   await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
 
-  // 发送站内通知：项目经理/监理/管理员/客户
+  // 发送站内通知：项目经理/监理/管理员/客户（巡检整改类维持全关联人）
   await notifyProject('inspection_submit', project_id,
     `【新巡检问题】${project_name || '项目'}`,
     `问题：${(issue_desc || title || '').slice(0, 100)}`,
-    result.lastInsertRowid, 'rectification_issue', null, project_id
+    result.lastInsertRowid, 'rectification_issue'
   );
 
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
@@ -7749,8 +7980,11 @@ app.get('/api/notifications/unread-count', async (req, res) => {
     }
     if (!phone) { res.json({ count: 0 }); return; }
 
-    const [rows] = await mysqlPool.query('SELECT COUNT(*) as cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [phone]);
-    res.json({ count: rows[0].cnt });
+    // v2.3.1：合并两表（notifications 按手机号 + messages 按 user_id），与移动端消息页口径一致
+    const [r1] = await mysqlPool.query('SELECT COUNT(*) AS cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [phone]);
+    const [r2] = await mysqlPool.query('SELECT COUNT(*) AS cnt FROM messages WHERE user_id = ? AND is_read = 0', [userId || 0]);
+    const count = Number(r1[0].cnt || 0) + Number(r2[0].cnt || 0);
+    res.json({ count });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -7857,6 +8091,50 @@ app.put('/api/system-settings/notifications', checkPermission('settings:write'),
     }
     await addLog(userId, '', '编辑', '系统设置', null, '通知规则', `更新通知规则设置`, req.ip);
     res.json({ message: '保存成功' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 客户端可见（业主 8 开关，全局一份）v2.3.1 P3 ====================
+const __DEFAULT_CV = () => ({
+  project_info: true,
+  project_log: true,
+  inspection: true,
+  acceptance: true,
+  rectification: true,
+  contract_amount: false,
+  family_members: true,
+  messages: true,
+});
+
+app.get('/api/system-settings/customer_visibility', async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT setting_value FROM system_settings WHERE category = 'customer_visibility' LIMIT 1");
+    if (rows && rows[0]) {
+      try { return res.json(JSON.parse(rows[0].setting_value)); } catch {}
+    }
+    res.json(__DEFAULT_CV());
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/system-settings/customer_visibility', checkPermission('settings:write'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const incoming = (req.body && req.body.setting_value) || req.body || {};
+    // 归并默认值 + 白名单过滤，避免脏数据写入
+    const merged = { ...__DEFAULT_CV() };
+    const keys = Object.keys(__DEFAULT_CV());
+    for (const k of keys) if (k in incoming) merged[k] = !!incoming[k];
+    const value = JSON.stringify(merged);
+    const [existing] = await pool.query("SELECT id FROM system_settings WHERE category = 'customer_visibility' LIMIT 1");
+    if (existing && existing[0]) {
+      await pool.query('UPDATE system_settings SET setting_value = ?, updated_at = ? WHERE category = ?',
+        [value, new Date().toISOString(), 'customer_visibility']);
+    } else {
+      await pool.query('INSERT INTO system_settings (category, setting_value, created_at, updated_at) VALUES (?, ?, ?, ?)',
+        ['customer_visibility', value, new Date().toISOString(), new Date().toISOString()]);
+    }
+    await addLog(userId, '', '编辑', '系统设置', null, '客户端可见', `更新客户端可见配置: ${JSON.stringify(merged)}`, req.ip);
+    res.json({ message: '保存成功', data: merged });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -8289,7 +8567,8 @@ app.post('/api/contracts/upload', async (req, res) => {
     );
 
     await addLog(userId, '', '上传', '合同管理', result.insertId, project_name, `上传合同金额：${contract_amount}元`, req.ip);
-    notifyProject('contract_uploaded', project_id, `项目「${project_name}」上传合同`, `合同金额：${contract_amount}元`, result.insertId, 'contract').catch(console.error);
+    // 2026-10-12：审核提交类 → 通知合同审批人 + 提交人 + 项目经理
+    notifyReviewSubmitted('contract_uploaded', project_id, `项目「${project_name}」上传合同`, `合同金额：${contract_amount}元`, result.insertId, 'contract', userId, ['contract:approve', 'project_contract:approve']).catch(console.error);
 
     res.json({ code: 0, id: result.insertId, message: '合同已提交，待审核' });
   } catch (err) {
@@ -8365,8 +8644,8 @@ app.put('/api/contracts/:id/review', async (req, res) => {
     const submitterName = submitter?.name || '';
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '合同管理', req.params.id, `项目#${contract.project_id}`, `合同审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
 
-    // 通知：合同审核结果
-    notifyProject(
+    // 通知：合同审核结果 —— 2026-10-12 仅通知提交人（谁发起，反馈给谁）
+    notifySubmitter(
       action === 'approve' ? 'contract_approved' : 'contract_rejected',
       contract.project_id,
       action === 'approve' ? `合同审核通过` : `合同审核未通过`,
@@ -8374,7 +8653,8 @@ app.put('/api/contracts/:id/review', async (req, res) => {
         ? `您上传的合同（项目：${project_name}）已审核通过`
         : `您上传的合同（项目：${project_name}）未通过${remark ? '：' + remark : ''}`,
       req.params.id,
-      'contract'
+      'contract',
+      contract.submitted_by
     ).catch(console.error);
 
     if (contract.submitted_by && contract.submitted_by !== userId) {
@@ -8506,17 +8786,21 @@ app.get('/api/change-orders', async (req, res) => {
 
 app.get('/api/contract-changes', async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
     const { project_id, contract_id, status } = req.query;
     // 2026-10-11：补 project_name（此前未 join projects，导致移动端审核页「项目」为空）；
     // 同时补 submitter_name 别名（原字段是 submitted_by_name，两处口径统一）。
+    // P2 §7.3：增减项按关联项目 ∪ 提交人 收窄
+    const scope = await buildProjectScopeOrSelfClause(userId, 'contract_change', 'cc', 'project_id', 'submitted_by');
     let sql = `SELECT cc.*, s.name as submitted_by_name, s.name as submitter_name,
                       r.name as reviewed_by_name, p.name as project_name
                FROM contract_changes cc
                LEFT JOIN employees s ON s.id = cc.submitted_by
                LEFT JOIN employees r ON r.id = cc.reviewed_by
                LEFT JOIN projects p ON p.id = cc.project_id
-               WHERE 1=1`;
-    const params = [];
+               WHERE 1=1${scope.sql}`;
+    const params = [...scope.params];
     if (project_id) { sql += ' AND cc.project_id = ?'; params.push(project_id); }
     if (contract_id) { sql += ' AND cc.contract_id = ?'; params.push(contract_id); }
     if (status) { sql += ' AND cc.status = ?'; params.push(status); }
@@ -8546,14 +8830,16 @@ app.post('/api/contract-changes', async (req, res) => {
     );
     await addLog(userId, '', '新增', '增减项', result.insertId, project_name, `${change_type === 'increase' ? '增加' : '减少'}：${title}（${amount}元）`, req.ip);
 
-    // 通知：新增增减项
-    notifyProject(
+    // 通知：新增增减项 —— 2026-10-12 审核提交类 → 增减项审批人 + 提交人 + 项目经理
+    notifyReviewSubmitted(
       'contract_change_created',
       project_id,
       `新增减项申请：${change_type === 'increase' ? '增加' : '减少'}¥${amount}`,
       `项目「${project_name}」新增${change_type === 'increase' ? '增加' : '减少'}项「${title}」，金额：${amount}元，请及时审核。`,
       result.insertId,
-      'contract_change'
+      'contract_change',
+      userId,
+      ['contract_change:approve']
     ).catch(console.error);
 
     res.json({ id: result.insertId, message: '增减项已提交，待审核' });
@@ -8609,8 +8895,8 @@ app.put('/api/contract-changes/:id/review', async (req, res) => {
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '增减项', req.params.id, record.title, `增减项审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
 
-    // 通知：增减项审核结果
-    notifyProject(
+    // 通知：增减项审核结果 —— 2026-10-12 仅通知提交人（谁发起，反馈给谁）
+    notifySubmitter(
       action === 'approve' ? 'contract_change_approved' : 'contract_change_rejected',
       record.project_id,
       action === 'approve' ? `增减项审核通过` : `增减项审核未通过`,
@@ -8618,7 +8904,8 @@ app.put('/api/contract-changes/:id/review', async (req, res) => {
         ? `您提交的增减项「${record.title}」（${record.change_type === 'increase' ? '增加' : '减少'}¥${record.amount}）已审核通过`
         : `您提交的增减项「${record.title}」未通过${remark ? '：' + remark : ''}`,
       record.project_id,
-      'contract_change'
+      'contract_change',
+      record.submitted_by
     ).catch(console.error);
 
     res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
@@ -8628,13 +8915,17 @@ app.put('/api/contract-changes/:id/review', async (req, res) => {
 // ==================== 催收记录 API ====================
 app.get('/api/collection-records', async (req, res) => {
   try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
     const { project_id } = req.query;
+    // P2：催收 = 关联项目 ∪ 提交人
+    const scope = await buildProjectScopeOrSelfClause(userId, 'collection', 'cr', 'project_id', 'submitted_by');
     let sql = `SELECT cr.*, s.name as submitted_by_name, c.name as confirmed_by_name
                FROM collection_records cr
                LEFT JOIN employees s ON s.id = cr.submitted_by
                LEFT JOIN employees c ON c.id = cr.confirmed_by
-               WHERE 1=1`;
-    const params = [];
+               WHERE 1=1${scope.sql}`;
+    const params = [...scope.params];
     if (project_id) { sql += ' AND cr.project_id = ?'; params.push(project_id); }
     sql += ' ORDER BY cr.id DESC';
     const [rows] = await pool.query(sql, params);
@@ -8662,14 +8953,16 @@ app.post('/api/collection-records', async (req, res) => {
     );
     await addLog(userId, '', '新增', '催收记录', result.insertId, project_name, `催收金额：${amount}元`, req.ip);
 
-    // 通知：新增催收记录
-    notifyProject(
+    // 通知：新增催收记录 —— 2026-10-12 审核提交类 → 财务（purchase:finance）+ 提交人 + 项目经理
+    notifyReviewSubmitted(
       'collection_created',
       project_id,
       `催收录入：¥${amount}`,
       `项目「${project_name}」录入催收记录，金额：${amount}元，请财务及时确认收款。`,
       result.insertId,
-      'collection'
+      'collection',
+      userId,
+      ['purchase:finance']
     ).catch(console.error);
 
     res.json({ id: result.insertId, message: '催收记录已录入' });
@@ -8706,14 +8999,15 @@ app.put('/api/collection-records/:id/confirm', async (req, res) => {
 
     await addLog(userId, '', '确认收款', '催收记录', req.params.id, `项目#${record.project_id}`, `确认收款：${confAmt}元`, req.ip);
 
-    // 通知：催收已确认收款
-    notifyProject(
+    // 通知：催收已确认收款 —— 2026-10-12 仅通知提交人（谁发起，反馈给谁）
+    notifySubmitter(
       'collection_confirmed',
       record.project_id,
       `催收已确认收款：¥${confAmt}`,
       `项目「${project_name}」的催收记录已确认收款，金额：${confAmt}元。`,
       req.params.id,
-      'collection'
+      'collection',
+      record.submitted_by
     ).catch(console.error);
 
     res.json({ message: '已确认收款' });
@@ -9166,43 +9460,92 @@ app.get('/api/mobile/home-stats', async (req, res) => {
 // 目的：把各模块「待我处理」的条目统一收口，按权限过滤后返回；
 //       仅做只读聚合，不修改任何现有接口与审批业务逻辑。
 // ============================================================
+// §7.3 共享作用域（2026-10-12）：待办计数与待办列表必须同一口径 ——
+//   未配 read_all 时按"关联项目 ∪ 提交人=我"过滤，否则徽章数字会把
+//   用户实际看不到的条目也算进去（徽章 6 列表 4 问题）。
+function __todoScope(userId, perms, admin, relatedIds) {
+  const fullScope = {
+    purchase: admin || perms.includes('purchase:read_all'),
+    dispatch: admin || perms.includes('dispatch:read_all'),
+    contract: admin || perms.includes('contract:read_all') || perms.includes('project_contract:read_all'),
+    contract_change: admin || perms.includes('contract_change:read_all'),
+    inspection: admin || perms.includes('inspection:read_all'),
+  };
+  // 待办子项 SQL 子句：当 fullScope=false 时，project_id 必须在 relatedIds 内，
+  // 或"提交人=我"（采购 applicant_name / 派工 applicant_id）。
+  // 返回 { sql, params }：sql 已含前导 " AND "；params 是占位符对应的参数数组。
+  const buildScope = (mod, extraCol = 'project_id') => {
+    if (fullScope[mod]) return { sql: '', params: [] };
+    const ids = (relatedIds && relatedIds.length) ? relatedIds : [-1];
+    const placeholders = ids.map(() => '?').join(',');
+    const submitters = {
+      purchase: "`pr`.applicant_name = (SELECT name FROM employees WHERE id = ?)",
+      dispatch: "`d`.applicant_id = ?",
+      contract: "`c`.submitted_by = ?",
+      contract_change: "`cc`.submitted_by = ?",
+      inspection: "`ri`.creator_id = ?",
+    }[mod] || null;
+    if (submitters) {
+      return {
+        sql: ` AND (${extraCol} IN (${placeholders}) OR ${submitters})`,
+        params: [...ids, userId],
+      };
+    }
+    return {
+      sql: ` AND ${extraCol} IN (${placeholders})`,
+      params: [...ids],
+    };
+  };
+  return { fullScope, buildScope };
+}
+
 async function __todoCounts(userId, perms, admin) {
   const can = (p) => admin || (perms || []).includes(p);
+  // 2026-10-12：计数与列表同口径 —— 按"关联项目 ∪ 提交人"过滤
+  const relatedIds = admin ? null : Array.from(await permCore.relatedProjectIds(userId));
+  const { buildScope } = __todoScope(userId, perms, admin, relatedIds);
   const out = {};
   // 1) 采购待审核（purchase:approve）
   if (can('purchase:approve')) {
-    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='pending'");
+    const sc = buildScope('purchase');
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests pr WHERE pr.status='pending'" + sc.sql, sc.params);
     out.purchase_approve = { key: 'purchase_approve', label: '采购待审核', icon: '📦', type: 'purchase_approve', count: Number(r.c) || 0 };
   }
   // 2) 报销待确认 / 待上传回执（purchase:finance）
   if (can('purchase:finance')) {
-    const [[a]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='reimbursing'");
+    const scA = buildScope('purchase');
+    const [[a]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests pr WHERE pr.status='reimbursing'" + scA.sql, scA.params);
     out.purchase_reimburse = { key: 'purchase_reimburse', label: '报销待确认', icon: '🧾', type: 'purchase_reimburse', count: Number(a.c) || 0 };
-    const [[b]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests WHERE status='finance_confirmed'");
+    const scB = buildScope('purchase');
+    const [[b]] = await pool.query("SELECT COUNT(*) AS c FROM purchase_requests pr WHERE pr.status='finance_confirmed'" + scB.sql, scB.params);
     out.purchase_receipt = { key: 'purchase_receipt', label: '待上传回执', icon: '🏦', type: 'purchase_receipt', count: Number(b.c) || 0 };
   }
-  // 3) 通用审批（approver_ids 含当前用户）
+  // 3) 通用审批（approver_ids 含当前用户，与权限无关，天然同口径）
   {
     const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM approvals WHERE status='待审批' AND FIND_IN_SET(?, approver_ids)", [String(userId)]);
     out.approval = { key: 'approval', label: '通用审批', icon: '📝', type: 'approval', count: Number(r.c) || 0 };
   }
   // 4) 派工待审核（dispatch:approve）
   if (can('dispatch:approve')) {
-    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM dispatches WHERE status='pending'");
+    const sc = buildScope('dispatch');
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM dispatches d WHERE d.status='pending'" + sc.sql, sc.params);
     out.dispatch = { key: 'dispatch', label: '派工待审核', icon: '👷', type: 'dispatch', count: Number(r.c) || 0 };
   }
   // 5) 合同待审核（主合同上传后待审）
   //    注意：contracts 表里有历史迁移产生的脏数据（project_id 为空、金额为 0），
   //    它们不是真实提交，必须过滤掉，否则待办角标会出现几十条虚假数字。
   if (can('contract:approve') || can('project_contract:approve')) {
+    const sc = buildScope('contract');
     const [[r]] = await pool.query(
-      "SELECT COUNT(*) AS c FROM contracts WHERE review_status='pending' AND project_id IS NOT NULL AND contract_amount > 0"
+      "SELECT COUNT(*) AS c FROM contracts c WHERE c.review_status='pending' AND c.project_id IS NOT NULL AND c.contract_amount > 0" + sc.sql,
+      sc.params
     );
     out.contract_approve = { key: 'contract_approve', label: '合同待审核', icon: '📄', type: 'contract_approve', count: Number(r.c) || 0 };
   }
   // 6) 增减项待审核（contract_change:approve）
   if (can('contract_change:approve')) {
-    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM contract_changes WHERE status='pending'");
+    const sc = buildScope('contract_change');
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM contract_changes cc WHERE cc.status='pending'" + sc.sql, sc.params);
     out.change_approve = { key: 'change_approve', label: '增减项待审核', icon: '🧮', type: 'change_approve', count: Number(r.c) || 0 };
   }
   return out;
@@ -9231,6 +9574,7 @@ app.get('/api/todo/count', async (req, res) => {
 
 // GET /api/todo/center — 待办中心列表（按权限分组返回）
 // 2026-10-10 扩展：同时返回 home 区块（按角色过滤的统计 + 项目相关事项 + 逾期预警）
+// 2026-10-11 P2 §7.3 改造：采购/派工/合同/增减项/巡检整改 5 类按"提交人 ∪ 关联项目 ∪ read_all"过滤。
 app.get('/api/todo/center', async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -9240,15 +9584,20 @@ app.get('/api/todo/center', async (req, res) => {
     const can = (p) => admin || (perms || []).includes(p);
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
     const counts = await __todoCounts(userId, perms, admin);
+    // §7.3：项目关联人（创建人/设计师/监理/工长/项目经理/客户）
+    const relatedIds = admin ? null : Array.from(await permCore.relatedProjectIds(userId));
+    // 计数与列表共用同一作用域（2026-10-12 抽取为 __todoScope）
+    const { fullScope, buildScope } = __todoScope(userId, perms, admin, relatedIds);
     const groups = [];
 
     // 1) 采购待审核
     if (can('purchase:approve')) {
+      const sc = buildScope('purchase');
       const [rows] = await pool.query(
         `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
                 (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
-         FROM purchase_requests pr WHERE pr.status = 'pending'
-         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+         FROM purchase_requests pr WHERE pr.status = 'pending'${sc.sql}
+         ORDER BY pr.created_at DESC LIMIT ?`, [...sc.params, limit]);
       groups.push({
         ...counts.purchase_approve,
         items: rows.map(r => ({
@@ -9264,11 +9613,12 @@ app.get('/api/todo/center', async (req, res) => {
 
     // 2) 报销待确认
     if (can('purchase:finance')) {
+      const sc = buildScope('purchase');
       const [rows] = await pool.query(
         `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
                 (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
-         FROM purchase_requests pr WHERE pr.status = 'reimbursing'
-         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+         FROM purchase_requests pr WHERE pr.status = 'reimbursing'${sc.sql}
+         ORDER BY pr.created_at DESC LIMIT ?`, [...sc.params, limit]);
       groups.push({
         ...counts.purchase_reimburse,
         items: rows.map(r => ({
@@ -9282,11 +9632,12 @@ app.get('/api/todo/center', async (req, res) => {
       });
 
       // 3) 待上传回执（财务）
+      const sc2 = buildScope('purchase');
       const [rows2] = await pool.query(
         `SELECT pr.id, pr.project_name, pr.applicant_name, pr.total_amount, pr.created_at,
                 (SELECT GROUP_CONCAT(pri.material_name SEPARATOR '、') FROM purchase_request_items pri WHERE pri.request_id = pr.id) AS material_name
-         FROM purchase_requests pr WHERE pr.status = 'finance_confirmed'
-         ORDER BY pr.created_at DESC LIMIT ?`, [limit]);
+         FROM purchase_requests pr WHERE pr.status = 'finance_confirmed'${sc2.sql}
+         ORDER BY pr.created_at DESC LIMIT ?`, [...sc2.params, limit]);
       groups.push({
         ...counts.purchase_receipt,
         items: rows2.map(r => ({
@@ -9321,9 +9672,11 @@ app.get('/api/todo/center', async (req, res) => {
 
     // 5) 派工待审核
     if (can('dispatch:approve')) {
+      const sc = buildScope('dispatch');
       const [rows] = await pool.query(
-        `SELECT id, project_name, content, worker, created_at
-         FROM dispatches WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?`, [limit]);
+        `SELECT id, project_id, project_name, content, worker, created_at
+         FROM dispatches d WHERE d.status = 'pending'${sc.sql}
+         ORDER BY d.created_at DESC LIMIT ?`, [...sc.params, limit]);
       groups.push({
         ...counts.dispatch,
         items: rows.map(r => ({
@@ -9337,8 +9690,9 @@ app.get('/api/todo/center', async (req, res) => {
       });
     }
 
-    // 6) 合同待审核（主合同上传后待审）—— 过滤历史脏数据
+    // 6) 合同待审核（主合同上传后待审）—— 过滤历史脏数据 + §7.3 关联过滤
     if (can('contract:approve') || can('project_contract:approve')) {
+      const sc = buildScope('contract');
       const [rows] = await pool.query(
         `SELECT c.id, c.project_id, c.contract_amount, c.attachment, c.created_at,
                 p.name AS project_name, e.name AS submitter_name
@@ -9346,8 +9700,8 @@ app.get('/api/todo/center', async (req, res) => {
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN employees e ON e.id = c.submitted_by
          WHERE c.review_status = 'pending'
-           AND c.project_id IS NOT NULL AND c.contract_amount > 0
-         ORDER BY c.created_at DESC LIMIT ?`, [limit]);
+           AND c.project_id IS NOT NULL AND c.contract_amount > 0${sc.sql}
+         ORDER BY c.created_at DESC LIMIT ?`, [...sc.params, limit]);
       groups.push({
         ...counts.contract_approve,
         items: rows.map(r => ({
@@ -9363,14 +9717,15 @@ app.get('/api/todo/center', async (req, res) => {
 
     // 7) 增减项待审核
     if (can('contract_change:approve')) {
+      const sc = buildScope('contract_change');
       const [rows] = await pool.query(
         `SELECT cc.id, cc.project_id, cc.change_type, cc.title, cc.amount, cc.submitted_at,
                 p.name AS project_name, e.name AS submitter_name
          FROM contract_changes cc
          LEFT JOIN projects p ON p.id = cc.project_id
          LEFT JOIN employees e ON e.id = cc.submitted_by
-         WHERE cc.status = 'pending'
-         ORDER BY cc.id DESC LIMIT ?`, [limit]);
+         WHERE cc.status = 'pending'${sc.sql}
+         ORDER BY cc.id DESC LIMIT ?`, [...sc.params, limit]);
       groups.push({
         ...counts.change_approve,
         items: rows.map(r => ({
@@ -9390,17 +9745,25 @@ app.get('/api/todo/center', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const todayPlus3 = new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0];
 
-    // 当前用户关联的项目（设计师/项目经理/监理视角下才会有值；财务/admin 通常为空集）
-    const [myProjects] = await pool.query(
-      `SELECT id, name, status, manager_id, designer_id, supervisor_id
-       FROM projects
-       WHERE manager_id = ? OR designer_id = ? OR supervisor_id = ?
-       ORDER BY id DESC LIMIT 20`,
-      [userId, userId, userId]
-    );
-    const myProjectIds = myProjects.map(p => p.id);
+    // v2.3.1 §7.3：home 统计/列表口径严格按"我能看到的项目"
+    //   - admin → 看全部（特殊）
+    //   - finance:read_all（财务）→ 看全部（金额业务需要全局）
+    //   - project:read_all → 看全部
+    //   - 其他 → 仅关联项目集合 relatedIds
+    //   - 无 project 权限 → 全空
+    const projectAllScope = admin
+      || perms.includes('finance:read_all')
+      || perms.includes('project:read_all');
+    const homeProjectIds = projectAllScope
+      ? null  // null = 不加项目过滤
+      : (relatedIds && relatedIds.length ? relatedIds : [-1]);
+    const homePh = (homeProjectIds && homeProjectIds.length)
+      ? homeProjectIds.map(() => '?').join(',')
+      : '-1';
+    const homeProjectFilter = (col = 'p.id') => projectAllScope ? '' : ` AND ${col} IN (${homePh})`;
+    const homeProjectParams = () => (projectAllScope ? [] : (relatedIds && relatedIds.length ? relatedIds : [-1]));
 
-    // 1) 节点提前 3 天提醒（在 home 区域显示）—— 口径：所有项目
+    // 1) 节点提前 3 天提醒 —— 仅展示我能看到的项目下的节点
     let stage_alerts = [];
     {
       const [rows] = await pool.query(
@@ -9409,9 +9772,9 @@ app.get('/api/todo/center', async (req, res) => {
          JOIN projects p ON p.id = ps.project_id
          WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
            AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
-           AND ps.plan_end_date BETWEEN ? AND ?
+           AND ps.plan_end_date BETWEEN ? AND ?${homeProjectFilter('p.id')}
          ORDER BY ps.plan_end_date ASC LIMIT 10`,
-        [today, todayPlus3]
+        [today, todayPlus3, ...homeProjectParams()]
       );
       stage_alerts = rows.map(r => {
         const days = (new Date(r.plan_end_date) - new Date(today)) / 86400;
@@ -9433,11 +9796,13 @@ app.get('/api/todo/center', async (req, res) => {
     // due_date 字段这张表本来就有，无需 ALTER。
     let rectify_alerts = [];
     {
+      const sc = buildScope('inspection');
       const [rows] = await pool.query(
         `SELECT ri.id, ri.project_id, ri.project_name, ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status
          FROM rectification_issues ri
-         WHERE ri.status IN ('待处理','待整改','整改中')
-         ORDER BY ri.created_at DESC LIMIT 10`
+         WHERE ri.status IN ('待处理','待整改','整改中')${sc.sql}
+         ORDER BY ri.created_at DESC LIMIT 10`,
+        sc.params
       );
       rectify_alerts = rows.map(r => {
         let urgency = 'normal';
@@ -9486,7 +9851,7 @@ app.get('/api/todo/center', async (req, res) => {
       }));
     }
 
-    // 4) 逾期节点预警 —— 口径：所有项目（与「逾期节点」统计数字保持完全一致）
+    // 4) 逾期节点预警 —— 仅展示我能看到的项目下的逾期节点
     let warnings = [];
     {
       const [rows] = await pool.query(
@@ -9497,8 +9862,9 @@ app.get('/api/todo/center', async (req, res) => {
          WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
            AND ps.plan_end_date < ?
            AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
+           ${homeProjectFilter('p.id')}
          ORDER BY ps.plan_end_date ASC LIMIT 10`,
-        [today, today]
+        [today, today, ...homeProjectParams()]
       );
       warnings = rows.map(r => ({
         id: r.project_id,
@@ -9509,46 +9875,57 @@ app.get('/api/todo/center', async (req, res) => {
       }));
     }
 
-    // 5) 首页统计卡片（口径统一为「所有项目」——首页概览需全局准确，不再按个人项目过滤）
-    //    进行中：所有非终止态项目
+    // 5) 首页统计卡片 —— 仅我能看到的项目（与 §7.3 一致）
+    //    进行中：非终止态
     const inProgress = (await pool.query(
       `SELECT COUNT(*) c FROM projects
        WHERE status IS NOT NULL AND status <> ''
-         AND status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled')`
+         AND status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled')
+         ${projectAllScope ? '' : ' AND id IN (' + homePh + ')'}`,
+      homeProjectParams()
     ))[0][0].c;
-    //    逾期节点：project_stages 中计划结束日已过且未完成的节点
+    //    逾期节点：项目阶段中逾期未完成的（join projects 取可见集）
     const overdue = (await pool.query(
-      `SELECT COUNT(*) c FROM project_stages
-       WHERE plan_end_date IS NOT NULL AND plan_end_date <> '' AND plan_end_date < ?
-         AND (status IS NULL OR status NOT IN ('completed', '已完成'))`,
-      [today]
+      `SELECT COUNT(*) c FROM project_stages ps
+       JOIN projects p ON p.id = ps.project_id
+       WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date <> '' AND ps.plan_end_date < ?
+         AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
+         ${projectAllScope ? '' : ' AND p.id IN (' + homePh + ')'}`,
+      [today, ...homeProjectParams()]
     ))[0][0].c;
-    //    待整改：整改问题表（与首页下方「待整改」列表同源；
-    //    原实现查 inspections.rectify_status，与列表口径不一致导致数字对不上）
+    //    待整改：整改问题（关联项目要在可见集内，或我是创建人）
+    // 注意：relatedIds=[] 时 homeProjectIds=[-1] 且 homePh='-1'（字面量，无占位）；
+    //       relatedIds=[15] 时 homePh='?'（占位）+ userId 1 个占位 = 2 个参数。
     const pendingInspect = (await pool.query(
-      `SELECT COUNT(*) c FROM rectification_issues WHERE status IN ('待处理','待整改','整改中')`
+      `SELECT COUNT(*) c FROM rectification_issues ri
+       ${projectAllScope ? '' : ' WHERE (ri.project_id IN (' + homePh + ') OR ri.creator_id = ?)'}`,
+      projectAllScope ? [] : (relatedIds && relatedIds.length ? [...relatedIds, userId] : [userId])
     ))[0][0].c;
 
-    // 6) 待收款金额（所有项目）：应收 - 已收
+    // 6) 待收款金额 —— 仅财务（finance:read_all）或 admin 才显示
     //    应收 = 已审核合同金额 + 已通过增项 - 已通过减项
     //    已收 = 催收记录中已确认的金额（collection_records.status='confirmed'）
     //    口径与 /api/finance/receivable-by-project 完全一致。
     //    注意：payment_records 里 category='contract' 的收入是「合同审核通过时自动写入」的应收记录，
     //    并非实际到账，不能用于计算已收款。
-    const [[recvAgg]] = await pool.query(
-      `SELECT
-         (SELECT COALESCE(SUM(c.contract_amount),0) FROM contracts c
-            JOIN projects p ON p.id = c.project_id
-           WHERE c.review_status='approved' AND (p.status IS NULL OR p.status <> '已删除')) AS contract_amount,
-         (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
-           WHERE cc.status='approved' AND cc.change_type='increase') AS increase_total,
-         (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
-           WHERE cc.status='approved' AND cc.change_type='decrease') AS decrease_total,
-         (SELECT COALESCE(SUM(cr.amount),0) FROM collection_records cr WHERE cr.status='confirmed') AS collected`
-    );
-    const receivableTotal = Number(recvAgg.contract_amount || 0) + Number(recvAgg.increase_total || 0) - Number(recvAgg.decrease_total || 0);
-    const collectedTotal = Number(recvAgg.collected || 0);
-    const pendingReceiveAmount = receivableTotal - collectedTotal;
+    const financeScope = admin || perms.includes('finance:read_all');
+    let receivableTotal = 0, collectedTotal = 0, pendingReceiveAmount = 0;
+    if (financeScope) {
+      const [[recvAgg]] = await pool.query(
+        `SELECT
+           (SELECT COALESCE(SUM(c.contract_amount),0) FROM contracts c
+              JOIN projects p ON p.id = c.project_id
+             WHERE c.review_status='approved' AND (p.status IS NULL OR p.status <> '已删除')) AS contract_amount,
+           (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
+             WHERE cc.status='approved' AND cc.change_type='increase') AS increase_total,
+           (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
+             WHERE cc.status='approved' AND cc.change_type='decrease') AS decrease_total,
+           (SELECT COALESCE(SUM(cr.amount),0) FROM collection_records cr WHERE cr.status='confirmed') AS collected`
+      );
+      receivableTotal = Number(recvAgg.contract_amount || 0) + Number(recvAgg.increase_total || 0) - Number(recvAgg.decrease_total || 0);
+      collectedTotal = Number(recvAgg.collected || 0);
+      pendingReceiveAmount = receivableTotal - collectedTotal;
+    }
 
     // 7) 财务角色（purchase:finance）关心的金额：报销中总金额（保留字段，兼容旧消费方）
     let pendingPayAmount = null;

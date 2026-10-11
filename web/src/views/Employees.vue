@@ -11,9 +11,8 @@
         </div>
       </template>
       <el-table :data="employeeList" style="width: 100%">
-        <el-table-column prop="name" label="姓名" width="120" />
-        <el-table-column prop="phone" label="电话" width="130" />
-        <el-table-column prop="email" label="邮箱" width="180" />
+        <el-table-column prop="name" label="姓名" width="100" />
+        <el-table-column prop="phone" label="电话" width="120" />
         <el-table-column prop="department_name" label="部门" width="100" />
         <el-table-column prop="position" label="职位" width="100" />
         <el-table-column prop="role_name" label="角色" width="100">
@@ -26,12 +25,13 @@
             <el-tag :type="scope.row.status === '在职' ? 'success' : 'info'">{{ scope.row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="entry_date" label="入职日期" width="120" />
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="scope">
-            <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button size="small" type="warning" @click="handleResetPassword(scope.row)" v-if="canResetPassword">重置密码</el-button>
-            <el-button type="danger" size="small" @click="handleDelete(scope.row.id)">删除</el-button>
+            <div class="op-row">
+              <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
+              <el-button size="small" type="warning" @click="handleResetPassword(scope.row)" v-if="canResetPassword">重置密码</el-button>
+              <el-button type="danger" size="small" @click="handleDelete(scope.row.id)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -102,27 +102,21 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-row :gutter="20" v-if="canSeeSensitive">
-          <el-col :span="12">
-            <el-form-item label="薪资">
-              <el-input-number v-model="form.salary" :min="0" :precision="2" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="身份证">
-              <el-input v-model="form.id_card" />
-            </el-form-item>
-          </el-col>
-        </el-row>
         <el-row :gutter="20">
           <el-col :span="12">
-            <el-form-item label="紧急联系人">
-              <el-input v-model="form.emergency_contact" />
+            <el-form-item label="外部人员">
+              <el-switch
+                v-model="form.is_external"
+                :active-value="1"
+                :inactive-value="0"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="紧急电话">
-              <el-input v-model="form.emergency_phone" />
+            <el-form-item>
+              <div style="color:#909399; font-size:12px; line-height:1.4; padding-top:6px;">
+                v2.3.1：工资/身份证/紧急联系人等字段已移除（无用）；外部人员请到 <b>组织结构 → 外部联系人</b> 独立模块管理。
+              </div>
             </el-form-item>
           </el-col>
         </el-row>
@@ -150,10 +144,6 @@ const isEdit = ref(false)
 const userStore = useUserStore()
 // 是否可重置他人密码（与后端 employee:reset_password 权限对齐）
 const canResetPassword = computed(() => userStore.canAction('employee', 'reset_password'))
-// 是否可见员工敏感字段（薪资/身份证），与后端 employee:read_all / employee:salary 对齐
-const canSeeSensitive = computed(() =>
-  userStore.isAdmin || userStore.canAction('employee', 'read_all') || userStore.canAction('employee', 'salary')
-)
 const form = reactive({
   id: null,
   name: '',
@@ -164,10 +154,8 @@ const form = reactive({
   role_id: null,
   status: '在职',
   entry_date: '',
-  salary: 0,
-  id_card: '',
-  emergency_contact: '',
-  emergency_phone: ''
+  // v2.3.1：保留 is_external 字段以兼容现有数据；外部人员请到「外部联系人」独立模块管理
+  is_external: 0,
 })
 
 const getRoleType = (role) => {
@@ -216,10 +204,8 @@ const handleEdit = (row) => {
     role_id: row.role_id,
     status: row.status || '在职',
     entry_date: row.entry_date || '',
-    salary: row.salary || 0,
-    id_card: row.id_card || '',
-    emergency_contact: row.emergency_contact || '',
-    emergency_phone: row.emergency_phone || ''
+    // 外部人员标记：用 Number() 把 0/1/null 都规整
+    is_external: Number(row.is_external) || 0,
   })
   showAddDialog.value = true
 }
@@ -276,10 +262,7 @@ const closeDialog = () => {
   form.role_id = null
   form.status = '在职'
   form.entry_date = ''
-  form.salary = 0
-  form.id_card = ''
-  form.emergency_contact = ''
-  form.emergency_phone = ''
+  form.is_external = 0
 }
 
 onMounted(() => { loadData() })
@@ -287,4 +270,13 @@ onMounted(() => { loadData() })
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+
+/* 操作列：3 个按钮横排不折行 */
+.op-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.op-row .el-button + .el-button { margin-left: 0; }
 </style>
