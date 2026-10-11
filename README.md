@@ -4,8 +4,8 @@
 
 - 🌐 PC 管理后台：https://erp.fujinwanjia.com
 - 📱 移动端 H5：
-  - 生产构建（推荐）：`http://116.204.19.53:7780/`（走 3002 后端 `/m/` 路径，FRP 隧道）
-  - 开发模式：`http://116.204.19.53:7779/`（FRP 穿透到 10086 Vite dev）
+  - 生产构建（推荐）：`http://116.204.19.53:7780/m/`（走 3002 后端 `/m/` 路径，FRP 隧道）
+  - 开发模式：`http://116.204.19.53:7779/m/`（FRP 穿透到 10086 Vite dev）
 - 🔧 后端 API：`http://116.204.19.53:3002/`（FRP 7002 映射到此）
 - 📦 GitHub：https://github.com/eeyorenini/jianyioa-system
 

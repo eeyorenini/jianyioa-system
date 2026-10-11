@@ -9,18 +9,24 @@
 ```
 HTTPS:  https://github.com/eeyorenini/jianyioa-system.git
 SSH:    git@github.com:eeyorenini/jianyioa-system.git
-分支:   main
-子模块: jianyioa-app/mobile  (在父仓库以 git submodule 形式存在)
+分支:
+  - main    (PC 后端 + PC 前端 + 文档)
+  - mobile (移动端 H5 + 小程序 + App 三端通用)
 ```
 
-**克隆（含子模块）**：
+**克隆（main 分支装 PC 端，mobile 分支装移动端）**：
 
 ```bash
-git clone --recurse-submodules https://github.com/eeyorenini/jianyioa-system.git
-# 或先 clone 再拉子模块：
+# 1. 拉 PC 端（main 分支）
 git clone https://github.com/eeyorenini/jianyioa-system.git
 cd jianyioa-system
-git submodule update --init --recursive
+git checkout main   # 默认就在 main
+
+# 2. 拉移动端（mobile 分支）到 jianyioa-app/mobile/
+git clone -b mobile https://github.com/eeyorenini/jianyioa-system.git /tmp/jianyioa-mobile
+mkdir -p jianyioa-app
+cp -R /tmp/jianyioa-mobile/mobile jianyioa-app/mobile
+# （远端 mobile 分支的源码在 mobile/ 根目录；本地组织路径是 jianyioa-app/mobile/）
 ```
 
 ---
@@ -370,7 +376,7 @@ lsof -nP -iTCP:10086 -sTCP:LISTEN
 
 ## 十二、第一次部署 checklist
 
-- [ ] 克隆仓库（带 `--recurse-submodules`）
+- [ ] 克隆 main 分支 + 单独拉 mobile 分支（见 §一）
 - [ ] 三个端分别 `npm install --legacy-peer-deps`（server / web / jianyioa-app/mobile）
 - [ ] 宝塔面板建 `jianyioa` 库（utf8mb4），导入 `server/init.sql`
 - [ ] 创建 `server/.env`，填好 DB 密码与 PORT

@@ -140,7 +140,7 @@
             </el-table-column>
           </el-table>
           <div style="margin-top: 10px; color: #909399; font-size: 12px;">
-            注：「全部数据」指可查看该模块的全部数据（read_all），不勾选则只能查看自己创建/相关的数据；「财务」列仅采购模块可用；「薪资」列仅员工模块可用，勾选后可查看员工薪资与身份证（敏感字段），不勾选则列表脱敏（本人始终可见自己的）。admin 角色拥有全部权限，无需单独设置。
+            注：「全部数据」指可查看该模块的全部数据（read_all），不勾选则只能查看自己创建/相关的数据；「财务」列用于<b>金额类业务</b>（采购 / 合同 / 项目合同 / 增减项 / 催收），勾选后可进行财务受理与收款相关操作；「薪资」列仅员工模块可用，勾选后可查看员工薪资与身份证（敏感字段），不勾选则列表脱敏（本人始终可见自己的）。admin 角色拥有全部权限，无需单独设置。
           </div>
         </el-tab-pane>
 
@@ -347,10 +347,10 @@ const presetRoles = [
 // hasDelete / hasResetPassword / hasApprove / hasFinance 控制该模块是否展示对应的动作列
 const moduleList = ref([
   { key: 'customer', name: '客户管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
-  { key: 'project_contract', name: '项目合同', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
+  { key: 'contract', name: '合同模板', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
+  { key: 'project_contract', name: '项目合同', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'project', name: '项目管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
-  { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false },
+  { key: 'contract_change', name: '增减项', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false, hasApprove: true, approve: false, hasFinance: true, finance_action: false },
   { key: 'quote', name: '报价管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'inspection', name: '巡检验房', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },
   { key: 'acceptance', name: '验收管理', hasAll: false, read: false, write: false, delete: false, hasDelete: true, hasResetPassword: false },

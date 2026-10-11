@@ -1,4 +1,4 @@
-# 建亿 OA 系统 · AI 上下文文档（v2.3.0）
+# 建亿 OA 系统 · AI 上下文文档（v2.3.1）
 
 > 本文是给 AI agent 看的**机器可读**系统上下文。结构化优先、口语化最低。  
 > 人类部署请看 `DEPLOY_GUIDE.md`。
@@ -9,14 +9,14 @@
 
 ```yaml
 name: jianyioa-system
-version: 2.3.0
+version: 2.3.1
 release_date: 2026-10-11
 git:
   primary: git@github.com:eeyorenini/jianyioa-system.git
-  parent_branch: main
-  submodule_branch: mobile
-  parent_head: 08b3d50b
-  submodule_head: 351b7a0
+  pc_branch: main                 # PC 后端 + PC 前端（Vue3 + Express）
+  mobile_branch: mobile           # 移动端 H5 + 小程序 + App 三端通用（独立分支）
+  pc_head: 见 tag v2.3.1          # 本次备份提交
+  mobile_head: 见 tag v2.3.1      # 本次备份提交
 stack:
   backend: node + express + mysql2
   pc_web: vue3 + vite + element-plus + pinia + tiptap
@@ -26,12 +26,11 @@ mono_repo_layout:
   root:
     - server/                 # 后端 + API + 静态资源托管
     - web/                    # PC 前端（Vue3）
-    - jianyioa-app/            # git submodule；uni-app 工程
-      - mobile/               # 移动端 H5 + 小程序 + App 三端通用
+    - jianyioa-app/mobile/    # ⚠️ 本地组织（远端 mobile 分支的源码路径其实是 mobile/，本地多嵌一层）
   infrastructure_files:
     - server/.env             # 数据库/端口配置（不进 git）
-    - frpc.ini                # 父仓库 FRP 客户端配置
-    - jianyioa-app/mobile/frpc.ini  # 移动端 FRP 客户端配置
+    - frpc.ini                # 父仓库 FRP 客户端配置（旧；已弃用，改用 jianyioa-app/mobile/frpc.ini）
+    - jianyioa-app/mobile/frpc.ini  # 移动端 FRP 客户端配置（当前在用）
     - server/init.sql         # 数据库初始化（46 张表 + 示例数据）
 ```
 
@@ -182,7 +181,7 @@ req.headers['x-user-role'] = isAdminRoleInfo(info) ? 'admin' : (info.role_code |
 - **dev 模式**：`jianyioa-app/mobile/static/*.png`（**需要手动从生产构建复制**，否则 404）
 - **3002 别名**：`/static` → `server/public-mobile-h5/static/`（兜底）
 
-### 3.9 数据库统计盲点（v2.3.0 修复）
+### 3.9 数据库统计盲点（v2.2.4 修复）
 
 `inProgress` 之前用 `WHERE status='进行中'` 字面匹配，会漏掉 `开工准备`、`施工中`、`暂停` 等非终止态项目。
 
@@ -199,9 +198,14 @@ req.headers['x-user-role'] = isAdminRoleInfo(info) ? 'admin' : (info.role_code |
 ### 4.1 全新部署
 
 ```bash
-# 1. 拉代码
-git clone --recurse-submodules https://github.com/eeyorenini/jianyioa-system.git
+# 1. 拉代码（PC 端 main 分支 + 移动端 mobile 分支）
+git clone https://github.com/eeyorenini/jianyioa-system.git
 cd jianyioa-system
+git checkout main                       # 默认在 main 分支（PC 端）
+# 在独立的 mobile/ 目录拉取移动端代码（或你也可以把 mobile 分支 checkout 到 jianyioa-app/mobile/）
+git clone -b mobile https://github.com/eeyorenini/jianyioa-system.git /tmp/jianyioa-mobile
+# 复制 mobile/ 内容到 jianyioa-app/mobile/（注意：远端路径是 mobile/，本地组织是 jianyioa-app/mobile/）
+mkdir -p jianyioa-app && cp -R /tmp/jianyioa-mobile/mobile jianyioa-app/mobile
 
 # 2. 装依赖（必须 --legacy-peer-deps）
 cd server && npm install --legacy-peer-deps && cd ..
@@ -250,7 +254,10 @@ frpc -c jianyioa-app/mobile/frpc.ini &   # 移动端 frpc.ini
 
 ```bash
 cd /path/to/jianyioa-system
-git pull --recurse-submodules            # 拉新代码
+git pull                                    # 拉 main 分支最新代码（PC 端）
+# 同时拉 mobile 分支（移动端代码）
+git pull origin mobile:refs/remotes/origin/mobile --ff-only 2>/dev/null || \
+  echo "mobile 分支单独在 jianyioa-app/mobile/ 维护，不需要从这里 pull"
 cd web && npm run build && cd ..        # PC 端必须重新构建
 cd jianyioa-app/mobile && npm run build:h5 && cd ../..
 mkdir -p server/public-mobile-h5
@@ -392,7 +399,7 @@ pm2 restart jianyioa-api                 # 如果用 PM2
 
 ---
 
-## 8. 改动文件清单（v2.3.0，git diff）
+## 8. 改动文件清单（v2.2.4，git diff）
 
 ### 8.1 父仓库 main 分支（commit `08b3d50b`）
 
@@ -401,9 +408,9 @@ M  .gitignore
 A  DEPLOY_GUIDE.md           (13058 字节)
 A  AI_CONTEXT.md              (本文档)
 M  README.md
-M  package.json               (v2.3.0)
-M  server/package.json        (v2.3.0)
-M  web/package.json           (v2.3.0)
+M  package.json               (v2.2.4)
+M  server/package.json        (v2.2.4)
+M  web/package.json           (v2.2.4)
 M  server/server.js
 M  web/src/App.vue
 M  web/src/router/index.js
@@ -419,7 +426,7 @@ M  web/src/views/Roles.vue
 
 ```
 M  mobile/frpc.ini
-M  mobile/package.json       (v2.3.0)
+M  mobile/package.json       (v2.2.4)
 M  mobile/src/App.vue
 M  mobile/src/manifest.json
 D  mobile/src/pages/customer/home.vue.bak
@@ -476,11 +483,12 @@ A  mobile/static/*.png,*.svg            (14 个 tabBar 图标)
 
 ---
 
-## 11. 升级到 v2.3.0（从 v2.2.x）
+## 11. 升级到 v2.2.4（从 v2.2.x）
 
 ```bash
 # 1. 拉代码
-git pull --recurse-submodules
+git pull                                    # 拉 main 分支（PC 端）
+# mobile 分支独立演进，本地 jianyioa-app/mobile/ 自行维护（详见 §4.1）
 
 # 2. 装新增依赖（无新增，按需重装）
 cd server && npm install --legacy-peer-deps && cd ..

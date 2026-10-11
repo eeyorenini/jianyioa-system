@@ -247,6 +247,16 @@ async function initDatabase() {
         try { await pool.query(sql); console.log('✅ 迁移成功:', sql.slice(0, 60)); } catch (_) { /* 字段已存在 */ }
       }
 
+      // 字段迁移：inspections 表加 due_date（用于首页待办的 urgency 计算）
+      try {
+        await pool.query(`ALTER TABLE inspections ADD COLUMN due_date DATE DEFAULT NULL AFTER status`);
+        console.log('✅ 字段迁移：inspections.due_date 添加成功');
+      } catch (_) { /* 字段已存在 */ }
+      try {
+        await pool.query(`ALTER TABLE inspections ADD COLUMN images TEXT DEFAULT NULL AFTER issues`);
+        console.log('✅ 字段迁移：inspections.images 添加成功');
+      } catch (_) { /* 字段已存在 */ }
+
       // 字段迁移：main_materials 加供应商关联字段
       try {
         await pool.query(`ALTER TABLE main_materials ADD COLUMN supplier_id INT DEFAULT NULL`);
@@ -315,6 +325,17 @@ app.post('/api/debug/add-type-column', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// 一次性修正：acceptance.created_at 历史默认值被写死为 2024-01-01，改为无默认值
+// （POST /api/acceptance 已显式写入 NOW()；注意 MySQL 5.5 的 DATETIME 不支持 CURRENT_TIMESTAMP 默认值）
+setTimeout(async () => {
+  try {
+    await db.exec('ALTER TABLE acceptance MODIFY COLUMN created_at DATETIME NULL DEFAULT NULL');
+    console.log('[migrate] acceptance.created_at default cleared');
+  } catch (e) {
+    console.error('[migrate] acceptance.created_at 修正失败:', e.message);
+  }
+}, 2500);
 
 // ==================== 家庭成员管理 ====================
 // 确保家庭成员表存在
@@ -2195,6 +2216,29 @@ app.post('/api/finance', checkPermission('finance:write'), async (req, res) => {
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
+// POST /api/finance/add —— 移动端「收支记录」新增（pages/finance/add.vue）
+// 移动端表单字段为 { type, amount, category, payee, remark, date, project_id }，
+// 且以 res.data.code === 0 判定成功；这里做字段映射并统一返回 code:0。
+app.post('/api/finance/add', checkPermission('finance:write'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ code: 1, error: '未登录' });
+    const { type, amount, category, date, project_id } = req.body;
+    const description = req.body.description || req.body.remark || req.body.payee || '';
+    if (!type) return res.status(400).json({ code: 1, error: '缺少收支类型' });
+    if (amount === undefined || amount === null || amount === '') return res.status(400).json({ code: 1, error: '缺少金额' });
+
+    const result = await db.prepare(
+      'INSERT INTO finance (type, amount, category, description, date, project_id, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(type, amount, category || '', description, date || null, project_id || null, userId);
+    await addLog(userId, '', '新增', '财务管理', result.lastInsertRowid, category || type, `财务类型: ${type}, 金额: ${amount}`, req.ip);
+    res.json({ code: 0, id: result.lastInsertRowid, message: '添加成功' });
+  } catch (err) {
+    console.error('finance/add error:', err);
+    res.status(500).json({ code: 1, error: err.message });
+  }
+});
+
 app.delete('/api/finance/:id', checkPermission('finance:delete'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
@@ -2207,6 +2251,120 @@ app.delete('/api/finance/:id', checkPermission('finance:delete'), async (req, re
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '财务管理', req.params.id, fCat, `删除财务记录: ${fCat}`, req.ip);
   res.json({ message: '删除成功' });
+});
+
+// ==================== 移动端：数据报表 / 收支统计与列表（补齐缺失接口）====================
+// 移动端 pages/report/index.vue 请求 /api/report/stats，
+// pages/finance/list.vue 请求 /api/finance/stats + /api/finance/list，
+// 后端此前没有这三个路由 → 控制台 404、页面空白。此处补齐。
+// 统一返回 { code: 0, data: {...} } 以匹配移动端 res.data.code === 0 的判断。
+
+// GET /api/report/stats —— 数据报表页
+app.get('/api/report/stats', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const notDone = "(status IS NULL OR (status NOT LIKE '%完工%' AND status NOT LIKE '%完成%' AND status NOT LIKE '%竣工%' AND status NOT LIKE '%验收%'))";
+    const isDone = "(status LIKE '%完工%' OR status LIKE '%完成%' OR status LIKE '%竣工%' OR status LIKE '%验收%')";
+
+    const pTotal = await db.prepare('SELECT COUNT(*) AS n FROM projects').get();
+    const pActive = await db.prepare(`SELECT COUNT(*) AS n FROM projects WHERE ${notDone}`).get();
+    const pDone = await db.prepare(`SELECT COUNT(*) AS n FROM projects WHERE ${isDone}`).get();
+    const pOverdue = await db.prepare(
+      `SELECT COUNT(*) AS n FROM projects
+       WHERE end_date IS NOT NULL AND end_date <> '' AND end_date < ? AND ${notDone}`
+    ).get(today);
+
+    const iTotal = await db.prepare('SELECT COUNT(*) AS n FROM rectification_issues').get();
+    const iPending = await db.prepare(`SELECT COUNT(*) AS n FROM rectification_issues WHERE (status IS NULL OR status NOT IN ('已整改','已完成'))`).get();
+    const iFixed = await db.prepare(`SELECT COUNT(*) AS n FROM rectification_issues WHERE status IN ('已整改','已完成')`).get();
+    const iOverdue = await db.prepare(
+      `SELECT COUNT(*) AS n FROM rectification_issues
+       WHERE due_date IS NOT NULL AND due_date <> '' AND due_date < ? AND (status IS NULL OR status NOT IN ('已整改','已完成'))`
+    ).get(today);
+
+    const incRow = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='income'`).get();
+    const expRow = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='expense'`).get();
+
+    const projects = await db.prepare(
+      `SELECT id, name, customer AS customer_name, COALESCE(progress,0) AS progress
+       FROM projects ORDER BY progress DESC, id DESC LIMIT 10`
+    ).all();
+
+    res.json({
+      code: 0,
+      data: {
+        stats: {
+          project_total: Number(pTotal && pTotal.n || 0),
+          project_active: Number(pActive && pActive.n || 0),
+          project_overdue: Number(pOverdue && pOverdue.n || 0),
+          project_completed: Number(pDone && pDone.n || 0),
+          inspection_total: Number(iTotal && iTotal.n || 0),
+          inspection_pending: Number(iPending && iPending.n || 0),
+          inspection_fixed: Number(iFixed && iFixed.n || 0),
+          inspection_overdue: Number(iOverdue && iOverdue.n || 0),
+          income: Number(incRow && incRow.s || 0),
+          expense: Number(expRow && expRow.s || 0),
+        },
+        projects: projects || [],
+      },
+    });
+  } catch (err) {
+    console.error('report/stats error:', err);
+    res.status(500).json({ code: 1, error: err.message });
+  }
+});
+
+// GET /api/finance/stats —— 收支统计卡片
+app.get('/api/finance/stats', async (req, res) => {
+  try {
+    const inc = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='income'`).get();
+    const exp = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='expense'`).get();
+    const income = Number(inc && inc.s || 0);
+    const expense = Number(exp && exp.s || 0);
+    res.json({ code: 0, data: { income, expense, balance: income - expense } });
+  } catch (err) {
+    console.error('finance/stats error:', err);
+    res.status(500).json({ code: 1, error: err.message });
+  }
+});
+
+// GET /api/finance/list —— 收支分页列表
+app.get('/api/finance/list', async (req, res) => {
+  try {
+    const type = req.query.type || '';
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.page_size) || 20));
+    const offset = (page - 1) * pageSize;
+
+    const where = [];
+    const params = [];
+    if (type === 'income' || type === 'expense') { where.push('f.type = ?'); params.push(type); }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const rows = await db.prepare(
+      `SELECT f.id, f.type, f.amount, f.category, f.description, f.date, f.project_id, f.created_at,
+              p.name AS project_name
+       FROM finance f LEFT JOIN projects p ON f.project_id = p.id
+       ${whereSql}
+       ORDER BY f.created_at DESC, f.id DESC
+       LIMIT ${pageSize} OFFSET ${offset}`
+    ).all(...params);
+
+    const list = (rows || []).map(r => ({
+      id: r.id,
+      type: r.type === 'income' ? 'income' : 'expense',
+      amount: r.amount,
+      category: r.category,
+      project_name: r.project_name || '',
+      payee: r.description || r.category || '',
+      created_at: r.created_at,
+    }));
+
+    res.json({ code: 0, data: { list, page, page_size: pageSize } });
+  } catch (err) {
+    console.error('finance/list error:', err);
+    res.status(500).json({ code: 1, error: err.message });
+  }
 });
 
 // ==================== 项目管理（增强：关联客户）====================
@@ -5674,15 +5832,44 @@ app.delete('/api/inspections/:id', checkPermission('inspection:delete'), async (
   res.json({ message: '删除成功' });
 });
 
+// ===== 验收管理（工长类模块：权限粒度与「施工日志 / 巡检」一致）=====
+// 说明：GET 暂不强制 checkPermission（与 /api/inspections 现状保持一致），仅要求登录；
+//       支持 project_id / status / mine 过滤，并 JOIN 出创建人姓名。
+//       服务端强制校验将在权限体系 P2 阶段统一补齐。
 app.get('/api/acceptance', async (req, res) => {
-  const { project_id } = req.query;
-  let stmt;
-  if (project_id) {
-    stmt = db.prepare('SELECT * FROM acceptance WHERE project_id = ? ORDER BY created_at DESC');
-    res.json(await stmt.all(project_id));
-  } else {
-    stmt = db.prepare('SELECT * FROM acceptance ORDER BY created_at DESC');
-    res.json(await stmt.all());
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const { project_id, status, mine } = req.query;
+    const where = [];
+    const params = [];
+    if (project_id) { where.push('a.project_id = ?'); params.push(project_id); }
+    if (status) { where.push('a.accept_status = ?'); params.push(status); }
+    if (String(mine) === '1') { where.push('a.creator_id = ?'); params.push(userId); }
+    const sql = `SELECT a.*, e.name AS creator_name
+                 FROM acceptance a
+                 LEFT JOIN employees e ON e.id = a.creator_id
+                 ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                 ORDER BY a.created_at DESC, a.id DESC`;
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    console.error('acceptance list error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/acceptance/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*, e.name AS creator_name
+       FROM acceptance a
+       LEFT JOIN employees e ON e.id = a.creator_id
+       WHERE a.id = ?`, [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: '验收记录不存在' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -5691,38 +5878,53 @@ app.post('/api/acceptance', checkPermission('acceptance:write'), async (req, res
     
   const userId = getUserId(req);
   const { project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment } = req.body;
-  const stmt = db.prepare('INSERT INTO acceptance (project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-  const result = await stmt.run(project_id, project_name, stage, accept_status || '待验收', accept_date, quality_score, issues, attachment, userId);
+  // 归一化附件：数组 -> JSON 字符串（只 stringify 一次，避免双重编码）
+  const attachmentVal = Array.isArray(attachment) ? JSON.stringify(attachment) : (attachment ?? null);
+  const stmt = db.prepare('INSERT INTO acceptance (project_id, project_name, stage, accept_status, accept_date, quality_score, issues, attachment, creator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())');
+  const result = await stmt.run(project_id, project_name, stage, accept_status || '待验收', accept_date, quality_score ?? null, issues, attachmentVal, userId);
   await addLog(userId, '', '新增', '验收管理', result.lastInsertRowid, project_name, `项目: ${project_name}`, req.ip);
   notifyProject('acceptance_submit', project_id,
     `验收提交：${project_name}`,
     `项目「${project_name}」验收已提交，阶段：${stage || ''}，状态：${accept_status || '待验收'}。`,
     result.lastInsertRowid, 'acceptance'
   ).catch(console.error);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  res.json({ code: 0, id: result.lastInsertRowid, message: '添加成功' });
 });
 
 app.put('/api/acceptance/:id', checkPermission('acceptance:write'), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
-  const { accept_status, accept_date, quality_score, issues } = req.body;
+  const { stage, accept_status, accept_date, quality_score, issues, attachment } = req.body;
   // 权限检查
-  const [existing] = await db.prepare('SELECT project_name, creator_id FROM acceptance WHERE id = ?').all(req.params.id);
+  const [existing] = await db.prepare('SELECT project_name, creator_id, accept_status FROM acceptance WHERE id = ?').all(req.params.id);
   if (!existing) return res.status(404).json({ error: '验收记录不存在' });
   if (existing.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权修改他人的数据' });
   const aName = existing.project_name;
-  const stmt = db.prepare('UPDATE acceptance SET accept_status=?, accept_date=?, quality_score=?, issues=? WHERE id=?');
-  await stmt.run(accept_status, accept_date, quality_score, issues, req.params.id);
+  // 动态字段更新：只更新传入的字段，避免 undefined 覆盖
+  const fields = [];
+  const params = [];
+  if (stage !== undefined) { fields.push('stage=?'); params.push(stage); }
+  if (accept_status !== undefined) { fields.push('accept_status=?'); params.push(accept_status); }
+  if (accept_date !== undefined) { fields.push('accept_date=?'); params.push(accept_date); }
+  if (quality_score !== undefined) { fields.push('quality_score=?'); params.push(quality_score); }
+  if (issues !== undefined) { fields.push('issues=?'); params.push(issues); }
+  if (attachment !== undefined) {
+    fields.push('attachment=?');
+    params.push(Array.isArray(attachment) ? JSON.stringify(attachment) : attachment);
+  }
+  if (!fields.length) return res.json({ code: 0, message: '无更新内容' });
+  params.push(req.params.id);
+  await pool.query(`UPDATE acceptance SET ${fields.join(', ')} WHERE id=?`, params);
   await addLog(userId, '', '编辑', '验收管理', req.params.id, aName, `更新验收: ${aName}`, req.ip);
-  if (existing.accept_status !== accept_status) {
+  if (accept_status !== undefined && existing.accept_status !== accept_status) {
     notifyProject('acceptance_submit', null,
       `验收状态变更：${aName}`,
       `验收「${aName}」状态已变更为「${accept_status}」，请知悉。`,
       parseInt(req.params.id), 'acceptance'
     ).catch(console.error);
   }
-  res.json({ message: '更新成功' });
+  res.json({ code: 0, message: '更新成功' });
 });
 
 app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (req, res) => {
@@ -6251,6 +6453,19 @@ app.post('/api/rectification-issues', async (req, res) => {
   const userId = getUserId(req);
   const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description } = req.body;
   const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  // 关键修复：兼容客户端两种提交方式——
+  //   老客户端：images 已是 JSON 字符串（["url1","url2"]），服务端不应再 stringify 一次
+  //   新客户端：images 是数组
+  // 服务端规范化：无论收到什么，最终存进 DB 的是 JSON 字符串
+  let normalizedImages = '[]';
+  try {
+    let parsed = typeof images === 'string' ? JSON.parse(images) : images;
+    if (!Array.isArray(parsed)) parsed = [];
+    normalizedImages = JSON.stringify(parsed);
+  } catch (_) {
+    // 解析失败时当作空数组
+    normalizedImages = '[]';
+  }
   const stmt = db.prepare(`INSERT INTO rectification_issues
     (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description, creator_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -6258,7 +6473,7 @@ app.post('/api/rectification-issues', async (req, res) => {
     inspection_id, project_id, project_name,
     issue_desc || title || '', priority || '普通', status || '待处理',
     responsible_id, responsible_name, due_date,
-    JSON.stringify(images || []), remark || description || '',
+    normalizedImages, remark || description || '',
     title || issue_desc || '', category || '', location || '', level || '', description || '', userId, nowStr
   );
   await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
@@ -8083,6 +8298,33 @@ app.post('/api/contracts/upload', async (req, res) => {
   }
 });
 
+// GET /api/contract-reviews/pending — 待审核合同列表（移动端审核页用）
+// 仅返回真实提交的记录（有项目、有金额），排除历史迁移脏数据。
+app.get('/api/contract-reviews/pending', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canApprove = perms.includes('contract:approve') || perms.includes('project_contract:approve') || await isAdmin(userId);
+    if (!canApprove) return res.status(403).json({ error: '无合同审核权限' });
+
+    const [rows] = await pool.query(
+      `SELECT c.id, c.project_id, c.contract_amount, c.attachment, c.review_status, c.created_at,
+              p.name AS project_name, e.name AS submitter_name
+       FROM contracts c
+       LEFT JOIN projects p ON p.id = c.project_id
+       LEFT JOIN employees e ON e.id = c.submitted_by
+       WHERE c.review_status = 'pending'
+         AND c.project_id IS NOT NULL AND c.contract_amount > 0
+       ORDER BY c.created_at DESC LIMIT 200`
+    );
+    res.json({ code: 0, data: rows });
+  } catch (err) {
+    console.error('contract-reviews pending error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==================== 合同审核 ====================
 app.put('/api/contracts/:id/review', async (req, res) => {
   try {
@@ -8264,15 +8506,20 @@ app.get('/api/change-orders', async (req, res) => {
 
 app.get('/api/contract-changes', async (req, res) => {
   try {
-    const { project_id, contract_id } = req.query;
-    let sql = `SELECT cc.*, s.name as submitted_by_name, r.name as reviewed_by_name
+    const { project_id, contract_id, status } = req.query;
+    // 2026-10-11：补 project_name（此前未 join projects，导致移动端审核页「项目」为空）；
+    // 同时补 submitter_name 别名（原字段是 submitted_by_name，两处口径统一）。
+    let sql = `SELECT cc.*, s.name as submitted_by_name, s.name as submitter_name,
+                      r.name as reviewed_by_name, p.name as project_name
                FROM contract_changes cc
                LEFT JOIN employees s ON s.id = cc.submitted_by
                LEFT JOIN employees r ON r.id = cc.reviewed_by
+               LEFT JOIN projects p ON p.id = cc.project_id
                WHERE 1=1`;
     const params = [];
     if (project_id) { sql += ' AND cc.project_id = ?'; params.push(project_id); }
     if (contract_id) { sql += ' AND cc.contract_id = ?'; params.push(contract_id); }
+    if (status) { sql += ' AND cc.status = ?'; params.push(status); }
     sql += ' ORDER BY cc.id DESC';
     const [rows] = await pool.query(sql, params);
     res.json({ code: 0, data: rows });
@@ -8643,6 +8890,11 @@ const OLD_DISPATCH_APPROVE = /await pool\.query\('UPDATE dispatches SET status=\
 
 // ==================== 静态文件（必须在所有 API 路由之后） ====================
 app.use('/uploads', express.static(uploadDir));
+// 关键修复：uni-h5 在 base=/m/ 下，<image src="/uploads/..."> 实际请求的是 /m/uploads/...
+// （base path 自动前缀化）。生产环境如果不配这条路径，所有图片 src 都会拿到 SPA fallback 的
+// index.html（Content-Type: text/html），浏览器无法解析为图片。
+// dev 模式靠 vite proxy 配了 /m/uploads 重写，但生产没有——这里补上。
+app.use('/m/uploads', express.static(uploadDir));
 const webDistPath = path.join(__dirname, '../web/dist');
 if (fs.existsSync(webDistPath)) {
   app.use(express.static(webDistPath));
@@ -8939,6 +9191,20 @@ async function __todoCounts(userId, perms, admin) {
     const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM dispatches WHERE status='pending'");
     out.dispatch = { key: 'dispatch', label: '派工待审核', icon: '👷', type: 'dispatch', count: Number(r.c) || 0 };
   }
+  // 5) 合同待审核（主合同上传后待审）
+  //    注意：contracts 表里有历史迁移产生的脏数据（project_id 为空、金额为 0），
+  //    它们不是真实提交，必须过滤掉，否则待办角标会出现几十条虚假数字。
+  if (can('contract:approve') || can('project_contract:approve')) {
+    const [[r]] = await pool.query(
+      "SELECT COUNT(*) AS c FROM contracts WHERE review_status='pending' AND project_id IS NOT NULL AND contract_amount > 0"
+    );
+    out.contract_approve = { key: 'contract_approve', label: '合同待审核', icon: '📄', type: 'contract_approve', count: Number(r.c) || 0 };
+  }
+  // 6) 增减项待审核（contract_change:approve）
+  if (can('contract_change:approve')) {
+    const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM contract_changes WHERE status='pending'");
+    out.change_approve = { key: 'change_approve', label: '增减项待审核', icon: '🧮', type: 'change_approve', count: Number(r.c) || 0 };
+  }
   return out;
 }
 
@@ -9071,6 +9337,53 @@ app.get('/api/todo/center', async (req, res) => {
       });
     }
 
+    // 6) 合同待审核（主合同上传后待审）—— 过滤历史脏数据
+    if (can('contract:approve') || can('project_contract:approve')) {
+      const [rows] = await pool.query(
+        `SELECT c.id, c.project_id, c.contract_amount, c.attachment, c.created_at,
+                p.name AS project_name, e.name AS submitter_name
+         FROM contracts c
+         LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN employees e ON e.id = c.submitted_by
+         WHERE c.review_status = 'pending'
+           AND c.project_id IS NOT NULL AND c.contract_amount > 0
+         ORDER BY c.created_at DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.contract_approve,
+        items: rows.map(r => ({
+          id: r.id, type: 'contract_approve',
+          title: r.project_name || ('合同#' + r.id),
+          subtitle: ['合同审核', r.submitter_name ? ('提交人：' + r.submitter_name) : ''].filter(Boolean).join(' · '),
+          amount: r.contract_amount != null ? Number(r.contract_amount) : null,
+          time: __fmtTodoTime(r.created_at),
+          url: `/pages/contracts/approval?tab=contract&id=${r.id}`
+        }))
+      });
+    }
+
+    // 7) 增减项待审核
+    if (can('contract_change:approve')) {
+      const [rows] = await pool.query(
+        `SELECT cc.id, cc.project_id, cc.change_type, cc.title, cc.amount, cc.submitted_at,
+                p.name AS project_name, e.name AS submitter_name
+         FROM contract_changes cc
+         LEFT JOIN projects p ON p.id = cc.project_id
+         LEFT JOIN employees e ON e.id = cc.submitted_by
+         WHERE cc.status = 'pending'
+         ORDER BY cc.id DESC LIMIT ?`, [limit]);
+      groups.push({
+        ...counts.change_approve,
+        items: rows.map(r => ({
+          id: r.id, type: 'change_approve',
+          title: (r.change_type === 'decrease' ? '减项 · ' : '增项 · ') + (r.title || ''),
+          subtitle: [r.project_name, r.submitter_name ? ('提交人：' + r.submitter_name) : ''].filter(Boolean).join(' · '),
+          amount: r.amount != null ? Number(r.amount) : null,
+          time: __fmtTodoTime(r.submitted_at),
+          url: `/pages/contracts/approval?tab=change&id=${r.id}`
+        }))
+      });
+    }
+
     const total = groups.reduce((s, g) => s + (g.count || 0), 0);
 
     // ==== home 区块：按角色过滤的统计 + 项目相关事项 + 逾期预警 ====
@@ -9087,19 +9400,18 @@ app.get('/api/todo/center', async (req, res) => {
     );
     const myProjectIds = myProjects.map(p => p.id);
 
-    // 1) 节点提前 3 天提醒（在 home 区域显示）
+    // 1) 节点提前 3 天提醒（在 home 区域显示）—— 口径：所有项目
     let stage_alerts = [];
-    if (myProjectIds.length > 0) {
+    {
       const [rows] = await pool.query(
         `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, ps.status, p.name AS project_name
          FROM project_stages ps
          JOIN projects p ON p.id = ps.project_id
-         WHERE ps.project_id IN (${myProjectIds.map(() => '?').join(',')})
-           AND ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
-           AND ps.status NOT IN ('completed', '已完成')
+         WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
+           AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
            AND ps.plan_end_date BETWEEN ? AND ?
          ORDER BY ps.plan_end_date ASC LIMIT 10`,
-        [...myProjectIds, today, todayPlus3]
+        [today, todayPlus3]
       );
       stage_alerts = rows.map(r => {
         const days = (new Date(r.plan_end_date) - new Date(today)) / 86400;
@@ -9115,24 +9427,43 @@ app.get('/api/todo/center', async (req, res) => {
       });
     }
 
-    // 2) 待整改巡检（按项目相关人过滤：designer/manager/supervisor）
+    // 2) 待整改巡检（整改问题表 rectification_issues，详情页 /api/rectification-issues/:id 读这张表）
+    // 原实现查的是 inspections.rectify_status='待整改'，id 与详情接口对不上（不同表）。
+    // 改为查 rectification_issues，status='待处理'/'待整改'/'整改中' 都算待办；
+    // due_date 字段这张表本来就有，无需 ALTER。
     let rectify_alerts = [];
-    if (myProjectIds.length > 0 || admin) {
-      const sql = admin
-        ? `SELECT i.id, i.project_id, i.project_name, i.issues, i.score, i.created_at
-           FROM inspections i WHERE i.rectify_status = '待整改' ORDER BY i.created_at DESC LIMIT 10`
-        : `SELECT i.id, i.project_id, i.project_name, i.issues, i.score, i.created_at
-           FROM inspections i WHERE i.rectify_status = '待整改' AND i.project_id IN (${myProjectIds.map(() => '?').join(',')})
-           ORDER BY i.created_at DESC LIMIT 10`;
-      const [rows] = await pool.query(sql, admin ? [] : myProjectIds);
-      rectify_alerts = rows.map(r => ({
-        id: r.id, type: 'inspect_rectify',
-        title: (r.issues || '待整改').slice(0, 30),
-        subtitle: r.project_name,
-        time: __fmtTodoTime(r.created_at),
-        priority: 'danger',
-        url: `/pages/inspection/detail?id=${r.id}`
-      }));
+    {
+      const [rows] = await pool.query(
+        `SELECT ri.id, ri.project_id, ri.project_name, ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status
+         FROM rectification_issues ri
+         WHERE ri.status IN ('待处理','待整改','整改中')
+         ORDER BY ri.created_at DESC LIMIT 10`
+      );
+      rectify_alerts = rows.map(r => {
+        let urgency = 'normal';
+        let days_left = null;
+        if (r.due_date) {
+          const due = new Date(r.due_date);
+          // 直接用外层 const today（YYYY-MM-DD 字符串），避免 TDZ/shadowing
+          const todayDate = new Date(today);
+          const diffMs = due.getTime() - todayDate.getTime();
+          const diffDays = Math.ceil(diffMs / 86400000);
+          days_left = diffDays;
+          if (diffDays < 0) urgency = 'overdue';
+          else if (diffDays <= 3) urgency = 'urgent';
+        }
+        return {
+          id: r.id, type: 'inspect_rectify',
+          title: (r.title || r.issue_desc || '待整改').slice(0, 30),
+          subtitle: r.project_name,
+          time: __fmtTodoTime(r.created_at),
+          due_date: r.due_date || null,
+          days_left,
+          urgency,
+          priority: urgency === 'overdue' ? 'danger' : 'warning',
+          url: `/pages/inspection/detail?id=${r.id}`
+        };
+      });
     }
 
     // 3) 派工待我处理（worker=本人 或 applicant=本人）
@@ -9155,20 +9486,19 @@ app.get('/api/todo/center', async (req, res) => {
       }));
     }
 
-    // 4) 逾期节点预警（按项目相关人）
+    // 4) 逾期节点预警 —— 口径：所有项目（与「逾期节点」统计数字保持完全一致）
     let warnings = [];
-    if (myProjectIds.length > 0) {
+    {
       const [rows] = await pool.query(
         `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, p.name AS project_name,
                 DATEDIFF(?, ps.plan_end_date) AS days
          FROM project_stages ps
          JOIN projects p ON p.id = ps.project_id
-         WHERE ps.project_id IN (${myProjectIds.map(() => '?').join(',')})
-           AND ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
+         WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
            AND ps.plan_end_date < ?
-           AND ps.status NOT IN ('completed', '已完成')
+           AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
          ORDER BY ps.plan_end_date ASC LIMIT 10`,
-        [today, ...myProjectIds, today]
+        [today, today]
       );
       warnings = rows.map(r => ({
         id: r.project_id,
@@ -9179,27 +9509,48 @@ app.get('/api/todo/center', async (req, res) => {
       }));
     }
 
-    // 5) 进行中项目数：所有非终止态（开工准备/进行中/施工中/暂停等都算在跑；排除已收尾/已取消/已交付/已完成等）
-    const inProgress = myProjectIds.length
-      ? (await pool.query(
-          `SELECT COUNT(*) c FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> '' AND id IN (${myProjectIds.map(() => '?').join(',')})`,
-          myProjectIds
-        ))[0][0].c
-      : (admin ? (await pool.query("SELECT COUNT(*) c FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> ''"))[0][0].c : 0);
+    // 5) 首页统计卡片（口径统一为「所有项目」——首页概览需全局准确，不再按个人项目过滤）
+    //    进行中：所有非终止态项目
+    const inProgress = (await pool.query(
+      `SELECT COUNT(*) c FROM projects
+       WHERE status IS NOT NULL AND status <> ''
+         AND status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled')`
+    ))[0][0].c;
+    //    逾期节点：project_stages 中计划结束日已过且未完成的节点
     const overdue = (await pool.query(
       `SELECT COUNT(*) c FROM project_stages
-       WHERE plan_end_date IS NOT NULL AND plan_end_date < ?
-         AND status NOT IN ('completed', '已完成')
-         ${myProjectIds.length ? `AND project_id IN (${myProjectIds.map(() => '?').join(',')})` : (admin ? '' : 'AND 0')}`,
-      myProjectIds.length ? [today, ...myProjectIds] : [today]
+       WHERE plan_end_date IS NOT NULL AND plan_end_date <> '' AND plan_end_date < ?
+         AND (status IS NULL OR status NOT IN ('completed', '已完成'))`,
+      [today]
     ))[0][0].c;
+    //    待整改：整改问题表（与首页下方「待整改」列表同源；
+    //    原实现查 inspections.rectify_status，与列表口径不一致导致数字对不上）
     const pendingInspect = (await pool.query(
-      `SELECT COUNT(*) c FROM inspections WHERE rectify_status='待整改'
-       ${myProjectIds.length ? `AND project_id IN (${myProjectIds.map(() => '?').join(',')})` : (admin ? '' : 'AND 0')}`,
-      myProjectIds.length ? myProjectIds : []
+      `SELECT COUNT(*) c FROM rectification_issues WHERE status IN ('待处理','待整改','整改中')`
     ))[0][0].c;
 
-    // 6) 财务角色（purchase:finance）关心的金额：报销中总金额
+    // 6) 待收款金额（所有项目）：应收 - 已收
+    //    应收 = 已审核合同金额 + 已通过增项 - 已通过减项
+    //    已收 = 催收记录中已确认的金额（collection_records.status='confirmed'）
+    //    口径与 /api/finance/receivable-by-project 完全一致。
+    //    注意：payment_records 里 category='contract' 的收入是「合同审核通过时自动写入」的应收记录，
+    //    并非实际到账，不能用于计算已收款。
+    const [[recvAgg]] = await pool.query(
+      `SELECT
+         (SELECT COALESCE(SUM(c.contract_amount),0) FROM contracts c
+            JOIN projects p ON p.id = c.project_id
+           WHERE c.review_status='approved' AND (p.status IS NULL OR p.status <> '已删除')) AS contract_amount,
+         (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
+           WHERE cc.status='approved' AND cc.change_type='increase') AS increase_total,
+         (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
+           WHERE cc.status='approved' AND cc.change_type='decrease') AS decrease_total,
+         (SELECT COALESCE(SUM(cr.amount),0) FROM collection_records cr WHERE cr.status='confirmed') AS collected`
+    );
+    const receivableTotal = Number(recvAgg.contract_amount || 0) + Number(recvAgg.increase_total || 0) - Number(recvAgg.decrease_total || 0);
+    const collectedTotal = Number(recvAgg.collected || 0);
+    const pendingReceiveAmount = receivableTotal - collectedTotal;
+
+    // 7) 财务角色（purchase:finance）关心的金额：报销中总金额（保留字段，兼容旧消费方）
     let pendingPayAmount = null;
     if (can('purchase:finance')) {
       const [[r]] = await pool.query(
@@ -9213,6 +9564,10 @@ app.get('/api/todo/center', async (req, res) => {
         inProgress: Number(inProgress) || 0,
         overdue: Number(overdue) || 0,
         pendingInspect: Number(pendingInspect) || 0,
+        // 待收款金额（应收 - 已收），所有项目汇总
+        pendingReceiveAmount,
+        receivableTotal,
+        collectedTotal,
         pendingPayAmount,
       },
       // 按角色排序：经理/设计师/监理/工长 先看预警+整改；财务看采购；admin 全见

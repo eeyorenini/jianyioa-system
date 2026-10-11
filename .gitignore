@@ -5,6 +5,7 @@ web/dist_prev_*/
 server/public-mobile-h5/
 jianyioa-app/mobile/dist/
 jianyioa-app/mobile/dist/build/h5/
+web/vite.config.js.timestamp-*.mjs
 
 # 系统文件
 .DS_Store
