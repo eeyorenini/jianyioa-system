@@ -52,7 +52,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.3.2</div>
+      <div class="sidebar-version">v 2.2.2</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -81,7 +81,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.3.2</div>
+      <div class="sidebar-version">v 2.2.2</div>
     </div>
 
     <!-- 主内容区 -->
