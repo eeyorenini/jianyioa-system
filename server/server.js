@@ -6317,7 +6317,11 @@ app.put('/api/dispatches/:id/approve', async (req, res) => {
         const msg = action === 'approve'
           ? `您的派工申请（项目：${record.project_name}）已审核通过，请准备施工。`
           : `您的派工申请（项目：${record.project_name}）未通过${reason ? '：' + reason : ''}，可重新提交。`;
-        await pool.query('INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())', [uid, action === 'approve' ? '派工申请已通过' : '派工申请未通过', msg, '派工', req.params.id]);
+        // v2.3.4 修：用 messages 表（站内通知），不是 notifications 表（外发短信）
+        await pool.query(
+          'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, \'sent\')',
+          [uid, emp ? emp.name : '', action === 'approve' ? '派工申请已通过' : '派工申请未通过', msg, action === 'approve' ? 'dispatch_approved' : 'dispatch_rejected', req.params.id, 'dispatch']
+        );
       }
     }
     res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
@@ -6402,6 +6406,247 @@ app.delete('/api/dispatches/:id', checkPermission('dispatch:delete'), async (req
   } catch (err) {
     console.error('dispatches delete error:', err);
     res.status(500).json({ error: '删除失败' });
+  }
+});
+
+// ==================== 项目文件 v2.3.4 ====================
+// 业务流程：上传（自动 pending）→ 通知有 approve 权限的人 → 审核 → 通知上传人
+// 8 个路由 + 1 个 helper function
+
+// multer 独立配置：100MB，路径 uploads/project_files/{yyyy}/{mm}/{uuid}.{ext}
+const projectFilesDir = path.join(__dirname, 'uploads', 'project_files');
+fs.mkdirSync(projectFilesDir, { recursive: true });
+const projectFileStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dir = path.join(projectFilesDir, String(yyyy), mm);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, crypto.randomUUID() + ext);
+  },
+});
+const projectFileUpload = multer({
+  storage: projectFileStorage,
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp',
+                     '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+                     '.dwg', '.dxf', '.zip', '.rar'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error('不支持的文件类型: ' + ext));
+  },
+});
+
+// 1. GET 列表
+app.get('/api/project-files', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await permCore.loadUserPermissions(userId);
+    if (!perms.has('*') && !perms.has('project_file:read_all') && !perms.has('project_file:read')) {
+      return res.status(403).json({ error: '无权限' });
+    }
+    const projectId = parseInt(req.query.project_id);
+    if (!projectId) return res.status(400).json({ error: '缺少 project_id' });
+    const { status, category, mine } = req.query;
+    let sql = `SELECT f.*, e.name AS uploader_name, r.name AS reviewer_name, p.name AS project_name
+               FROM project_files f
+               LEFT JOIN employees e ON e.id = f.uploaded_by
+               LEFT JOIN employees r ON r.id = f.reviewed_by
+               LEFT JOIN projects p ON p.id = f.project_id
+               WHERE f.project_id = ?`;
+    const args = [projectId];
+    if (status) { sql += ' AND f.status = ?'; args.push(status); }
+    if (category) { sql += ' AND f.category = ?'; args.push(category); }
+    if (mine === '1') { sql += ' AND f.uploaded_by = ?'; args.push(userId); }
+    sql += ' ORDER BY f.uploaded_at DESC';
+    const [rows] = await pool.query(sql, args);
+    res.json({ list: rows });
+  } catch (e) {
+    console.error('[project-files list] error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 2. GET 详情
+app.get('/api/project-files/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [rows] = await pool.query(
+      `SELECT f.*, e.name AS uploader_name, r.name AS reviewer_name, p.name AS project_name
+       FROM project_files f
+       LEFT JOIN employees e ON e.id = f.uploaded_by
+       LEFT JOIN employees r ON r.id = f.reviewed_by
+       LEFT JOIN projects p ON p.id = f.project_id
+       WHERE f.id = ?`,
+      [parseInt(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: '文件不存在' });
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 3. POST 上传（自动 pending + 发通知）
+app.post('/api/project-files', projectFileUpload.single('file'), async (req, res) => {
+  const cleanup = () => { if (req.file) try { fs.unlinkSync(req.file.path); } catch {} };
+  try {
+    const userId = getUserId(req);
+    if (!userId) { cleanup(); return res.status(401).json({ error: '未登录' }); }
+    const perms = await permCore.loadUserPermissions(userId);
+    if (!perms.has('*') && !perms.has('project_file:write')) {
+      cleanup();
+      return res.status(403).json({ error: '无上传权限' });
+    }
+    const { project_id, category, description } = req.body;
+    if (!project_id || !category) {
+      cleanup();
+      return res.status(400).json({ error: '缺少 project_id 或 category' });
+    }
+    if (!req.file) return res.status(400).json({ error: '请选择文件' });
+    const fileExt = path.extname(req.file.originalname).toLowerCase().slice(1);
+    const relPath = path.relative(path.join(__dirname, 'uploads'), req.file.path);
+    const [result] = await pool.query(
+      `INSERT INTO project_files
+       (project_id, category, title, file_path, file_size, file_ext, description, status, uploaded_by, uploaded_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(), NOW(), NOW())`,
+      [parseInt(project_id), category, req.file.originalname, relPath, req.file.size, fileExt,
+       description || null, userId]
+    );
+    // 通知所有有 project_file:approve 权限的人（跳过自己）
+    // 用 messages 表（站内通知），不是 notifications 表（外发短信）
+    const approvers = await getUserIdsByPermission('project_file:approve');
+    for (const aid of approvers) {
+      if (aid === userId) continue;
+      const [[emp]] = await pool.query('SELECT name FROM employees WHERE id = ?', [aid]);
+      await pool.query(
+        `INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'sent')`,
+        [aid, emp ? emp.name : '', '项目文件待审核', `${req.file.originalname} 等待您审核`, 'project_file_pending', result.insertId, 'project_file']
+      );
+    }
+    await addLog(userId, '', '上传', '项目文件', result.insertId, req.file.originalname,
+      `上传项目文件: ${req.file.originalname} (${(req.file.size/1024/1024).toFixed(1)}MB)`, req.ip);
+    res.json({ id: result.insertId, message: '上传成功，待审核' });
+  } catch (e) {
+    cleanup();
+    console.error('[project-files upload] error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 4. POST 审核
+app.post('/api/project-files/:id/review', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await permCore.loadUserPermissions(userId);
+    if (!perms.has('*') && !perms.has('project_file:approve')) {
+      return res.status(403).json({ error: '无审核权限' });
+    }
+    const { action, comment } = req.body;
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'action 必须是 approve/reject' });
+    }
+    const id = parseInt(req.params.id);
+    const [rows] = await pool.query('SELECT * FROM project_files WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ error: '文件不存在' });
+    const file = rows[0];
+    if (file.status !== 'pending') return res.status(400).json({ error: '只能审核待审文件' });
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await pool.query(
+      `UPDATE project_files SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_comment = ?, updated_at = NOW() WHERE id = ?`,
+      [newStatus, userId, comment || null, id]
+    );
+    // 通知上传人（用 messages 表站内通知）
+    await pool.query(
+      `INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'sent')`,
+      [file.uploaded_by, '',
+       action === 'approve' ? '文件已通过审核' : '文件被拒绝',
+       `${file.title}${comment ? ': ' + comment : ''}`,
+       action === 'approve' ? 'project_file_approved' : 'project_file_rejected',
+       id, 'project_file']
+    );
+    await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '项目文件', id, file.title,
+      `${action} project_file: ${file.title}${comment ? ' 意见: ' + comment : ''}`, req.ip);
+    res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
+  } catch (e) {
+    console.error('[project-files review] error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 5. POST 撤销（仅上传人自己，状态=pending）
+app.post('/api/project-files/:id/revoke', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const id = parseInt(req.params.id);
+    const [rows] = await pool.query('SELECT * FROM project_files WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ error: '文件不存在' });
+    const file = rows[0];
+    if (file.uploaded_by !== userId) return res.status(403).json({ error: '只能撤销自己上传的文件' });
+    if (file.status !== 'pending') return res.status(400).json({ error: '只能撤销待审文件' });
+    await pool.query(`UPDATE project_files SET status = 'revoked', updated_at = NOW() WHERE id = ?`, [id]);
+    res.json({ message: '已撤销' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 6. DELETE 删除（上传人未审前 / admin 通杀 / 审过后不能删）
+app.delete('/api/project-files/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await permCore.loadUserPermissions(userId);
+    const isAdmin = perms.has('*');
+    const id = parseInt(req.params.id);
+    const [rows] = await pool.query('SELECT * FROM project_files WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ error: '文件不存在' });
+    const file = rows[0];
+    if (file.status === 'approved' && !isAdmin) {
+      return res.status(403).json({ error: '已通过审核的文件不能删除（仅 admin 可删）' });
+    }
+    if (file.uploaded_by !== userId && !isAdmin) {
+      return res.status(403).json({ error: '只能删除自己上传的文件（admin 通杀）' });
+    }
+    try {
+      const fp = path.join(__dirname, 'uploads', file.file_path);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    } catch (e) { console.error('删除物理文件失败:', e.message); }
+    await pool.query('DELETE FROM project_files WHERE id = ?', [id]);
+    await addLog(userId, '', '删除', '项目文件', id, file.title, `删除项目文件: ${file.title}`, req.ip);
+    res.json({ message: '已删除' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 7. GET 下载（流式）
+app.get('/api/project-files/:id/download', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const perms = await permCore.loadUserPermissions(userId);
+    if (!perms.has('*') && !perms.has('project_file:read_all') && !perms.has('project_file:read')) {
+      return res.status(403).json({ error: '无权限' });
+    }
+    const [rows] = await pool.query('SELECT * FROM project_files WHERE id = ?', [parseInt(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ error: '文件不存在' });
+    const file = rows[0];
+    const fp = path.join(__dirname, 'uploads', file.file_path);
+    if (!fs.existsSync(fp)) return res.status(404).json({ error: '物理文件不存在' });
+    res.download(fp, file.title);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -8672,9 +8917,11 @@ app.put('/api/contracts/:id/review', async (req, res) => {
     ).catch(console.error);
 
     if (contract.submitted_by && contract.submitted_by !== userId) {
+      // v2.3.4 修：用 messages 表（站内通知）
+      const [[submitter]] = await pool.query('SELECT name FROM employees WHERE id = ?', [contract.submitted_by]);
       await pool.query(
-        'INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-        [contract.submitted_by, action === 'approve' ? '合同已通过' : '合同未通过', action === 'approve' ? `您上传的合同已审核通过` : `您上传的合同未通过${remark ? '：' + remark : ''}`, '合同', req.params.id]
+        'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, \'sent\')',
+        [contract.submitted_by, submitter ? submitter.name : '', action === 'approve' ? '合同已通过' : '合同未通过', action === 'approve' ? `您上传的合同已审核通过` : `您上传的合同未通过${remark ? '：' + remark : ''}`, action === 'approve' ? 'contract_approved' : 'contract_rejected', req.params.id, 'contract']
       );
     }
     res.json({ message: action === 'approve' ? '已通过' : '已拒绝' });
@@ -9341,12 +9588,14 @@ app.put('/api/material-orders/:id/approve', async (req, res) => {
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '采购管理', req.params.id, record.material_name || '', `采购审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
     // 通知申请人
     if (record.applicant_id && record.applicant_id !== userId) {
+      // v2.3.4 修：用 messages 表（站内通知）
+      const [[applicant]] = await pool.query('SELECT name FROM employees WHERE id = ?', [record.applicant_id]);
       const msg = action === 'approve'
         ? `您的采购申请（${record.material_name}）已审核通过。`
         : `您的采购申请（${record.material_name}）未通过${reason ? '：' + reason : ''}。`;
       await pool.query(
-        'INSERT INTO notifications (user_id, title, content, type, related_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-        [record.applicant_id, action === 'approve' ? '采购申请已通过' : '采购申请未通过', msg, '采购', req.params.id]
+        'INSERT INTO messages (user_id, user_name, title, content, type, related_id, related_type, is_read, push_status) VALUES (?, ?, ?, ?, ?, ?, ?, 0, \'sent\')',
+        [record.applicant_id, applicant ? applicant.name : '', action === 'approve' ? '采购申请已通过' : '采购申请未通过', msg, action === 'approve' ? 'purchase_approved' : 'purchase_rejected', req.params.id, 'purchase']
       );
     }
     res.json({ message: action === 'approve' ? '审核通过' : '已拒绝' });
