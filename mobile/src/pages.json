@@ -454,6 +454,34 @@
         "navigationBarTitleText": "设置",
         "navigationStyle": "custom"
       }
+    },
+    {
+      "path": "pages/files/list",
+      "style": {
+        "navigationBarTitleText": "项目文件",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/files/upload",
+      "style": {
+        "navigationBarTitleText": "上传文件",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/files/detail",
+      "style": {
+        "navigationBarTitleText": "文件详情",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/files/review",
+      "style": {
+        "navigationBarTitleText": "审核文件",
+        "navigationStyle": "custom"
+      }
     }
   ],
   "globalStyle": {

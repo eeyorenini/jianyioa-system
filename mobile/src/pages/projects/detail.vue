@@ -727,6 +727,41 @@
         </view>
       </view>
 
+      <!-- 项目文件（v2.3.4） -->
+      <view v-if="curTab === 'files'" class="tab-panel">
+        <view class="panel-toolbar">
+          <text class="panel-title">项目文件</text>
+          <text class="panel-subtitle">共 {{ projectFiles.length }} 个</text>
+        </view>
+        <view class="files-cats">
+          <view class="files-cat" v-for="c in fileCatStats" :key="c.key" @click="goFilesList">
+            <text class="files-cat-icon">{{ c.icon }}</text>
+            <text class="files-cat-name">{{ c.label }}</text>
+            <text class="files-cat-count">{{ c.count }}</text>
+          </view>
+        </view>
+        <view class="section-divider">
+          <text class="section-divider-text">最近上传</text>
+          <text class="section-divider-sub" @click="goFilesList">查看全部 ›</text>
+        </view>
+        <view v-if="recentFiles.length === 0" class="empty-state small">
+          <text class="empty-text">暂无文件</text>
+        </view>
+        <view v-else class="recent-files">
+          <view v-for="f in recentFiles" :key="f.id" class="recent-file" @click="goFileDetail(f.id)">
+            <text class="recent-file-icon">{{ fileThumbIcon(f.file_ext) }}</text>
+            <view class="recent-file-info">
+              <text class="recent-file-title">{{ f.title }}</text>
+              <text class="recent-file-meta">{{ fileCatLabel(f.category) }} · {{ f.uploader_name || '员工' }} · {{ formatRecentTime(f.uploaded_at) }}</text>
+            </view>
+            <view class="recent-file-status" :style="'background:' + fileStatusColor(f.status)">{{ fileStatusText(f.status) }}</view>
+          </view>
+        </view>
+        <view class="files-actions">
+          <view class="files-action" @click="goFilesList"><text>查看全部</text></view>
+          <view class="files-action primary" @click="goFilesUpload"><text>+ 上传</text></view>
+        </view>
+      </view>
     </view>
 
     <!-- 底部快捷操作 -->
@@ -771,6 +806,7 @@ const tabs = computed(() => [
   { key: 'contract', label: '合同' },
   { key: 'finance', label: '财务', badge: collectionRecords.value.filter(r => r.status !== 'confirmed').length || null },
   { key: 'gallery', label: '图库' },
+  { key: 'files', label: '文件' },
 ]);
 
 // 日志列表（从API加载）
@@ -880,6 +916,69 @@ const previewGalleryImage = (idx, list) => {
   if (!urls.length) return;
   uni.previewImage({ urls, current: idx });
 };
+
+// ==================== 项目文件（v2.3.4）====================
+const projectFiles = ref([]);
+const FILE_CATS = [
+  { key: 'contract', label: '合同', icon: '📄' },
+  { key: 'design_cad', label: '设计图', icon: '📐' },
+  { key: 'design_render', label: '效果图', icon: '🖼️' },
+  { key: 'point_layout', label: '点位图', icon: '🔌' },
+  { key: 'construction_drawing', label: '施工图', icon: '📏' },
+  { key: 'quote', label: '报价单', icon: '💵' },
+  { key: 'change_order', label: '变更签证', icon: '✏️' },
+  { key: 'other', label: '其他', icon: '📎' },
+];
+const fileCatMap = FILE_CATS.reduce((m, c) => { m[c.key] = c; return m; }, {});
+
+const loadProjectFiles = async () => {
+  if (!projectId.value) return;
+  try {
+    const res = await uni.request({ url: `/api/project-files?project_id=${projectId.value}` });
+    if (res.data && Array.isArray(res.data.list)) {
+      projectFiles.value = res.data.list;
+    }
+  } catch (e) {
+    console.error('loadProjectFiles', e);
+  }
+};
+
+const recentFiles = computed(() => projectFiles.value.slice(0, 5));
+
+const fileCatStats = computed(() => {
+  const counts = {};
+  projectFiles.value.forEach((f) => { counts[f.category] = (counts[f.category] || 0) + 1; });
+  return FILE_CATS.map((c) => ({ ...c, count: counts[c.key] || 0 }));
+});
+
+const fileCatLabel = (key) => (fileCatMap[key] ? fileCatMap[key].label : key);
+const fileStatusText = (s) => ({ pending: '待审核', approved: '已通过', rejected: '已拒绝', revoked: '已撤销' }[s] || s);
+const fileStatusColor = (s) => ({ pending: '#F59E0B', approved: '#10B981', rejected: '#EF4444', revoked: '#9CA3AF' }[s] || '#6B7280');
+const fileThumbIcon = (ext) => {
+  const e = (ext || '').toLowerCase();
+  if (['pdf'].includes(e)) return '📕';
+  if (['doc','docx'].includes(e)) return '📘';
+  if (['xls','xlsx'].includes(e)) return '📗';
+  if (['ppt','pptx'].includes(e)) return '📙';
+  if (['dwg','dxf'].includes(e)) return '📐';
+  if (['zip','rar'].includes(e)) return '🗜️';
+  if (['jpg','jpeg','png','gif','webp'].includes(e)) return '🖼';
+  return '📎';
+};
+const formatRecentTime = (s) => {
+  if (!s) return '';
+  const d = new Date(s.replace(/-/g, '/'));
+  const m = d.getMonth() + 1, day = d.getDate();
+  return `${m}-${day} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+};
+
+const goFilesList = () => uni.navigateTo({
+  url: `/pages/files/list?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}`,
+});
+const goFilesUpload = () => uni.navigateTo({
+  url: `/pages/files/upload?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}`,
+});
+const goFileDetail = (id) => uni.navigateTo({ url: `/pages/files/detail?id=${id}` });
 
 const getStatusClass = (status) => {
   if (!status) return 's-default';
@@ -1716,6 +1815,9 @@ watch(curTab, (val) => {
   }
   if (val === 'accept' && projectId.value) {
     fetchAcceptances();
+  }
+  if (val === 'files' && projectId.value) {
+    loadProjectFiles();
   }
 });
 

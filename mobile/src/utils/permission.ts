@@ -93,7 +93,68 @@ export const HOME_QUICK_ENTRIES: EntryItem[] = [
   { label: "通讯录", icon: "📒", bg: "#EDE9FE", action: "addressbook", perm: "employee:read" },
   { label: "甘特图", icon: "📊", bg: "#FEE2E2", action: "gantt", perm: "" },
   { label: "客户", icon: "👤", bg: "#DBEAFE", action: "customer", perm: "customer:read" },
+  // v2.3.4 新增：项目文件（设计师上传为主，财务/经理审核）
+  { label: "项目文件", icon: "📎", bg: "#E0E7FF", url: "/pages/files/list", perm: "project_file:read" },
 ];
+
+/** 项目文件分类（8 类，按装修业务高频排序） */
+export interface FileCategory {
+  key: string;
+  label: string;
+  icon: string;
+  color: string;
+}
+
+export const FILE_CATEGORIES: FileCategory[] = [
+  { key: "contract",              label: "合同",     icon: "📄", color: "#DBEAFE" },
+  { key: "design_cad",            label: "设计图",   icon: "📐", color: "#FEF3C7" },
+  { key: "design_render",         label: "效果图",   icon: "🖼️", color: "#D1FAE5" },
+  { key: "point_layout",          label: "点位图",   icon: "🔌", color: "#EDE9FE" },
+  { key: "construction_drawing",  label: "施工图",   icon: "📏", color: "#FEE2E2" },
+  { key: "quote",                 label: "报价单",   icon: "💵", color: "#FEF3C7" },
+  { key: "change_order",          label: "变更签证", icon: "✏️", color: "#FED7AA" },
+  { key: "other",                 label: "其他",     icon: "📎", color: "#F3F4F6" },
+];
+
+export const FILE_CATEGORY_MAP: Record<string, FileCategory> = FILE_CATEGORIES.reduce(
+  (m, c) => { m[c.key] = c; return m; }, {} as Record<string, FileCategory>
+);
+
+/** 文件状态显示 */
+export function fileStatusText(s: string): string {
+  const map: Record<string, string> = {
+    pending: "待审核", approved: "已通过", rejected: "已拒绝", revoked: "已撤销",
+  };
+  return map[s] || s;
+}
+export function fileStatusColor(s: string): string {
+  const map: Record<string, string> = {
+    pending: "#F59E0B", approved: "#10B981", rejected: "#EF4444", revoked: "#9CA3AF",
+  };
+  return map[s] || "#6B7280";
+}
+
+/** 文件扩展名 → 缩略图标（图片直显，其他显示分类图标） */
+export function fileThumbIcon(ext: string): string {
+  const e = (ext || "").toLowerCase();
+  if (["jpg","jpeg","png","gif","webp"].includes(e)) return ""; // 空 = 图片直显
+  if (e === "pdf") return "📕";
+  if (["doc","docx"].includes(e)) return "📘";
+  if (["xls","xlsx"].includes(e)) return "📗";
+  if (["ppt","pptx"].includes(e)) return "📙";
+  if (["dwg","dxf"].includes(e)) return "📐";
+  if (["zip","rar"].includes(e)) return "🗜️";
+  return "📎";
+}
+
+/** 文件大小字节转可读 */
+export function fileSizeText(size: number): string {
+  if (!size) return "0 B";
+  if (size < 1024) return size + " B";
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+  if (size < 1024 * 1024 * 1024) return (size / 1024 / 1024).toFixed(1) + " MB";
+  return (size / 1024 / 1024 / 1024).toFixed(2) + " GB";
+}
 
 /** 「我的工作」快捷入口（按权限过滤） */
 export const MY_WORK_ITEMS: EntryItem[] = [

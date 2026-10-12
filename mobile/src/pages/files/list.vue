@@ -1,0 +1,409 @@
+<template>
+  <view class="page">
+    <!-- 顶部导航 -->
+    <view class="nav-bar">
+      <text class="nav-back" @click="goBack">‹</text>
+      <text class="nav-title">{{ projectName || '项目文件' }}</text>
+      <view class="nav-placeholder"></view>
+    </view>
+
+    <!-- 状态筛选 -->
+    <view class="filter-row">
+      <view
+        v-for="s in STATUS_FILTERS"
+        :key="s.value"
+        class="filter-tag"
+        :class="{ active: curStatus === s.value, danger: s.value === 'rejected', warning: s.value === 'pending', success: s.value === 'approved' }"
+        @click="curStatus = s.value; loadData()"
+      >{{ s.label }}</view>
+    </view>
+
+    <!-- 分类筛选 -->
+    <view class="cat-row" v-if="files.length">
+      <view
+        class="cat-tag"
+        :class="{ active: curCategory === '' }"
+        @click="curCategory = ''; loadData()"
+      >全部分类</view>
+      <view
+        v-for="c in categories"
+        :key="c.key"
+        class="cat-tag"
+        :class="{ active: curCategory === c.key }"
+        :style="curCategory === c.key ? 'background:' + c.color : ''"
+        @click="curCategory = c.key; loadData()"
+      >{{ c.icon }} {{ c.label }}</view>
+    </view>
+
+    <!-- 加载中 -->
+    <view class="loading-state" v-if="loading">
+      <text>加载中...</text>
+    </view>
+
+    <!-- 文件列表 -->
+    <view class="file-list" v-else-if="filteredList.length">
+      <view class="file-item" v-for="f in filteredList" :key="f.id" @click="goDetail(f)">
+        <!-- 顶部行：缩略图 + 文件名 + 状态徽章 -->
+        <view class="file-row-top">
+          <view class="file-thumb" :style="thumbBg(f)">
+            <text v-if="isImage(f.file_ext)" class="file-thumb-img" :data-url="getPreviewUrl(f)">
+              <image v-if="false" :src="getPreviewUrl(f)" mode="aspectFill" class="file-thumb-img-el" />
+              <text v-else>{{ thumbIcon(f.file_ext) }}</text>
+            </text>
+            <text v-else class="file-thumb-emoji">{{ thumbIcon(f.file_ext) }}</text>
+          </view>
+          <view class="file-info">
+            <text class="file-title">{{ f.title }}</text>
+            <view class="file-meta">
+              <text class="file-cat" :style="'background:' + catColor(f.category)">
+                {{ catLabel(f.category) }}
+              </text>
+              <text class="file-size">{{ sizeText(f.file_size) }}</text>
+            </view>
+            <view class="file-meta-row">
+              <text class="file-uploader">👤 {{ f.uploader_name || '员工' }}</text>
+              <text class="file-time">{{ formatTime(f.uploaded_at) }}</text>
+            </view>
+          </view>
+          <view class="file-status-badge" :style="'background:' + statusColor(f.status)">
+            {{ statusText(f.status) }}
+          </view>
+        </view>
+
+        <!-- 审核意见（已审的显示） -->
+        <view v-if="f.status === 'approved' || f.status === 'rejected'" class="file-review">
+          <text class="file-review-label">审核人：</text>
+          <text class="file-review-name">{{ f.reviewer_name || '-' }}</text>
+          <text v-if="f.review_comment" class="file-review-comment">「{{ f.review_comment }}」</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="empty-state" v-else>
+      <text class="empty-icon">📎</text>
+      <text class="empty-text">{{ curStatus ? '暂无' + statusText(curStatus) + '文件' : (projectId ? '本项目暂无文件' : '请先选择项目') }}</text>
+    </view>
+
+    <!-- 上传按钮（仅项目已选且有 write 权限显示） -->
+    <view v-if="projectId && canWrite" class="fab" @click="goUpload">
+      <text>+</text>
+    </view>
+  </view>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from "vue";
+import { onShow } from "@dcloudio/uni-app";
+import { useUserStore } from "@/stores/user";
+import { pickProject } from "@/utils/projectPicker";
+import {
+  FILE_CATEGORIES, FILE_CATEGORY_MAP,
+  fileStatusText as statusText, fileStatusColor as statusColor,
+  fileThumbIcon as thumbIcon, fileSizeText as sizeText,
+} from "@/utils/permission";
+
+const STATUS_FILTERS = [
+  { value: "", label: "全部" },
+  { value: "pending", label: "待审核" },
+  { value: "approved", label: "已通过" },
+  { value: "rejected", label: "已拒绝" },
+  { value: "revoked", label: "已撤销" },
+];
+
+const loading = ref(false);
+const files = ref([]);
+const curStatus = ref("");
+const curCategory = ref("");
+const projectId = ref(0);
+const projectName = ref("");
+
+const userStore = useUserStore();
+const canWrite = computed(() => userStore.canSee("project_file:write") || userStore.canSee("project_file:approve"));
+
+const filteredList = computed(() => files.value);
+const categories = FILE_CATEGORIES;
+
+const isImage = (ext) => ["jpg", "jpeg", "png", "gif", "webp"].includes((ext || "").toLowerCase());
+
+const catLabel = (key) => {
+  const c = FILE_CATEGORY_MAP[key];
+  return c ? c.label : key;
+};
+const catColor = (key) => {
+  const c = FILE_CATEGORY_MAP[key];
+  return c ? c.color : "#F3F4F6";
+};
+const thumbBg = (f) => {
+  const c = FILE_CATEGORY_MAP[f.category];
+  return "background:" + (c ? c.color : "#F3F4F6");
+};
+const getPreviewUrl = (f) => {
+  // 图片预览：直接走 download 端点（H5 用 <img>，小程序用 fileID）
+  return `/api/project-files/${f.id}/download`;
+};
+
+const formatTime = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(/-/g, '/'));
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${m}-${day} ${hh}:${mm}`;
+};
+
+async function loadData() {
+  if (!projectId.value) return;
+  loading.value = true;
+  try {
+    const params = [`project_id=${projectId.value}`];
+    if (curStatus.value) params.push(`status=${curStatus.value}`);
+    if (curCategory.value) params.push(`category=${curCategory.value}`);
+    const res = await uni.request({ url: `/api/project-files?${params.join('&')}` });
+    if (res.data && Array.isArray(res.data.list)) {
+      files.value = res.data.list;
+    } else {
+      files.value = [];
+    }
+  } catch (e) {
+    console.error('加载项目文件失败', e);
+    files.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+const goDetail = (f) => {
+  uni.navigateTo({ url: `/pages/files/detail?id=${f.id}` });
+};
+
+const goUpload = async () => {
+  if (!projectId.value) return;
+  uni.navigateTo({
+    url: `/pages/files/upload?projectId=${projectId.value}&projectName=${encodeURIComponent(projectName.value)}`,
+  });
+};
+
+const goBack = () => {
+  const pages = getCurrentPages();
+  if (pages.length <= 1) {
+    uni.switchTab({ url: '/pages/home/index' });
+  } else {
+    uni.navigateBack();
+  }
+};
+
+onMounted(() => {
+  // 读 URL 参数
+  const pages = getCurrentPages();
+  const cur = pages[pages.length - 1];
+  const opts = (cur && cur.options) || {};
+  projectId.value = parseInt(opts.projectId || opts.project_id || 0);
+  projectName.value = opts.projectName || opts.project_name || '';
+  // 如果 URL 没带 projectId，弹选项目
+  if (!projectId.value) {
+    pickProject('选择项目后查看文件').then((p) => {
+      if (p) {
+        projectId.value = p.id;
+        projectName.value = p.name;
+        loadData();
+      }
+    });
+  } else {
+    loadData();
+  }
+});
+
+onShow(() => {
+  // 审核/上传后返回，刷新列表
+  if (projectId.value) loadData();
+});
+</script>
+
+<style scoped>
+.page {
+  min-height: 100vh;
+  background: #F5F7FA;
+  padding: 16px;
+  padding-bottom: 80px;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1E3A5F;
+  color: #fff;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+.nav-placeholder { width: 40px; }
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+}
+.filter-tag {
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  background: #fff;
+  color: #6B7280;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.filter-tag.active { background: #1E3A5F; color: #fff; }
+.filter-tag.warning.active { background: #F59E0B; }
+.filter-tag.danger.active { background: #EF4444; }
+.filter-tag.success.active { background: #10B981; }
+
+.cat-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.cat-tag {
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  background: #fff;
+  color: #6B7280;
+  flex-shrink: 0;
+}
+.cat-tag.active { color: #1E3A5F; font-weight: 600; }
+
+.loading-state {
+  text-align: center;
+  padding: 40px;
+  color: #9CA3AF;
+  font-size: 14px;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.file-item {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.file-row-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.file-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.file-thumb-emoji { font-size: 32px; }
+.file-thumb-img { width: 100%; height: 100%; }
+.file-thumb-img-el { width: 100%; height: 100%; display: block; }
+
+.file-info { flex: 1; min-width: 0; }
+.file-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1E3A5F;
+  line-height: 1.4;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.file-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  align-items: center;
+}
+.file-cat {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: #1E3A5F;
+}
+.file-size {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+.file-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+.file-uploader {
+  font-size: 12px;
+  color: #6B7280;
+}
+.file-time {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+
+.file-status-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  color: #fff;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.file-review {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #F3F4F6;
+  font-size: 12px;
+  color: #6B7280;
+}
+.file-review-label { color: #9CA3AF; }
+.file-review-name { color: #1E3A5F; font-weight: 500; margin-right: 6px; }
+.file-review-comment { color: #EF4444; }
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 20px;
+}
+.empty-icon { font-size: 50px; margin-bottom: 8px; opacity: 0.5; }
+.empty-text { font-size: 14px; color: #9CA3AF; }
+
+.fab {
+  position: fixed;
+  right: 20px;
+  bottom: 90px;
+  width: 52px;
+  height: 52px;
+  background: linear-gradient(135deg, #1E3A5F, #3B82F6);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(30,58,95,0.4);
+  z-index: 100;
+}
+</style>
