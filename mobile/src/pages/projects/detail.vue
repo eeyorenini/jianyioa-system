@@ -556,23 +556,70 @@
         </view>
         <!-- 应收统计 -->
         <view v-if="financeSubTab === 'receivable'" class="sub-tab-content">
-          <view class="finance-summary">
+          <!-- 3 张总览卡片：合同金额 / 增减合计 / 实际应收（公式：合同 + 增减合计） -->
+          <view class="finance-summary-3col">
             <view class="finance-card income">
               <text class="finance-card-label">合同金额</text>
               <text class="finance-card-num">¥{{ financeSummary.contract_amount.toLocaleString() }}</text>
+              <text class="finance-card-sub">{{ contractList.filter(c => c.review_status === 'approved').length }} 份已审核</text>
             </view>
-            <view class="finance-card expense">
-              <text class="finance-card-label">增减项</text>
-              <text class="finance-card-num">¥{{ (financeSummary.change_total >= 0 ? '+' : '') + financeSummary.change_total.toLocaleString() }}</text>
+            <view class="finance-card" :class="financeSummary.change_total >= 0 ? 'income' : 'expense'">
+              <text class="finance-card-label">增减合计</text>
+              <text class="finance-card-num">{{ financeSummary.change_total >= 0 ? '+' : '' }}¥{{ financeSummary.change_total.toLocaleString() }}</text>
+              <text class="finance-card-sub">{{ changeList.length }} 条增减项</text>
             </view>
-          </view>
-          <view class="finance-summary" style="margin-top:12px;">
-            <view class="finance-card" style="background:#DBEAFE;">
+            <view class="finance-card receivable-highlight">
               <text class="finance-card-label">实际应收</text>
               <text class="finance-card-num">¥{{ financeSummary.actual_receivable.toLocaleString() }}</text>
+              <text class="finance-card-sub">合同 + 增减合计</text>
             </view>
           </view>
-          <view class="empty-state" v-if="financeSummary.contract_amount === 0">
+
+          <!-- 增减项明细（按全部/增项/减项过滤；按时间倒序） -->
+          <view class="section-divider">
+            <text class="section-divider-text">增减项明细</text>
+            <view class="change-filter">
+              <text :class="{ active: changeFilter === 'all' }" @click="changeFilter = 'all'">全部 {{ changeList.length }}</text>
+              <text :class="{ active: changeFilter === 'increase' }" @click="changeFilter = 'increase'">增项 {{ increaseCount }}</text>
+              <text :class="{ active: changeFilter === 'decrease' }" @click="changeFilter = 'decrease'">减项 {{ decreaseCount }}</text>
+            </view>
+          </view>
+
+          <view v-if="filteredChanges.length === 0" class="empty-state small">
+            <text class="empty-text">{{ changeFilter === 'increase' ? '暂无增加项' : changeFilter === 'decrease' ? '暂无减少项' : '暂无增减项' }}</text>
+          </view>
+          <view v-else>
+            <view v-for="ch in filteredChanges" :key="ch.id" class="change-card">
+              <view class="change-card-header">
+                <text class="change-title">{{ ch.title }}</text>
+                <text class="change-type-badge" :class="ch.change_type === 'increase' ? 'badge-increase' : 'badge-decrease'">
+                  {{ ch.change_type === 'increase' ? '➕ 增项' : '➖ 减项' }}
+                </text>
+              </view>
+              <view class="cc-row">
+                <text class="cc-label">金额</text>
+                <text class="cc-value" :class="ch.change_type === 'increase' ? 'accent' : 'decrease'">
+                  {{ ch.change_type === 'increase' ? '+' : '-' }}¥{{ Number(ch.amount || 0).toLocaleString() }}
+                </text>
+              </view>
+              <view class="cc-row">
+                <text class="cc-label">状态</text>
+                <text class="cc-value">
+                  {{ ch.status === 'approved' ? '✅ 已审核' : ch.status === 'rejected' ? '❌ 已驳回' : '⏳ 待审核' }}
+                </text>
+              </view>
+              <view class="cc-row" v-if="ch.submitted_by_name">
+                <text class="cc-label">申请人</text>
+                <text class="cc-value">{{ ch.submitted_by_name }}</text>
+              </view>
+              <view class="cc-row" v-if="formatChangeTime(ch) !== '—'">
+                <text class="cc-label">时间</text>
+                <text class="cc-value">{{ formatChangeTime(ch) }}</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="empty-state" v-if="financeSummary.contract_amount === 0 && changeList.length === 0">
             <text class="empty-icon">📋</text>
             <text class="empty-text">暂无合同信息</text>
           </view>
@@ -643,16 +690,39 @@
         </view>
       </view>
 
-      <!-- 项目资料 -->
+      <!-- 项目图库 -->
       <view v-if="curTab === 'gallery'" class="tab-panel">
         <view class="panel-toolbar">
           <text class="panel-title">项目图库</text>
+          <text class="panel-subtitle">共 {{ galleryPhotos.length }} 张</text>
         </view>
         <view class="gallery-cats">
           <view class="gallery-cat" v-for="cat in galleryCats" :key="cat.name" @click="goGallery(cat.key)">
             <text class="gallery-cat-icon">{{ cat.icon }}</text>
             <text class="gallery-cat-name">{{ cat.name }}</text>
             <text class="gallery-cat-count">{{ galleryStats[cat.key] || 0 }}张</text>
+          </view>
+        </view>
+
+        <!-- 最新 20 张缩略图（点开放大） -->
+        <view class="section-divider">
+          <text class="section-divider-text">最新照片</text>
+          <text class="section-divider-sub" @click="goGallery('全部')">查看全部 ›</text>
+        </view>
+        <view v-if="latestGalleryPhotos.length === 0" class="empty-state small">
+          <text class="empty-text">暂无照片，上传施工日志图片后会自动归类</text>
+        </view>
+        <view v-else class="gallery-thumbs-4col">
+          <view
+            v-for="(photo, idx) in latestGalleryPhotos"
+            :key="photo.url + idx"
+            class="thumb-cell"
+            @click="previewGalleryImage(idx, galleryPhotos)"
+          >
+            <image class="thumb-img" :src="photo.url" mode="aspectFill" />
+            <view class="thumb-overlay">
+              <text class="thumb-cat">{{ photo.category }}</text>
+            </view>
           </view>
         </view>
       </view>
@@ -760,9 +830,14 @@ const financeExpense = computed(() =>
   financeRecords.value.reduce((s, r) => s + Number(r.amount || 0), 0)
 );
 
-const financeSummary = ref({ contract_amount: 0, change_total: 0, actual_receivable: 0 });
+const financeSummary = ref({
+  contract_amount: 0,
+  change_total: 0,        // 增减合计 = increase_total - decrease_total（正数=净增，负数=净减）
+  actual_receivable: 0   // 实际应收 = 合同金额 + 增减合计
+});
 const collectionRecords = ref([]);
 const collectionModal = ref({ visible: false, data: {} });
+const changeFilter = ref('all'); // 应收统计 tab 的增减项过滤：all / increase / decrease
 
 const galleryCats = ref([
   { key: '开工', name: '开工', icon: '🎉' },
@@ -776,18 +851,34 @@ const galleryCats = ref([
 ]);
 
 const galleryStats = ref({});
+const galleryPhotos = ref([]);
 const loadGalleryStats = async () => {
   if (!projectId.value) return;
   try {
     const res = await uni.request({ url: `/api/project-gallery?project_id=${projectId.value}` });
     if (res.data?.list) {
+      // 2026-10-12 修复：原代码用 `item.count`，但 /api/project-gallery 返回的是每张照片
+      // 一个 item（{url, category, date, desc}），根本没有 count 字段。
+      // `undefined + 1 = NaN`，前端模板 `{{ NaN || 0 }}` = 0，所以所有分类都显示 0 张。
+      // 现改为按"每张照片 +1"累加。
       const stats = {};
       for (const item of res.data.list) {
-        stats[item.category] = (stats[item.category] || 0) + item.count;
+        stats[item.category] = (stats[item.category] || 0) + 1;
       }
       galleryStats.value = stats;
+      galleryPhotos.value = res.data.list;
     }
   } catch (e) { console.error('loadGalleryStats', e); }
+};
+
+// 最新 20 张缩略图（按后端返回顺序，已按时间倒序）
+const latestGalleryPhotos = computed(() => galleryPhotos.value.slice(0, 20));
+
+// 缩略图点击：调用 uni.previewImage 全屏预览（支持左右滑动）
+const previewGalleryImage = (idx, list) => {
+  const urls = (list || []).map(p => p.url);
+  if (!urls.length) return;
+  uni.previewImage({ urls, current: idx });
 };
 
 const getStatusClass = (status) => {
@@ -972,6 +1063,28 @@ const contractSummary = computed(() => {
     total: contractAmt + changeAmt,
   };
 });
+
+// 应收统计 tab 用的细分计算（基于 changeList）
+const increaseCount = computed(() => changeList.value.filter(c => c.change_type === 'increase').length);
+const decreaseCount = computed(() => changeList.value.filter(c => c.change_type === 'decrease').length);
+const filteredChanges = computed(() => {
+  let arr = changeList.value;
+  if (changeFilter.value === 'increase') arr = arr.filter(c => c.change_type === 'increase');
+  if (changeFilter.value === 'decrease') arr = arr.filter(c => c.change_type === 'decrease');
+  // 按"审核时间/提交时间"倒序：最新的在最上面（大王指示）
+  return arr.slice().sort((a, b) => {
+    const ta = new Date(a.reviewed_at || a.submitted_at || a.created_at || 0).getTime();
+    const tb = new Date(b.reviewed_at || b.submitted_at || b.created_at || 0).getTime();
+    return tb - ta;
+  });
+});
+
+// 应收统计 tab 明细列表的「时间」字段格式化（优先审核时间，其次提交/更新时间）
+const formatChangeTime = (ch) => {
+  const t = ch.reviewed_at || ch.submitted_at || ch.updated_at || ch.created_at;
+  if (!t) return '—';
+  try { return String(t).replace('T', ' ').substring(0, 16); } catch { return String(t); }
+};
 
 const loadContracts = async () => {
   if (!projectId.value) return;
@@ -1373,9 +1486,11 @@ const loadFinanceData = async () => {
     // 加载应收统计
     const summaryRes = await uni.request({ url: `/api/finance/summary?project_id=${projectId.value}`, header: { Authorization: token } });
     if (summaryRes.data) {
+      const incT = Number(summaryRes.data.increase_total || 0);
+      const decT = Number(summaryRes.data.decrease_total || 0);
       financeSummary.value = {
         contract_amount: Number(summaryRes.data.contract_amount || 0),
-        change_total: Number(summaryRes.data.increase_total || 0) - Number(summaryRes.data.decrease_total || 0),
+        change_total: incT - decT,
         actual_receivable: Number(summaryRes.data.receivable || 0),
       };
     }
@@ -1597,7 +1712,7 @@ watch(curTab, (val) => {
     loadChanges();
   }
   if (val === 'gallery' && projectId.value) {
-    loadGalleryStats();
+    loadGalleryStats(); // 一次调用同时刷新分类统计 + 缩略图全量
   }
   if (val === 'accept' && projectId.value) {
     fetchAcceptances();
@@ -2413,6 +2528,67 @@ const goBack = () => {
 
 .finance-card.expense .finance-card-num { color: #991B1B; }
 
+/* 应收统计 tab 内的 3 列总览（合同+增项+减项 / 应收+已收+未收） */
+.finance-summary-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* 卡片底部说明文字（如「X 份已审核」「X 条已审核」） */
+.finance-card-sub {
+  display: block;
+  font-size: 11px;
+  color: #6B7280;
+  margin-top: 4px;
+}
+.finance-card.expense .finance-card-sub { color: #B45309; }
+.finance-card.income .finance-card-sub { color: #047857; }
+
+/* 实际应收（蓝色主调） */
+.finance-card.receivable-highlight {
+  background: linear-gradient(135deg, #DBEAFE, #BFDBFE);
+}
+.finance-card.receivable-highlight .finance-card-label { color: #1E3A5F; }
+.finance-card.receivable-highlight .finance-card-num { color: #1E3A5F; font-size: 18px; }
+
+/* 增减项过滤 tab */
+.change-filter {
+  display: inline-flex;
+  gap: 10px;
+  font-size: 12px;
+}
+.change-filter text {
+  padding: 4px 10px;
+  border-radius: 14px;
+  color: #6B7280;
+  background: #F3F4F6;
+}
+.change-filter text.active {
+  background: #1E3A5F;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 增减项类型徽章（➕ 增项 / ➖ 减项） */
+.change-type-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+.change-type-badge.badge-increase {
+  background: #D1FAE5;
+  color: #065F46;
+}
+.change-type-badge.badge-decrease {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+
+/* 增减项明细卡片复用合同 tab 中的 change-card 样式（项目原本就有） */
+
 /* 财务子Tab */
 .finance-sub-tabs {
   display: flex;
@@ -2502,6 +2678,53 @@ const goBack = () => {
 .gallery-cat-count {
   font-size: 11px;
   color: #9CA3AF;
+}
+
+/* 项目图库 tab 内的工具栏副标题 */
+.panel-subtitle {
+  font-size: 12px;
+  color: #9CA3AF;
+  margin-left: 8px;
+}
+.section-divider-sub {
+  font-size: 12px;
+  color: #1E3A5F;
+  font-weight: 500;
+}
+
+/* 项目图库缩略图 4 列网格（最新 20 张） */
+.gallery-thumbs-4col {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 0 12px 8px;
+}
+.thumb-cell {
+  position: relative;
+  aspect-ratio: 1;
+  background: #F3F4F6;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.thumb-cell:active { transform: scale(0.97); }
+.thumb-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.thumb-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.55));
+  padding: 10rpx 6rpx 6rpx;
+}
+.thumb-cat {
+  font-size: 10px;
+  color: #fff;
+  opacity: 0.9;
 }
 
 /* 底部操作 */

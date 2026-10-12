@@ -20,7 +20,9 @@
         />
         <text class="search-clear" v-if="keyword" @click="keyword = ''; doSearch()">✕</text>
       </view>
-      <!-- 筛选栏 -->
+    </view>
+
+    <!-- 筛选栏 -->
     <view class="filter-bar">
       <scroll-view class="filter-scroll" scroll-x>
         <view class="filter-tags">
@@ -122,7 +124,6 @@
       <text class="empty-text">{{ keyword ? '未找到匹配项目' : '暂无项目' }}</text>
     </view>
   </view>
-</view>
 </template>
 
 <script setup>

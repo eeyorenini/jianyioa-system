@@ -204,12 +204,20 @@ export const useUserStore = () => {
   //  - 管理员 → 全部可见
   //  - 未配置权限的角色 → 不限制（向后兼容，避免把老角色锁死）
   //  - 已配置权限 → 按权限判定，并兼容"仅模块名"的旧格式
+  //  - 兼容：`xxx:read_all` 自动覆盖 `xxx:read`（与后端 perm.js canAction 对齐，
+  //    修复财务等持有 read_all 但无 read 的角色看不到对应菜单的 bug）
   const canSee = (perm?: string): boolean => {
     if (!perm) return true;
     if (isAdminUser()) return true;
     if (!hasConfiguredPerms()) return true;
     const list = permissionList();
     if (list.includes("*") || list.includes(perm)) return true;
+    const colonIdx = perm.indexOf(":");
+    if (colonIdx > 0) {
+      const mod = perm.slice(0, colonIdx);
+      const action = perm.slice(colonIdx + 1);
+      if (action === "read" && list.includes(`${mod}:read_all`)) return true;
+    }
     const mod = perm.split(":")[0];
     return !!mod && list.includes(mod);
   };

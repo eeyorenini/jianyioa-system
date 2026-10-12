@@ -98,7 +98,7 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
-import { MY_WORK_ITEMS, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
+import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -150,9 +150,10 @@ const canSeeReport = computed(() => userStore.canSee('report:read'));
 
 const goPage = (url) => {
   if (url.startsWith('/pages')) {
-    // tabbar页面用switchTab
-    const tabbarPages = ['/pages/dispatch/list', '/pages/home/index', '/pages/mine/index']
-    if (tabbarPages.some(p => url.startsWith(p))) {
+    // tabBar 页面必须用 switchTab，否则 navigateTo 会静默失败
+    // 2026-10-12 修复：原硬编码只列 3 个 tabBar 页 → projects/inspection/purchase 三页跳转失效
+    const tabbarPages = TAB_BAR_PERMS.map((t) => t.path)
+    if (tabbarPages.some(p => url === p || url.startsWith(p + '?'))) {
       uni.switchTab({ url })
     } else {
       uni.navigateTo({ url })
