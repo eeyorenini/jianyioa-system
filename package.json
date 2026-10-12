@@ -8,7 +8,9 @@
     "dev": "node server/server.js",
     "build": "cd web && npm install && npm run build",
     "install:server": "cd server && npm install --legacy-peer-deps",
-    "install:web": "cd web && npm install --legacy-peer-deps"
+    "install:web": "cd web && npm install --legacy-peer-deps",
+    "build:mobile": "cd jianyioa-app/mobile && npm run build:h5 && rsync -a --delete dist/build/h5/ ../../server/public-mobile-h5/",
+    "build:all": "npm run build && npm run build:mobile"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

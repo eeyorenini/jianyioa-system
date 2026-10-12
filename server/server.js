@@ -7511,6 +7511,7 @@ app.get('/api/sms-templates', async (req, res) => {
 // POST 新建短信模板
 app.post('/api/sms-templates', checkPermission('sms:write'), async (req, res) => {
   try {
+    const userId = getUserId(req);
     const { name, content, variables } = req.body;
     const result = await db.prepare(
       'INSERT INTO sms_templates (name, content, variables, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())'
@@ -7523,13 +7524,26 @@ app.post('/api/sms-templates', checkPermission('sms:write'), async (req, res) =>
 });
 
 // PUT 更新短信模板
+// 2026-10-12 修复：
+//   1) 之前 `addLog(userId, ...)` 引用外层 userId，无定义 → ReferenceError 500；现补上 const userId = getUserId(req);
+//   2) sign_name / aliyun_template_code 不再由本路由更新——这两个字段只由同步接口 /api/sms-templates/sync-aliyun 写，
+//      前端编辑表单不带这俩字段（form 只有 name/content/is_active），原实现 `sign_name || null` 会把已同步
+//      到阿里云的 sign_name/code 清成 null，造成已同步模板丢失。下次发短信将找不到对应阿里云模板。
 app.put('/api/sms-templates/:id', checkPermission('sms:write'), async (req, res) => {
   try {
-    const { name, content, variables, is_active, sign_name, aliyun_template_code } = req.body;
-    await db.prepare(
-      'UPDATE sms_templates SET name=?, content=?, variables=?, is_active=?, sign_name=?, aliyun_template_code=?, updated_at=NOW() WHERE id=?'
-    ).run([name, content, variables || null, is_active !== undefined ? is_active : 1, sign_name || null, aliyun_template_code || null, req.params.id]);
-    await addLog(userId, '', '编辑', '短信模板', parseInt(req.params.id), name, `更新短信模板: ${name}`, req.ip);
+    const userId = getUserId(req);
+    const { name, content, variables, is_active } = req.body;
+    const fields = [];
+    const params = [];
+    if (name !== undefined) { fields.push('name=?'); params.push(name); }
+    if (content !== undefined) { fields.push('content=?'); params.push(content); }
+    if (variables !== undefined) { fields.push('variables=?'); params.push(variables); }
+    if (is_active !== undefined) { fields.push('is_active=?'); params.push(is_active ? 1 : 0); }
+    if (!fields.length) return res.json({ code: 0, message: '无更新内容' });
+    fields.push('updated_at=NOW()');
+    params.push(req.params.id);
+    await db.prepare(`UPDATE sms_templates SET ${fields.join(', ')} WHERE id=?`).run(params);
+    await addLog(userId, '', '编辑', '短信模板', parseInt(req.params.id), name || '', `更新短信模板: ${name || ''}`, req.ip);
     res.json({ message: '短信模板更新成功' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -9747,13 +9761,13 @@ app.get('/api/todo/center', async (req, res) => {
 
     // v2.3.1 §7.3：home 统计/列表口径严格按"我能看到的项目"
     //   - admin → 看全部（特殊）
-    //   - finance:read_all（财务）→ 看全部（金额业务需要全局）
-    //   - project:read_all → 看全部
+    //   - project:read_all 且非财务角色 → 看全部（经理/监理等需要全局项目提醒）
+    //   - 财务（finance:read_all）→ 按 relatedIds 过滤（财务只关心金额，不关心项目节点进度；财务员工均无项目关联 → 自然返空）
     //   - 其他 → 仅关联项目集合 relatedIds
     //   - 无 project 权限 → 全空
-    const projectAllScope = admin
-      || perms.includes('finance:read_all')
-      || perms.includes('project:read_all');
+    // 2026-10-12 修复：原 `|| perms.includes('finance:read_all')` 把财务误豁免 → 财务首页出现与金额业务无关的节点/巡检提醒；现改为反向排除。
+    const projectAllScope = (admin || perms.includes('project:read_all'))
+      && !perms.includes('finance:read_all');
     const homeProjectIds = projectAllScope
       ? null  // null = 不加项目过滤
       : (relatedIds && relatedIds.length ? relatedIds : [-1]);

@@ -5,15 +5,31 @@
 
 set -e
 
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+# 探测 pm2/node 路径（兼容 nvm / brew / 手工安装 场景）
+detect_bin() {
+  local name="$1"
+  if [ -n "${!name}" ]; then echo "${!name}"; return; fi
+  if [ -x "$HOME/.nvm/versions/node/$(node -v 2>/dev/null | sed 's/^v//')/bin/$name" ]; then
+    echo "$HOME/.nvm/versions/node/$(node -v 2>/dev/null | sed 's/^v//')/bin/$name"
+    return
+  fi
+  if [ -x "/usr/local/bin/$name" ]; then echo "/usr/local/bin/$name"; return; fi
+  command -v "$name" 2>/dev/null || which "$name" 2>/dev/null
+}
 
 USER_NAME=$(whoami)
-PM2_BIN="$NVM_DIR/versions/node/v24.21.0/bin/pm2"
-NODE_BIN_DIR="$NVM_DIR/versions/node/v24.21.0/bin"
+PM2_BIN="$(detect_bin pm2)"
+NODE_BIN_DIR="$(dirname "$PM2_BIN")"
 HOME_DIR="$HOME"
 PM2_HOME="$HOME/.pm2"
 PLIST="$HOME/Library/LaunchAgents/com.PM2.plist"
+
+if [ -z "$PM2_BIN" ] || [ ! -x "$PM2_BIN" ]; then
+  echo "❌ 找不到 pm2 二进制，请先 npm i -g pm2 或手工安装"
+  exit 1
+fi
+
+echo "  pm2: $PM2_BIN"
 
 # 1. 先确保 dump.pm2 是最新的（开机按它恢复）
 echo "▶ pm2 save (固化当前进程列表)..."

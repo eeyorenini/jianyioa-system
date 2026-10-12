@@ -1,16 +1,36 @@
-// 建亿 OA · PM2 生态配置（绝对路径版，兼容 nvm/无 brew 场景）
+// 建亿 OA · PM2 生态配置（绝对路径版，自动探测 node/npm，兼容 nvm/brew 场景）
 // 启动: pm2 start ecosystem.config.js
 // 停止: pm2 stop ecosystem.config.js
 // 重载: pm2 reload ecosystem.config.js
 // 自启: pm2 save && pm2 startup (按提示执行输出的那条命令)
 
 const path = require('path');
+const fs = require('fs');
+const { execSync } = require('child_process');
 
 const ROOT = '/Users/gtamer/Desktop/jianyioa-system';
-// 用 nvm 当前版本（项目固定 nvm；如需换版本改这一行）
-const NVM_BIN = '/Users/gtamer/.nvm/versions/node/v24.21.0/bin';
-const NODE_BIN = `${NVM_BIN}/node`;
-const NPM_BIN = `${NVM_BIN}/npm`;
+
+// 自动探测 node/npm 路径（按优先级：环境变量覆盖 > nvm 当前版本 > /usr/local/bin > PATH）
+function detectBin(name) {
+  if (process.env[`${name.toUpperCase()}_BIN_OVERRIDE`]) {
+    return process.env[`${name.toUpperCase()}_BIN_OVERRIDE`];
+  }
+  const nvmBin = process.env.NVM_BIN;
+  if (nvmBin && fs.existsSync(`${nvmBin}/${name}`)) {
+    return `${nvmBin}/${name}`;
+  }
+  if (fs.existsSync(`/usr/local/bin/${name}`)) {
+    return `/usr/local/bin/${name}`;
+  }
+  try {
+    return execSync(`/usr/bin/env which ${name}`, { encoding: 'utf8' }).trim();
+  } catch (e) {
+    throw new Error(`未找到 ${name}，请先安装 Node.js 或设置 ${name.toUpperCase()}_BIN_OVERRIDE 环境变量`);
+  }
+}
+
+const NODE_BIN = detectBin('node');
+const NPM_BIN = detectBin('npm');
 
 module.exports = {
   apps: [

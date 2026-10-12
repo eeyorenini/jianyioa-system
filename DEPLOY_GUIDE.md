@@ -33,25 +33,25 @@ cp -R /tmp/jianyioa-mobile/mobile jianyioa-app/mobile
 
 ## 二、端口与入口（当前线上实例，**所有 v2.3.0 都要这么列**）
 
-| 端口 | 进程 / 服务 | 用途 | 谁访问 |
-|---|---|---|---|
-| **3002** | `node server/server.js` | 后端 API + 托管 PC 前端生产构建 + 托管移动端生产构建 `/m/` | 内网 |
-| **10086** | `npm run dev:h5`（uni/Vite dev） | 移动端开发模式（带 HMR） | 开发调试 |
-| **7779** | FRP → 本机 10086 | **外网访问移动端 dev** | 测试者浏览器 |
-| **7780** | FRP → 本机 3002 | **外网访问移动端生产构建** | 生产环境用户 |
-| **7002** | FRP → 本机 3002 | **外网访问后端 API** | 调试/直接打 API |
-| **35189** | FRP → 本机 5555 | PC 前端 dev (Vite dev 5555) | 开发调试（备用） |
-| **13306** | FRP → 本机 3306 | MySQL 数据库 | 直连开发 |
+| 端口        | 进程 / 服务                        | 用途                                      | 谁访问        |
+| --------- | ------------------------------ | --------------------------------------- | ---------- |
+| **3002**  | `node server/server.js`        | 后端 API + 托管 PC 前端生产构建 + 托管移动端生产构建 `/m/` | 内网         |
+| **10086** | `npm run dev:h5`（uni/Vite dev） | 移动端开发模式（带 HMR）                          | 开发调试       |
+| **7779**  | FRP → 本机 10086                 | **外网访问移动端 dev**                         | 测试者浏览器     |
+| **7780**  | FRP → 本机 3002                  | **外网访问移动端生产构建**                         | 生产环境用户     |
+| **7002**  | FRP → 本机 3002                  | **外网访问后端 API**                          | 调试/直接打 API |
+| **35189** | FRP → 本机 5555                  | PC 前端 dev (Vite dev 5555)               | 开发调试（备用）   |
+| **13306** | FRP → 本机 3306                  | MySQL 数据库                               | 直连开发       |
 
 **入口 URL 总览**：
 
-| 类型 | 本机 | 外网 |
-|---|---|---|
-| PC 管理后台 | `http://127.0.0.1:3002/` | `https://erp.fujinwanjia.com`（Apache 反代 3002） |
-| PC API | `http://127.0.0.1:3002/api/*` | `https://erp.fujinwanjia.com/api/*` |
-| 移动端生产构建（推荐） | `http://127.0.0.1:3002/m/` | `http://116.204.19.53:7780/` |
-| 移动端 dev（带 HMR） | `http://127.0.0.1:10086/m/` | `http://116.204.19.53:7779/` |
-| MySQL | `127.0.0.1:3306` | `116.204.19.53:13306`（FRP 暴露，**仅调试用**） |
+| 类型             | 本机                            | 外网                                            |
+| -------------- | ----------------------------- | --------------------------------------------- |
+| PC 管理后台        | `http://127.0.0.1:3002/`      | `https://erp.fujinwanjia.com`（Apache 反代 3002） |
+| PC API         | `http://127.0.0.1:3002/api/*` | `https://erp.fujinwanjia.com/api/*`           |
+| 移动端生产构建（推荐）    | `http://127.0.0.1:3002/m/`    | `http://116.204.19.53:7780/`                  |
+| 移动端 dev（带 HMR） | `http://127.0.0.1:10086/m/`   | `http://116.204.19.53:7779/`                  |
+| MySQL          | `127.0.0.1:3306`              | `116.204.19.53:13306`（FRP 暴露，**仅调试用**）        |
 
 ---
 
@@ -237,16 +237,16 @@ npm run build  # 输出到 web/dist/
 
 ### 6.3 关键代码改动（v2.3.0）
 
-| 文件 | 说明 |
-|---|---|
-| `web/src/stores/user.js` | Pinia store；登录即拉取权限；`can()` / `canAction()` 判定 |
-| `web/src/App.vue` | 左侧菜单按权限渲染（`menuConfig` + `visibleMenus`） |
-| `web/src/router/index.js` | 路由 meta + 守卫，无权限重定向 |
-| `web/src/utils/api.js` | `/api/my-permissions`、`/api/me` 接口 |
-| `web/src/views/Roles.vue` | 权限矩阵新增「薪资」列与 finance/department/quote 行；回填 bug 修复 |
-| `web/src/views/Employees.vue` | 薪资/身份证按 `canSeeSensitive` 显隐 |
-| `web/src/views/PersonalCenter.vue` | 用户信息读取走 user store（不再读错的 `userInfo` key） |
-| `web/src/views/PurchaseRequests.vue` | 权限从 store 读（不再读空的 `permissions` key） |
+| 文件                                   | 说明                                                |
+| ------------------------------------ | ------------------------------------------------- |
+| `web/src/stores/user.js`             | Pinia store；登录即拉取权限；`can()` / `canAction()` 判定    |
+| `web/src/App.vue`                    | 左侧菜单按权限渲染（`menuConfig` + `visibleMenus`）          |
+| `web/src/router/index.js`            | 路由 meta + 守卫，无权限重定向                               |
+| `web/src/utils/api.js`               | `/api/my-permissions`、`/api/me` 接口                |
+| `web/src/views/Roles.vue`            | 权限矩阵新增「薪资」列与 finance/department/quote 行；回填 bug 修复 |
+| `web/src/views/Employees.vue`        | 薪资/身份证按 `canSeeSensitive` 显隐                      |
+| `web/src/views/PersonalCenter.vue`   | 用户信息读取走 user store（不再读错的 `userInfo` key）          |
+| `web/src/views/PurchaseRequests.vue` | 权限从 store 读（不再读空的 `permissions` key）              |
 
 ---
 
@@ -285,19 +285,19 @@ npm run dev:h5  # 监听 10086
 
 ### 7.3 关键代码改动（v2.3.0）
 
-| 文件 | 说明 |
-|---|---|
-| `mobile/src/utils/permission.ts` | **新增**：权限映射中心；`applyRoleTabBar()`、`guardTab()`、`visibleEntries()`、`roleClass()` |
-| `mobile/src/stores/user.ts` | 改用 factory 函数（非 Pinia）；`isAdminUser()`/`can()`/`canAny()`/`canSee()`；`imp` 借权机制 |
-| `mobile/src/App.vue` | `onShow` 调 `applyRoleTabBar()`；`onLaunch` 包装 `uni.request` 注入 `x-user-id` |
-| `mobile/src/pages/home/index.vue` | 13 个快捷入口按权限过滤；角色样式从工具引入 |
-| `mobile/src/pages/mine/index.vue` | myWork 按权限计算；「数据报表」按 `report:read` 控制；删字符串硬编码 |
-| `mobile/src/pages/purchase/list.vue` | 权限走 `userStore.can()`；`guardTab` 兜底 |
-| `mobile/src/pages/inspection/list.vue` | `guardTab` 兜底 |
-| `mobile/src/pages/dispatch/list.vue` | `guardTab` 兜底 |
-| `mobile/src/pages/projects/detail.vue` | 合同/增减项审核权限改 `can()` |
-| `mobile/src/manifest.json` | 加 `h5.router.base = "/m/"`、`h5.devServer` proxy 配置 |
-| `mobile/vite.config.ts` | `/api`、`/uploads`、`/static` 三个 proxy + **新增** `/m/uploads`、`/m/static` proxy（`rewrite` 剥前缀） |
+| 文件                                     | 说明                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `mobile/src/utils/permission.ts`       | **新增**：权限映射中心；`applyRoleTabBar()`、`guardTab()`、`visibleEntries()`、`roleClass()`             |
+| `mobile/src/stores/user.ts`            | 改用 factory 函数（非 Pinia）；`isAdminUser()`/`can()`/`canAny()`/`canSee()`；`imp` 借权机制             |
+| `mobile/src/App.vue`                   | `onShow` 调 `applyRoleTabBar()`；`onLaunch` 包装 `uni.request` 注入 `x-user-id`                   |
+| `mobile/src/pages/home/index.vue`      | 13 个快捷入口按权限过滤；角色样式从工具引入                                                                     |
+| `mobile/src/pages/mine/index.vue`      | myWork 按权限计算；「数据报表」按 `report:read` 控制；删字符串硬编码                                               |
+| `mobile/src/pages/purchase/list.vue`   | 权限走 `userStore.can()`；`guardTab` 兜底                                                         |
+| `mobile/src/pages/inspection/list.vue` | `guardTab` 兜底                                                                               |
+| `mobile/src/pages/dispatch/list.vue`   | `guardTab` 兜底                                                                               |
+| `mobile/src/pages/projects/detail.vue` | 合同/增减项审核权限改 `can()`                                                                         |
+| `mobile/src/manifest.json`             | 加 `h5.router.base = "/m/"`、`h5.devServer` proxy 配置                                          |
+| `mobile/vite.config.ts`                | `/api`、`/uploads`、`/static` 三个 proxy + **新增** `/m/uploads`、`/m/static` proxy（`rewrite` 剥前缀） |
 
 ---
 
@@ -313,39 +313,39 @@ lsof -nP -iTCP:10086 -sTCP:LISTEN
 
 ### 8.2 必查 URL
 
-| URL | 预期 |
-|---|---|
-| `http://127.0.0.1:3002/` | 200，PC 登录页 |
-| `http://127.0.0.1:3002/m/` | 200，移动端生产构建入口 |
-| `http://127.0.0.1:3002/api/me` | 401（未登录） |
-| `http://127.0.0.1:3002/static/tab-home.png` | 200，~175B（tabBar 真图） |
-| `http://127.0.0.1:10086/m/` | 200，dev 模式（带 HMR） |
-| `http://127.0.0.1:10086/m/static/tab-home.png` | 200，~175B（dev 真图） |
+| URL                                            | 预期                   |
+| ---------------------------------------------- | -------------------- |
+| `http://127.0.0.1:3002/`                       | 200，PC 登录页           |
+| `http://127.0.0.1:3002/m/`                     | 200，移动端生产构建入口        |
+| `http://127.0.0.1:3002/api/me`                 | 401（未登录）             |
+| `http://127.0.0.1:3002/static/tab-home.png`    | 200，~175B（tabBar 真图） |
+| `http://127.0.0.1:10086/m/`                    | 200，dev 模式（带 HMR）    |
+| `http://127.0.0.1:10086/m/static/tab-home.png` | 200，~175B（dev 真图）    |
 
 ### 8.3 常见错误
 
-| 症状 | 原因 | 修法 |
-|---|---|---|
-| `ERR_CONNECTION_REFUSED 3002` | 后端没跑 | `cd server && node server.js` |
-| `Cannot find module 'uni-h5-vue'` | 移动端没装依赖 | `cd jianyioa-app/mobile && npm install` |
-| `ECONNREFUSED 127.0.0.1:3306` | DB_HOST 配错 | 检查 `.env` 里的 `DB_HOST` |
-| 移动端 dev `/m/uploads/xxx.png` 返 821B HTML | vite.config proxy 没生效 | 重启 `npm run dev:h5` |
-| 移动端 dev 404 tabBar 图标 | Desktop `mobile/static/` 缺失 | 从 `server/public-mobile-h5/static/` 复制到 `jianyioa-app/mobile/static/` |
-| 登录返 `success: false` | admin 密码错（不是默认的 `admin123`） | 看 `server/init.sql` 里 admin 账号的初始 password 字段 |
-| 角色菜单全空 | 没点"个人中心"刷新权限 | 重新登录或调用 `/api/me` |
+| 症状                                       | 原因                          | 修法                                                                    |
+| ---------------------------------------- | --------------------------- | --------------------------------------------------------------------- |
+| `ERR_CONNECTION_REFUSED 3002`            | 后端没跑                        | `cd server && node server.js`                                         |
+| `Cannot find module 'uni-h5-vue'`        | 移动端没装依赖                     | `cd jianyioa-app/mobile && npm install`                               |
+| `ECONNREFUSED 127.0.0.1:3306`            | DB_HOST 配错                  | 检查 `.env` 里的 `DB_HOST`                                                |
+| 移动端 dev `/m/uploads/xxx.png` 返 821B HTML | vite.config proxy 没生效       | 重启 `npm run dev:h5`                                                   |
+| 移动端 dev 404 tabBar 图标                    | Desktop `mobile/static/` 缺失 | 从 `server/public-mobile-h5/static/` 复制到 `jianyioa-app/mobile/static/` |
+| 登录返 `success: false`                     | admin 密码错（不是默认的 `admin123`） | 看 `server/init.sql` 里 admin 账号的初始 password 字段                         |
+| 角色菜单全空                                   | 没点"个人中心"刷新权限                | 重新登录或调用 `/api/me`                                                     |
 
 ---
 
 ## 九、关键账号（init.sql 默认）
 
-| 角色 | 用户名 | 初始密码 | 备注 |
-|---|---|---|---|
-| 超级管理员 | admin | 看 `server/init.sql` 的 `employees.password` 字段（明文存） | 第一次登录后建议改密码 |
-| 项目经理 | project_manager_* | 同上 | |
-| 设计师 | designer_* | 同上 | |
-| 监理 | supervisor_* | 同上 | |
-| 财务 | finance_* | 同上 | |
-| 业主（客户端） | 手机号 | 手机号后 6 位 | 通过 `/api/customers/login` 登录 |
+| 角色      | 用户名                | 初始密码                                               | 备注                           |
+| ------- | ------------------ | -------------------------------------------------- | ---------------------------- |
+| 超级管理员   | admin              | 看 `server/init.sql` 的 `employees.password` 字段（明文存） | 第一次登录后建议改密码                  |
+| 项目经理    | project_manager\_* | 同上                                                 |                              |
+| 设计师     | designer\_*        | 同上                                                 |                              |
+| 监理      | supervisor\_*      | 同上                                                 |                              |
+| 财务      | finance\_*         | 同上                                                 |                              |
+| 业主（客户端） | 手机号                | 手机号后 6 位                                           | 通过 `/api/customers/login` 登录 |
 
 **注意**：v2.3.0 之前登录响应回传明文 password（已修复/待修复，登录响应目前仍包含 password 字段，但建议生产前剔除）。
 
@@ -364,13 +364,13 @@ lsof -nP -iTCP:10086 -sTCP:LISTEN
 
 ## 十一、版本历史
 
-| 版本 | 日期 | 主要内容 |
-|---|---|---|
-| **v2.3.0** | 2026-10-11 | 权限链路完整化 + 移动端生产构建托管 + 端到端性能修复 |
-| v2.2.2 | 2026-10-10 | 管理员借权 / 待办中心 / 采购报销流程 |
-| v2.2.1 | 2026-10-10 | x-user-role 信任头修复 / 借权登录 |
-| v2.1.x | 2026-09-20 之前 | 派工 / 节点模板 / 甘特图等 |
-| v1.0.1 | 2026-06-18 | 初始版本 |
+| 版本         | 日期            | 主要内容                          |
+| ---------- | ------------- | ----------------------------- |
+| **v2.3.0** | 2026-10-11    | 权限链路完整化 + 移动端生产构建托管 + 端到端性能修复 |
+| v2.2.2     | 2026-10-10    | 管理员借权 / 待办中心 / 采购报销流程         |
+| v2.2.1     | 2026-10-10    | x-user-role 信任头修复 / 借权登录      |
+| v2.1.x     | 2026-09-20 之前 | 派工 / 节点模板 / 甘特图等              |
+| v1.0.1     | 2026-06-18    | 初始版本                          |
 
 ---
 
