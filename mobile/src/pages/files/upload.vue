@@ -181,7 +181,7 @@ const submit = () => {
     if (description.value) formData.append('description', description.value);
 
     xhr.open('POST', '/api/project-files');
-    xhr.setRequestHeader('x-user-id', uni.getStorageSync('userId') || '');
+    xhr.setRequestHeader('x-user-id', String(uni.getStorageSync('userInfo')?.id || ''));
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         progress.value = Math.round((e.loaded / e.total) * 100);

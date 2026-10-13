@@ -426,6 +426,11 @@ const handleQuick = (item) => {
     case 'addressbook': uni.navigateTo({ url: '/pages/addressbook/addressbook' }); break;
     case 'customer': uni.navigateTo({ url: '/pages/customers/customers' }); break;
     case 'gantt': openGanttPicker(); break;
+    default:
+      // 兜底：支持 url 字段直接跳转（如"项目文件"等 v2.3.4 新增入口）
+      if (item.url) {
+        uni.navigateTo({ url: item.url, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } });
+      }
   }
 };
 
