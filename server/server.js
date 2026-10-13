@@ -4658,25 +4658,53 @@ app.get('/api/messages', async (req, res) => {
       const offset = (parseInt(page) - 1) * parseInt(pageSize);
       list = all.slice(offset, offset + parseInt(pageSize));
     } else {
-      // 员工：查 MySQL messages 表（修复：sendPurchaseNotification 写 MySQL，读取也要从 MySQL 读）
-      let where = 'WHERE user_id = ?';
-      const params = [userId];
+      // 员工：合并查 messages + notifications 两表（修复：notifyProject 等同时写两表，
+      // 列表只查 messages 导致 notifications 表 70+ 条永远不可见；unread-count 端点又算两表所以红点一直在）
+      // 1) 取员工 phone（用于 notifications 表 receiver_phone 匹配）
+      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+      const empPhone = empRows[0]?.phone || null;
 
-      if (type) { where += ' AND type = ?'; params.push(type); }
-      if (is_read !== undefined && is_read !== '') { where += ' AND is_read = ?'; params.push(parseInt(is_read)); }
-      if (keyword) { where += ' AND (title LIKE ? OR content LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
+      // 2) messages WHERE user_id=?；related_id alias 成 source_id 让前端 getTargetPath 兼容
+      let msgSql = `SELECT id, user_id, user_name, title, content, type, related_id AS source_id, related_type AS source_type, is_read, push_status, created_at, 'messages' AS src FROM messages WHERE user_id = ?`;
+      const msgParams = [userId];
 
+      if (type) { msgSql += ' AND type = ?'; msgParams.push(type); }
+      if (is_read !== undefined && is_read !== '') { msgSql += ' AND is_read = ?'; msgParams.push(parseInt(is_read)); }
+      if (keyword) { msgSql += ' AND (title LIKE ? OR content LIKE ?)'; msgParams.push(`%${keyword}%`, `%${keyword}%`); }
+
+      // 3) notifications WHERE receiver_phone=?（与 unread-count 端点口径一致）
+      let notifSql = '';
+      let notifParams = [];
+      if (empPhone) {
+        notifSql = `SELECT id, NULL AS user_id, receiver_name AS user_name, title, content, type, source_id, source_type, is_read, channels AS push_status, created_at, 'notifications' AS src FROM notifications WHERE receiver_phone = ?`;
+        notifParams = [empPhone];
+        if (type) { notifSql += ' AND type = ?'; notifParams.push(type); }
+        if (is_read !== undefined && is_read !== '') { notifSql += ' AND is_read = ?'; notifParams.push(parseInt(is_read)); }
+        if (keyword) { notifSql += ' AND (title LIKE ? OR content LIKE ?)'; notifParams.push(`%${keyword}%`, `%${keyword}%`); }
+      }
+
+      // 4) UNION + 排序 + 分页（注意 MySQL 不支持在 UNION 外 LIMIT 子查询里的 ORDER BY，
+      //    所以 LIMIT 放在最外层；ORDER BY created_at DESC 用括号包住子查询）
       const offset = (parseInt(page) - 1) * parseInt(pageSize);
-      const [rows] = await pool.query(
-        `SELECT * FROM messages ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-        [...params, parseInt(pageSize), offset]
-      );
-      const [countResult] = await pool.query(
-        `SELECT COUNT(*) as total FROM messages ${where}`,
-        params
-      );
+      let unionSql, unionParams;
+      if (notifSql) {
+        unionSql = `SELECT * FROM ((${msgSql}) UNION ALL (${notifSql})) t ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+        unionParams = [...msgParams, ...notifParams, parseInt(pageSize), offset];
+      } else {
+        unionSql = `SELECT * FROM (${msgSql}) t ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+        unionParams = [...msgParams, parseInt(pageSize), offset];
+      }
+      const [rows] = await pool.query(unionSql, unionParams);
       list = rows;
-      total = countResult[0].total;
+
+      // 5) 总数（两表分别 COUNT 后相加）
+      const [c1] = await pool.query(`SELECT COUNT(*) AS total FROM (${msgSql}) t`, msgParams);
+      let totalAll = c1[0].total;
+      if (notifSql) {
+        const [c2] = await pool.query(`SELECT COUNT(*) AS total FROM (${notifSql}) t`, notifParams);
+        totalAll += c2[0].total;
+      }
+      total = totalAll;
     }
     
     res.json({ list, total, page: parseInt(page), page_size: parseInt(pageSize) });
@@ -4701,9 +4729,16 @@ app.get('/api/messages/unread-count', async (req, res) => {
       const [row] = await db.prepare('SELECT COUNT(*) as count FROM notifications WHERE receiver_phone = ? AND is_read = 0').all(customer.phone);
       count = row.count;
     } else {
-      // 员工：查 MySQL messages 表未读数
-      const [row] = await pool.query('SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND is_read = 0', [userId]);
-      count = row[0].count;
+      // 员工：合并查 messages + notifications 两表（与 /api/notifications/unread-count 端点口径一致）
+      const [empRow] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+      const empPhone = empRow[0]?.phone || null;
+      const [mRow] = await pool.query('SELECT COUNT(*) AS cnt FROM messages WHERE user_id = ? AND is_read = 0', [userId]);
+      let total = Number(mRow[0].cnt || 0);
+      if (empPhone) {
+        const [nRow] = await pool.query('SELECT COUNT(*) AS cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [empPhone]);
+        total += Number(nRow[0].cnt || 0);
+      }
+      count = total;
     }
     
     res.json({ count });
@@ -4725,8 +4760,12 @@ app.put('/api/messages/:id/read', async (req, res) => {
       // 客户：更新 notifications 表
       await db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?').run(req.params.id, customer.phone);
     } else {
-      // 员工：更新 MySQL messages 表
+      // 员工：两表都尝试 UPDATE（哪张表有改哪张；前端不需要知道）
       await pool.query('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, userId]);
+      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+      if (empRows[0]?.phone) {
+        await pool.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?', [req.params.id, empRows[0].phone]);
+      }
     }
     res.json({ message: '已标记已读' });
   } catch (err) {
@@ -4747,8 +4786,13 @@ app.put('/api/messages/read-all', async (req, res) => {
       // 客户：更新 notifications 表
       await db.prepare('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?').run(customer.phone);
     } else {
-      // 员工：更新 messages 表
-      await db.prepare('UPDATE messages SET is_read = 1 WHERE user_id = ?').run(userId);
+      // 员工：同时更新 messages + notifications 两表（修复：原来只改 messages，notifications 表的 is_read 永远不变，
+      // 导致首页 unread-count 红点永远显示，因为 unread-count 端点合并查两表）
+      await pool.query('UPDATE messages SET is_read = 1 WHERE user_id = ?', [userId]);
+      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
+      if (empRows[0]?.phone) {
+        await pool.query('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?', [empRows[0].phone]);
+      }
     }
     res.json({ message: '已全部标记已读' });
   } catch (err) {
