@@ -52,7 +52,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.2.2</div>
+      <div class="sidebar-version">v {{ appVersion }}</div>
     </el-aside>
 
     <!-- 移动端侧边栏（从左侧滑出） -->
@@ -81,7 +81,7 @@
           </el-sub-menu>
         </template>
       </el-menu>
-      <div class="sidebar-version">v 2.2.2</div>
+      <div class="sidebar-version">v {{ appVersion }}</div>
     </div>
 
     <!-- 主内容区 -->
@@ -119,6 +119,10 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
 import { OfficeBuilding, User, Fold, Expand } from '@element-plus/icons-vue'
+
+// 2026-10-13：版本号由 vite.config.js 的 define 在 build 时从 web/package.json 自动注入
+// （根治"侧边栏硬编码 v 2.2.2"漏改问题，下次发版自动同步）
+const appVersion = __APP_VERSION__
 
 const route = useRoute()
 const router = useRouter()
