@@ -4,8 +4,12 @@
     <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">消息通知</text>
-      <text v-if="hasUnread" class="nav-action" @click="markAllRead">全部已读</text>
-      <view v-else class="nav-placeholder"></view>
+      <!-- 按钮永远显示：没未读时置灰，避免"按钮不见了"的错觉 -->
+      <text
+        class="nav-action"
+        :class="{ 'nav-action-disabled': !hasUnread }"
+        @click="markAllRead"
+      >全部已读</text>
     </view>
 
     <!-- 下拉刷新 -->
@@ -91,9 +95,15 @@ const typeConfig = (type) => {
   const config = {
     contract_created: { icon: '📄', color: '#409EFF', text: '新合同', bgColor: '#409EFF11' },
     contract_updated: { icon: '📝', color: '#409EFF', text: '合同变更', bgColor: '#409EFF11' },
+    contract_uploaded: { icon: '📤', color: '#409EFF', text: '合同上传', bgColor: '#409EFF11' },
+    contract_approved: { icon: '✅', color: '#67C23A', text: '合同审核通过', bgColor: '#67C23A11' },
+    contract_change_created: { icon: '📝', color: '#E6A23C', text: '增减项', bgColor: '#E6A23C11' },
+    contract_change_approved: { icon: '✅', color: '#67C23A', text: '增减项审核通过', bgColor: '#67C23A11' },
     project_created: { icon: '🏗️', color: '#67C23A', text: '新项目', bgColor: '#67C23A11' },
     project_status_changed: { icon: '🔄', color: '#67C23A', text: '项目状态', bgColor: '#67C23A11' },
     node_status_changed: { icon: '📍', color: '#E6A23C', text: '节点状态', bgColor: '#E6A23C11' },
+    node_in_progress: { icon: '⏳', color: '#E6A23C', text: '节点进行中', bgColor: '#E6A23C11' },
+    node_completed: { icon: '🎯', color: '#67C23A', text: '节点完成', bgColor: '#67C23A11' },
     project_progress: { icon: '📊', color: '#909399', text: '项目进展', bgColor: '#90939911' },
     inspection_submit: { icon: '🔍', color: '#F56C6C', text: '巡检报告', bgColor: '#F56C6C11' },
     acceptance_submit: { icon: '✅', color: '#409EFF', text: '验收提交', bgColor: '#409EFF11' },
@@ -103,11 +113,16 @@ const typeConfig = (type) => {
     approval_result: { icon: '🎯', color: '#67C23A', text: '审批结果', bgColor: '#67C23A11' },
     notice_published: { icon: '📢', color: '#909399', text: '公告', bgColor: '#90939911' },
     customer_follow: { icon: '👤', color: '#409EFF', text: '客户跟进', bgColor: '#409EFF11' },
+    collection_created: { icon: '📞', color: '#E6A23C', text: '新建催收', bgColor: '#E6A23C11' },
+    collection_confirmed: { icon: '💵', color: '#67C23A', text: '催收回款确认', bgColor: '#67C23A11' },
     invoice_created: { icon: '💰', color: '#67C23A', text: '发票', bgColor: '#67C23A11' },
+    // 采购系列（purchase 模块历史上 type 字段命名混乱，"采购"中文 type 也存在过）
+    purchase: { icon: '🛒', color: '#E6A23C', text: '采购', bgColor: '#E6A23C11' },
+    '采购': { icon: '🛒', color: '#E6A23C', text: '采购', bgColor: '#E6A23C11' },
     system_notice: { icon: '⚙️', color: '#909399', text: '系统通知', bgColor: '#90939911' },
     inapp: { icon: '🔔', color: '#909399', text: '通知', bgColor: '#90939911' },
   }
-  return config[type] || { icon: '📌', color: '#909399', text: type || '通知', bgColor: '#90939911' }
+  return config[type] || { icon: '📌', color: '#909399', text: '通知', bgColor: '#90939911' }
 }
 
 // 跳转路由映射
@@ -266,8 +281,12 @@ const goBack = () => {
 // 是否存在未读消息（决定"全部已读"按钮显隐）
 const hasUnread = computed(() => messages.value.some(m => !m.is_read))
 
-// 一键全部已读（2026-10-12）
+// 一键全部已读（2026-10-12；2026-10-13 按钮永远显示，无未读时给"已全部已读"轻提示避免误以为按钮丢失）
 function markAllRead() {
+  if (!hasUnread.value) {
+    uni.showToast({ title: '已全部已读', icon: 'none' })
+    return
+  }
   uni.showModal({
     title: '全部已读',
     content: '确定把所有消息标为已读？',
@@ -402,5 +421,10 @@ const refreshUnreadBadge = () => {
   color: #fff;
   min-width: 40px;
   text-align: right;
+}
+
+/* 2026-10-13：按钮无未读时置灰（保持可见以避免"按钮不见了"错觉） */
+.nav-action-disabled {
+  color: rgba(255, 255, 255, 0.4);
 }
 </style>
