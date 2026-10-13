@@ -1,10 +1,12 @@
 # 构建产物
-web/dist/
+# v2.3.5 开始追踪 dist 进仓库（4 行 ignore 删除）：
+#   - web/dist/                PC 前端 vite build 产物（3.2M）
+#   - server/public-mobile-h5/ mobile H5 Express 部署副本（1.5M，与 jianyioa-app/mobile/dist/build/h5/ 内容一致）
+#   - jianyioa-app/mobile/dist/  mobile uni-app 构建原产物（mobile 子仓库内追踪，父仓这两行其实无效；保留删除以保持原意）
+#   - jianyioa-app/mobile/dist/build/h5/ 同上，更精确写法
+# web/dist_*/ 和 web/dist_prev_*/ 仍 ignore：备份目录不进
 web/dist_*/
 web/dist_prev_*/
-server/public-mobile-h5/
-jianyioa-app/mobile/dist/
-jianyioa-app/mobile/dist/build/h5/
 web/vite.config.js.timestamp-*.mjs
 
 # 系统文件
