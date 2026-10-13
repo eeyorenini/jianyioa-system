@@ -9,7 +9,8 @@ lerna-debug.log*
 
 node_modules
 .DS_Store
-dist
+# v2.3.5 开始追踪 dist 进仓库（mobile 子仓库内跟踪 H5 build 产物）
+# dist
 *.local
 
 # Editor directories and files
