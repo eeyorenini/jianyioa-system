@@ -1,0 +1,1 @@
+import{a5 as r}from"./index-q-GCsfsO.js";function t(t){return new Promise((a,e)=>{r({url:"/api/upload-image",filePath:t,name:"file",success:r=>{try{const t=JSON.parse(r.data),s=t.url||t.path||"";s?a(s):e(new Error("上传返回数据无 url"))}catch(t){e(new Error("解析上传响应失败"))}},fail:r=>e(r)})})}function a(r){return r?r.startsWith("http")||r.startsWith("/")?r:"/"+r:""}export{a as g,t as u};
