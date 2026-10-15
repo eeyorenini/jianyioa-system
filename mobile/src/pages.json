@@ -253,6 +253,13 @@
       }
     },
     {
+      "path": "pages/finance/dashboard",
+      "style": {
+        "navigationBarTitleText": "公司财务大盘",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/finance/add",
       "style": {
         "navigationBarTitleText": "新建收支",

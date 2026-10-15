@@ -578,7 +578,7 @@ const goInspections = () => {
 };
 
 const goFinance = () => {
-  uni.navigateTo({ url: '/pages/finance/list' });
+  uni.navigateTo({ url: '/pages/finance/dashboard' });
 };
 
 const goTodo = (todo) => {

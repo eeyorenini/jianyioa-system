@@ -1146,16 +1146,21 @@ const goPurchaseAdd = () => {
   uni.navigateTo({ url: `/pages/purchase/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
 };
 
+// v2.3.6 hotfix 10-15：合同金额优先用 loadFinanceData 的 financeSummary（接口口径已修复），
+// 否则回退到 contractList 计算。改前：直接读 contractList.value（contracts 表里 project_id 全 NULL）→ 合同金额 0 → 总价变成 增减项净额（负数）。
 const contractSummary = computed(() => {
-  // 只统计已审核通过的合同
-  const contractAmt = contractList.value
-    .filter(c => c.review_status === 'approved')
-    .reduce((s, c) => s + Number(c.contract_amount || 0), 0);
+  // 增减项（来自 contract_changes 表，数据完整）
   const changeAmt = changeList.value
     .filter(ch => ch.status === 'approved')
     .reduce((s, ch) => {
       return s + (ch.change_type === 'increase' ? Number(ch.amount || 0) : -Number(ch.amount || 0));
     }, 0);
+  // 合同金额：优先用 financeSummary（已修好），否则用 contractList 兜底
+  const contractAmtFromFinance = Number(financeSummary.value?.contract_amount || 0);
+  const contractAmtFromList = contractList.value
+    .filter(c => c.review_status === 'approved')
+    .reduce((s, c) => s + Number(c.contract_amount || 0), 0);
+  const contractAmt = contractAmtFromFinance > 0 ? contractAmtFromFinance : contractAmtFromList;
   return {
     contract: contractAmt,
     change: changeAmt,
@@ -1678,8 +1683,10 @@ const fetchLogs = async () => {
       header: { Authorization: token },
     });
     if (Array.isArray(res.data)) {
-      // 过滤掉无内容的日志
-      logs.value = res.data.filter(log => log.content);
+      // v2.3.6 hotfix 10-15：去掉"过滤掉无内容的"前端 filter，保持与 PC 端一致
+      // 之前：filter(log => log.content) → 只显示有 content 的（id=63 全空、id=66 有图无文都被过滤）
+      // 现在：显示所有日志，空 section 由 template 的 v-if="log.content" 自动隐藏
+      logs.value = res.data;
     }
   } catch (e) {
     console.error('加载日志失败:', e);
