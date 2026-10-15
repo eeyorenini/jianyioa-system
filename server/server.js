@@ -13,7 +13,7 @@ const https = require('https');
 const fs = require('fs');
 const multer = require('multer');
 const os = require('os');
-const { spawnSync } = require('child_process');
+const { spawnSync, spawn } = require('child_process');
 const puppeteer = require('puppeteer');
 
 // 权限核心（v2.3.1 P2）—— 替代旧 checkPermission 实现，
@@ -2812,6 +2812,7 @@ app.get('/api/project-logs', async (req, res) => {
       }
     }
 
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
     const countStmt = db.prepare(`SELECT COUNT(*) as total FROM project_logs l ${whereSql}`);
     const [{ total }] = await countStmt.all(...params);
 
@@ -3775,19 +3776,27 @@ app.put('/api/material-orders/:id', async (req, res) => {
 
 app.get('/api/dashboard/stats', async (req, res) => {
   const customerCount = await db.prepare("SELECT COUNT(*) as count FROM customers").get();
+  const customerThisMonth = await db.prepare("SELECT COUNT(*) as count FROM customers WHERE DATE_FORMAT(created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')").get();
   const contractCount = await db.prepare("SELECT COUNT(*) as count FROM contracts WHERE status = '已签订'").get();
+  // v2.3.6 hotfix（10-15）: 已签合同总额——Dashboard.vue 美化版副标用
+  const contractTotalAmount = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM contracts WHERE status = '已签订'").get();
   const projectCount = await db.prepare("SELECT COUNT(*) as count FROM projects WHERE status != '已竣工'").get();
+  // v2.3.6 hotfix（10-15）: 项目总数——Dashboard.vue 美化版副标用
+  const projectTotal = await db.prepare("SELECT COUNT(*) as count FROM projects").get();
   const pendingQuote = await db.prepare("SELECT COUNT(*) as count FROM quotes WHERE status = '待确认'").get();
-  
+
   const income = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'income'").get();
   const expense = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM finance WHERE type = 'expense'").get();
-  
+
   const lowStock = await db.prepare("SELECT COUNT(*) as count FROM materials WHERE quantity <= min_stock").get();
 
   res.json({
     customerCount: customerCount.count,
+    customerThisMonth: customerThisMonth.count,
     contractCount: contractCount.count,
+    contractTotalAmount: contractTotalAmount.total,
     projectCount: projectCount.count,
+    projectTotal: projectTotal.count,
     pendingQuote: pendingQuote.count,
     totalIncome: income.total,
     totalExpense: expense.total,
@@ -6487,6 +6496,291 @@ const projectFileUpload = multer({
   },
 });
 
+
+// ==================== 文件预览转换（CAD/Office → PDF）====================
+// v2.3.6 hotfix 10-15：补全 P1 健壮性 + P2 增强
+//   - Linux 路径（之前只写 macOS / Windows，服务器如果是 Linux 直接报错）
+//   - 启动探测工具是否安装（缺失返 503，不阻塞上传）
+//   - LibreOffice headless 处理 Office 文件（.doc/.docx/.xls/.xlsx/.ppt/.pptx）
+//   - 临时脚本 chmod 0o600（防本机其他用户偷看转换脚本）
+//   - 转换失败时通过 project_files 表存 preview_error，前端可见
+
+// 探测二进制是否安装（existsSync 比 spawn ENOENT 错误更友好）
+function whichBinary(candidates) {
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// 平台对应的 FreeCAD 路径候选（按优先级排序）
+function freecadCandidates() {
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/FreeCAD.app/Contents/MacOS/FreeCAD',
+      '/Applications/FreeCAD.app/Contents/Resources/bin/freecad',
+      '/usr/local/bin/freecad',
+      '/opt/homebrew/bin/freecad',
+    ];
+  }
+  if (process.platform === 'win32') {
+    return [
+      'C:\\Program Files\\FreeCAD\\bin\\FreeCAD.exe',
+      'C:\\Program Files\\FreeCAD 0.21\\bin\\FreeCAD.exe',
+      'C:\\Program Files (x86)\\FreeCAD\\bin\\FreeCAD.exe',
+    ];
+  }
+  // Linux
+  return [
+    '/usr/bin/freecad',
+    '/usr/local/bin/freecad',
+    '/opt/freecad/bin/freecad',
+    '/snap/bin/freecad',
+  ];
+}
+
+// 平台对应的 LibreOffice 路径候选
+function libreofficeCandidates() {
+  if (process.platform === 'darwin') {
+    return [
+      '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+      '/usr/local/bin/soffice',
+      '/opt/homebrew/bin/soffice',
+    ];
+  }
+  if (process.platform === 'win32') {
+    return [
+      'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
+      'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe',
+    ];
+  }
+  // Linux
+  return [
+    '/usr/bin/soffice',
+    '/usr/bin/libreoffice',
+    '/usr/local/bin/soffice',
+    '/opt/libreoffice/program/soffice',
+  ];
+}
+
+// 启动时探测工具是否安装（缓存结果）
+let _freecadPath = null;
+let _libreofficePath = null;
+let _toolsChecked = false;
+function getToolPath(tool) {
+  if (!_toolsChecked) {
+    _freecadPath = whichBinary(freecadCandidates());
+    _libreofficePath = whichBinary(libreofficeCandidates());
+    _toolsChecked = true;
+    console.log('[tools] FreeCAD:', _freecadPath || '❌ 未安装');
+    console.log('[tools] LibreOffice:', _libreofficePath || '❌ 未安装');
+  }
+  return tool === 'freecad' ? _freecadPath : _libreofficePath;
+}
+// v2.3.6 hotfix 10-15：server 启动时主动探测一次（让运维第一时间看到工具状态）
+// 不在 convertToPdf 里再探测（避免首次转换时才发现问题）
+(function probeToolsOnStartup() {
+  getToolPath('freecad');
+  getToolPath('libreoffice');
+  // stdout 被 buffer 时强制 flush（避免日志文件看不到启动探测）
+  if (process.stdout.write) process.stdout.write('');
+})();
+
+// ==================== CAD (DWG/DXF) 转 PDF 预览 ====================
+// 用 FreeCAD headless 模式将 CAD 文件转换为 PDF，供移动端预览
+function convertCadToPdf(inputPath, outputDir) {
+  return new Promise((resolve, reject) => {
+    const inputExt = path.extname(inputPath).toLowerCase();
+    if (!['.dwg', '.dxf'].includes(inputExt)) {
+      return reject(new Error('非 CAD 文件'));
+    }
+    const freecadBin = getToolPath('freecad');
+    if (!freecadBin) {
+      return reject(new Error('FreeCAD 未安装：请在服务器安装 FreeCAD（macOS: brew install freecad；Ubuntu: apt install freecad；Windows: 官网下载）'));
+    }
+    const pdfName = path.basename(inputPath, inputExt) + '.pdf';
+    const outputPdf = path.join(outputDir, pdfName);
+    if (fs.existsSync(outputPdf)) {
+      // 懒加载：PDF 已存在，跳过转换
+      console.log('[CAD] PDF 已存在，跳过转换:', outputPdf);
+      return resolve(outputPdf);
+    }
+
+    // FreeCAD Python 脚本：打开 CAD 文件并导出 PDF
+    const pyScript = [
+      'import sys',
+      'import FreeCAD',
+      'import os',
+      '',
+      'input_file = sys.argv[1]',
+      'output_file = sys.argv[2]',
+      '',
+      'doc = FreeCAD.newDocument()',
+      'try:',
+      '    # 尝试用 DXF 模块导入',
+      '    try:',
+      '        import importDXF',
+      '        importDXF.insert(input_file, "Doc")',
+      '    except:',
+      '        # 尝试直接打开',
+      '        FreeCAD.open(input_file)',
+      '    ',
+      '    doc.recompute()',
+      '    ',
+      '    # 使用 TechDraw 导出 PDF',
+      '    import TechDraw',
+      '    page = TechDraw.newDrawPage(doc)',
+      '    ',
+      '    # 遍历所有可见对象添加到页面',
+      '    for obj in doc.Objects:',
+      '        if hasattr(obj, "Shape") and obj.Shape.Solids:',
+      '            try:',
+      '                view = TechDraw.View(doc)',
+      '                view.Source = obj',
+      '                page.addView(view)',
+      '                break',
+      '            except:',
+      '                pass',
+      '    ',
+      '    page.exportToPDF(output_file)',
+      '    print("SUCCESS:" + output_file if os.path.exists(output_file) else "FAILED")',
+      'except Exception as e:',
+      '    print("ERROR:" + str(e))',
+      '    sys.exit(1)',
+      'finally:',
+      '    FreeCAD.closeDocument("Doc")',
+    ].join('\n');
+
+    // 写入临时 Python 脚本（chmod 0o600 防本机其他用户偷看）
+    const tmpDir = path.join(__dirname, 'tmp');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+    const scriptPath = path.join(tmpDir, '_cad_convert_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.py');
+    fs.writeFileSync(scriptPath, pyScript, { mode: 0o600 });
+
+    console.log('[CAD] 开始转换:', inputPath, '->', outputPdf);
+
+    const proc = spawn(freecadBin, ['--headless', '-c', scriptPath, inputPath, outputPdf], {
+      timeout: 90000,  // 90秒超时
+      windowsHide: true,
+      // 进程资源限制（防 RCE/资源耗尽）
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    proc.on('close', (code) => {
+      try { fs.unlinkSync(scriptPath); } catch {}
+      if (code === 0 && fs.existsSync(outputPdf)) {
+        console.log('[CAD] 转换成功:', outputPdf);
+        resolve(outputPdf);
+      } else {
+        const errMsg = stderr || stdout || 'Unknown error';
+        console.error('[CAD] 转换失败, code:', code, 'stdout:', stdout, 'stderr:', stderr);
+        reject(new Error('FreeCAD 转换失败: ' + errMsg.slice(0, 200)));
+      }
+    });
+
+    proc.on('error', (err) => {
+      try { fs.unlinkSync(scriptPath); } catch {}
+      console.error('[CAD] FreeCAD 进程错误:', err.message);
+      reject(err);
+    });
+
+    setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      try { fs.unlinkSync(scriptPath); } catch {}
+      reject(new Error('FreeCAD 转换超时（90秒）'));
+    }, 90000);
+  });
+}
+
+// ==================== Office 文件转 PDF 预览 ====================
+// 用 LibreOffice headless 处理 .doc/.docx/.xls/.xlsx/.ppt/.pptx
+function convertOfficeToPdf(inputPath, outputDir) {
+  return new Promise((resolve, reject) => {
+    const inputExt = path.extname(inputPath).toLowerCase();
+    if (!['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].includes(inputExt)) {
+      return reject(new Error('非 Office 文件'));
+    }
+    const sofficeBin = getToolPath('libreoffice');
+    if (!sofficeBin) {
+      return reject(new Error('LibreOffice 未安装：请在服务器安装 LibreOffice（macOS: brew install --cask libreoffice；Ubuntu: apt install libreoffice）'));
+    }
+    const pdfName = path.basename(inputPath, inputExt) + '.pdf';
+    const outputPdf = path.join(outputDir, pdfName);
+    if (fs.existsSync(outputPdf)) {
+      console.log('[Office] PDF 已存在，跳过转换:', outputPdf);
+      return resolve(outputPdf);
+    }
+
+    // LibreOffice 转 PDF：soffice --headless --convert-to pdf --outdir <outputDir> <inputPath>
+    // 注意：soffice 在 macOS 上必须设置 HOME 避免偏好文件冲突
+    const env = { ...process.env };
+    if (process.platform === 'darwin') {
+      env.HOME = process.env.HOME || '/tmp';
+    }
+
+    console.log('[Office] 开始转换:', inputPath, '->', outputPdf);
+
+    const proc = spawn(sofficeBin, [
+      '--headless',
+      '--convert-to', 'pdf',
+      '--outdir', outputDir,
+      inputPath,
+    ], {
+      timeout: 120000,  // Office 转 PDF 比较慢，给 2 分钟
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outputPdf)) {
+        console.log('[Office] 转换成功:', outputPdf);
+        resolve(outputPdf);
+      } else {
+        const errMsg = stderr || stdout || 'Unknown error';
+        console.error('[Office] 转换失败, code:', code, 'stdout:', stdout, 'stderr:', stderr);
+        reject(new Error('LibreOffice 转换失败: ' + errMsg.slice(0, 200)));
+      }
+    });
+
+    proc.on('error', (err) => {
+      console.error('[Office] soffice 进程错误:', err.message);
+      reject(err);
+    });
+
+    setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error('LibreOffice 转换超时（120秒）'));
+    }, 120000);
+  });
+}
+
+// 文件转换路由（统一 CAD/Office → PDF）
+async function convertToPdf(inputPath, outputDir) {
+  const ext = path.extname(inputPath).toLowerCase();
+  if (['.dwg', '.dxf'].includes(ext)) {
+    return await convertCadToPdf(inputPath, outputDir);
+  }
+  if (['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].includes(ext)) {
+    return await convertOfficeToPdf(inputPath, outputDir);
+  }
+  throw new Error('不支持的文件类型: ' + ext);
+}
+
 // 1. GET 列表
 app.get('/api/project-files', async (req, res) => {
   try {
@@ -6511,6 +6805,10 @@ app.get('/api/project-files', async (req, res) => {
     if (mine === '1') { sql += ' AND f.uploaded_by = ?'; args.push(userId); }
     sql += ' ORDER BY f.uploaded_at DESC';
     const [rows] = await pool.query(sql, args);
+    // v2.3.6 hotfix 10-15：自动拼 pdf_preview_url + 透传 preview_error（前端能看见）
+    for (const r of rows) {
+      r.pdf_preview_url = r.pdf_preview ? `/uploads/${r.pdf_preview}` : null;
+    }
     res.json({ list: rows });
   } catch (e) {
     console.error('[project-files list] error:', e.message);
@@ -6533,7 +6831,10 @@ app.get('/api/project-files/:id', async (req, res) => {
       [parseInt(req.params.id)]
     );
     if (!rows.length) return res.status(404).json({ error: '文件不存在' });
-    res.json(rows[0]);
+    const file = rows[0];
+    // v2.3.6 hotfix 10-15：自动拼 pdf_preview_url（preview_error 直接透传 DB 字段）
+    file.pdf_preview_url = file.pdf_preview ? `/uploads/${file.pdf_preview}` : null;
+    res.json(file);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -6568,6 +6869,33 @@ app.post('/api/project-files', projectFileUpload.single('file'), async (req, res
     // 通知所有有 project_file:approve 权限的人（跳过自己）
     // 用 messages 表（站内通知），不是 notifications 表（外发短信）
     const approvers = await getUserIdsByPermission('project_file:approve');
+
+    // v2.3.6 hotfix 10-15：CAD/Office 文件异步转 PDF 预览（不阻塞上传响应）
+    // 转换失败时把错误信息写入 project_files.preview_error，前端可见
+    if (['dwg', 'dxf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(fileExt)) {
+      const fileId = result.insertId;
+      const inputPath = req.file.path;
+      const outputDir = path.dirname(inputPath);
+      // setImmediate：不阻塞 POST 响应，先返"上传成功"，后台异步转换
+      setImmediate(() => {
+        convertToPdf(inputPath, outputDir).then(async (pdfPath) => {
+          const pdfRelPath = path.relative(path.join(__dirname, 'uploads'), pdfPath);
+          await pool.query(
+            `UPDATE project_files SET pdf_preview = ?, preview_error = NULL WHERE id = ?`,
+            [pdfRelPath, fileId]
+          );
+          console.log('[preview] PDF 预览生成成功:', pdfRelPath);
+        }).catch(async (e) => {
+          // 转换失败：写 preview_error（前端能看见），但不影响上传本身
+          const errMsg = String(e.message || e).slice(0, 500);
+          await pool.query(
+            `UPDATE project_files SET preview_error = ? WHERE id = ?`,
+            [errMsg, fileId]
+          );
+          console.error('[preview] PDF 转换失败（不影响上传）:', errMsg);
+        });
+      });
+    }
     for (const aid of approvers) {
       if (aid === userId) continue;
       const [[emp]] = await pool.query('SELECT name FROM employees WHERE id = ?', [aid]);
@@ -6688,6 +7016,21 @@ app.get('/api/project-files/:id/download', async (req, res) => {
     const file = rows[0];
     const fp = path.join(__dirname, 'uploads', file.file_path);
     if (!fs.existsSync(fp)) return res.status(404).json({ error: '物理文件不存在' });
+    // ?inline=1 → 内嵌预览（PDF/图片等），设置 inline 让浏览器直接渲染而非下载
+    // 用于移动端审核页/详情页的预览（H5 的 <img>/<iframe> 无法携带自定义请求头，
+    // 故鉴权用户 ID 通过 query.user_id 传入，见 getUserId）。
+    if (req.query.inline === '1') {
+      const ext = (file.file_ext || '').toLowerCase();
+      const MIME = {
+        pdf: 'application/pdf',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp',
+        txt: 'text/plain; charset=utf-8',
+      };
+      res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.title)}`);
+      return fs.createReadStream(fp).pipe(res);
+    }
     res.download(fp, file.title);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -9004,6 +9347,8 @@ app.put('/api/contracts/:id/revert', async (req, res) => {
 });
 
 // ==================== 合同列表（移动端按项目查） ====================
+// v2.3.6 hotfix 10-15：contracts 表 project_id 全 NULL 时，从 payment_records.category='contract'.confirmed
+// 兜底返回虚拟合同记录（标记 _inferred=true），让前端 contractSummary 能算对合同金额
 app.get('/api/contracts/by-project/:projectId', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -9015,6 +9360,30 @@ app.get('/api/contracts/by-project/:projectId', async (req, res) => {
        ORDER BY c.id DESC`,
       [req.params.projectId]
     );
+
+    // 兜底：contracts 表为空时，从 payment_records 查合同金额
+    if (rows.length === 0) {
+      const [[paymentRow]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total, MAX(created_at) AS latest_at
+         FROM payment_records
+         WHERE project_id = ? AND category='contract' AND status='confirmed'`,
+        [req.params.projectId]
+      );
+      const inferredAmount = Number(paymentRow?.total || 0);
+      if (inferredAmount > 0) {
+        rows.push({
+          id: -1,
+          project_id: Number(req.params.projectId),
+          contract_amount: inferredAmount,
+          review_status: 'approved',
+          created_at: paymentRow?.latest_at || new Date().toISOString(),
+          _inferred_from: 'payment_records',
+          reviewed_by_name: null,
+          submitted_by_name: null,
+        });
+      }
+    }
+
     res.json({ code: 0, data: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -9364,9 +9733,11 @@ app.get('/api/finance/summary', async (req, res) => {
     let whereProject = project_id ? ' WHERE project_id = ?' : '';
     if (project_id) args.push(project_id);
 
-    // 合同营收合计
+    // 合同营收合计（v2.3.6 hotfix 10-15：改读 payment_records.category='contract'.confirmed）
+    // 原因：contracts 表的 project_id/customer_id 字段在 v2.2 引入后从未被填充（全 NULL），
+    //     真实业务合同金额在 payment_records 的"合同自动入账占位"里
     const [[contractSum]] = await pool.query(
-      `SELECT COALESCE(SUM(contract_amount), 0) as total FROM contracts ${whereProject ? 'WHERE project_id = ? AND review_status = \'approved\'' : 'WHERE review_status = \'approved\''}`,
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND category=\'contract\' AND status=\'confirmed\'' : 'WHERE category=\'contract\' AND status=\'confirmed\''}`,
       project_id ? [project_id] : []
     );
 
@@ -9416,14 +9787,13 @@ app.get('/api/finance/summary', async (req, res) => {
 });
 
 // 按项目汇总应收（Finance.vue 应收统计 Tab 用）
+// v2.3.6 hotfix 10-15：合同金额改读 payment_records.category='contract'.confirmed（contracts 表里 project_id 全 NULL）
 app.get('/api/finance/receivable-by-project', async (req, res) => {
   try {
     const [projects] = await pool.query(`
       SELECT p.id, p.name as project_name,
-        cu.name as customer_name,
-        COALESCE(c.contract_amount, 0) as contract_amount
+        cu.name as customer_name
       FROM projects p
-      LEFT JOIN contracts c ON c.project_id = p.id AND c.review_status = 'approved'
       LEFT JOIN customers cu ON cu.id = p.customer_id
       WHERE p.status != '已删除'
       ORDER BY p.id DESC
@@ -9446,7 +9816,13 @@ app.get('/api/finance/receivable-by-project', async (req, res) => {
         `SELECT COALESCE(SUM(amount), 0) as total FROM collection_records WHERE project_id = ? AND status = 'pending'`,
         [p.id]
       );
-      const contractAmount = parseFloat(p.contract_amount || 0);
+      // v2.3.6 hotfix 10-15：合同金额改读 payment_records.category='contract'.confirmed
+      const [[contractRow]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+         WHERE project_id = ? AND category='contract' AND status='confirmed'`,
+        [p.id]
+      );
+      const contractAmount = parseFloat(contractRow?.total || 0);
       const increaseTotal = parseFloat(changeSum?.increase_total || 0);
       const decreaseTotal = parseFloat(changeSum?.decrease_total || 0);
       const receivable = contractAmount + increaseTotal - decreaseTotal;
@@ -9479,6 +9855,210 @@ app.get('/api/finance/receivable-by-project', async (req, res) => {
 
     res.json({ list: result, grand });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==================== 全公司财务大盘（汇总所有项目）====================
+// v2.3.6 新增：替代 BossDashboard / Dashboard / 移动端首页 💰 按钮的"死数据"财务卡片
+// v2.3.6 hotfix（2026-10-15）：修正口径——"增减项占位"不参与收支计算。
+// payment_records 里的 4 类：
+//   - income/contract        = 合同应收占位（合同审核通过自动写入，不是真实收入）
+//   - income/contract_change = 增项应收占位（同上，不算收入）
+//   - expense/contract_change= 减项应付占位（同上，不算支出）
+//   - expense/dispatch       = 派工支出（财务受理后才 confirmed，**真实支出**）
+//   - expense/purchase       = 采购支出（**真实支出**，未来类别）
+//   - income/collection      = 催收确认收款（**真实收入**）
+//   - manual                 = 手动记账（兜底）
+// 数据源：
+//   - contracts WHERE review_status='approved'（业务已审核 = 应收源头）
+//   - contract_changes WHERE status='approved'（增/减项，只参与应收计算）
+//   - payment_records WHERE category NOT IN ('contract','contract_change')（真实收支）
+//   - collection_records（催收流水）
+// 替代了：
+//   - /api/boss-dashboard 的 financeStats（读老 finance 表）
+//   - /api/dashboard/stats（读老 finance 表）
+//   - /api/monthly-trend（读老 finance 表）
+// 保留兼容：
+//   - 老 finance 表 + /api/finance 路由继续保留（PC 端 Finance.vue 还在用）
+app.get('/api/finance/dashboard', async (req, res) => {
+  try {
+    // ===== 1. 公司级合同营收（v2.3.6 hotfix 10-15：改读 payment_records.category='contract'.confirmed）=====
+    // 原因：contracts 表 project_id/customer_id 全 NULL（v2.2 引入字段后从未填），真实数据在 payment_records
+    const [[contractRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records WHERE category='contract' AND status='confirmed'`
+    );
+    const contractAmount = parseFloat(contractRow?.total || 0);
+
+    // ===== 2. 全公司增减项（增/减项分别汇总，独立显示在数据盘，不参与收支计算）=====
+    const [[changeRow]] = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN change_type='increase' THEN amount ELSE 0 END), 0) AS increase_total,
+         COALESCE(SUM(CASE WHEN change_type='decrease' THEN amount ELSE 0 END), 0) AS decrease_total
+       FROM contract_changes WHERE status = 'approved'`
+    );
+    const increaseTotal = parseFloat(changeRow?.increase_total || 0);
+    const decreaseTotal = parseFloat(changeRow?.decrease_total || 0);
+
+    // ===== 3. 已确认实收（催收已确认 + 派工到位的收款）=====
+    //    注意：payment_records WHERE category='collection' 是催收确认收款写入的"实收"标记
+    //    collection_records 是独立的催收流水表（财务录入催收金额 → 待确认 → 确认收款）
+    const [[collectedCollectionRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM collection_records WHERE status = 'confirmed'`
+    );
+    const [[collectedPaymentRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+       WHERE type='income' AND status='confirmed' AND category='collection'`
+    );
+    const collected = parseFloat(collectedCollectionRow?.total || 0) + parseFloat(collectedPaymentRow?.total || 0);
+
+    // ===== 4. 待确认催收（collection_records 表的 pending 状态）=====
+    const [[unconfirmedRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM collection_records WHERE status = 'pending'`
+    );
+    const unconfirmed = parseFloat(unconfirmedRow?.total || 0);
+
+    // ===== 5. 已确认支出（真实支出：派工/采购/手动，**排除 contract_change 占位**）=====
+    const [[expensedRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+       WHERE type='expense' AND status='confirmed'
+         AND category IN ('dispatch', 'purchase', 'manual')`
+    );
+    const expensed = parseFloat(expensedRow?.total || 0);
+
+    // ===== 6. 待确认支出（同上，排除 contract_change 占位）=====
+    const [[pendingExpenseRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+       WHERE type='expense' AND status='pending'
+         AND category IN ('dispatch', 'purchase', 'manual')`
+    );
+    const pendingExpense = parseFloat(pendingExpenseRow?.total || 0);
+
+    // ===== 7. 待确认收入（collection 类型 pending，催收未到账）=====
+    const [[incomePendingRow]] = await pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+       WHERE type='income' AND status='pending' AND category='collection'`
+    );
+    const incomePending = parseFloat(incomePendingRow?.total || 0);
+
+    // ===== 8. 计算派生口径（按真实收支）=====
+    const receivable = contractAmount + increaseTotal - decreaseTotal;  // 应收 = 合同 + 增 - 减
+    const unpaid = receivable - collected;                               // 未收
+    const profit = collected - expensed;                                // 利润：实收 - 已支
+    const changeNet = increaseTotal - decreaseTotal;                    // 增减项净额（独立显示）
+
+    // ===== 9. 月度真实收支趋势（最近 12 个月，按 payment_records.created_at 汇总）=====
+    //    **排除 category='contract' 和 'contract_change'（占位不是真实收支）**
+    const [trendRows] = await pool.query(
+      `SELECT DATE_FORMAT(created_at, '%Y-%m') AS month,
+              SUM(CASE WHEN type='income'  AND category='collection' THEN amount ELSE 0 END) AS income,
+              SUM(CASE WHEN type='expense' AND category IN ('dispatch','purchase','manual') THEN amount ELSE 0 END) AS expense
+       FROM payment_records
+       WHERE created_at IS NOT NULL
+       GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+       ORDER BY month DESC
+       LIMIT 12`
+    );
+    const monthlyTrend = (trendRows || []).reverse(); // 时间正序：旧 → 新
+
+    // 本月（最后一月 = 最新月）真实收入/支出
+    const thisMonth = monthlyTrend.length > 0 ? monthlyTrend[monthlyTrend.length - 1] : { month: '', income: 0, expense: 0 };
+    const thisMonthIncome = parseFloat(thisMonth.income || 0);
+    const thisMonthExpense = parseFloat(thisMonth.expense || 0);
+
+    // ===== 10. 各项目财务汇总（按项目分行，复用 receivable-by-project 口径 + 真实收支）=====
+    const [projectRows] = await pool.query(`
+      SELECT p.id, p.name AS project_name,
+        cu.name AS customer_name,
+        COALESCE(c.contract_amount, 0) AS contract_amount
+      FROM projects p
+      LEFT JOIN contracts c ON c.project_id = p.id AND c.review_status = 'approved'
+      LEFT JOIN customers cu ON cu.id = p.customer_id
+      WHERE p.status != '已删除'
+      ORDER BY p.id DESC
+    `);
+
+    const byProject = [];
+    for (const p of projectRows) {
+      const [[inc]] = await pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN change_type='increase' THEN amount ELSE 0 END), 0) AS increase_total,
+           COALESCE(SUM(CASE WHEN change_type='decrease' THEN amount ELSE 0 END), 0) AS decrease_total
+         FROM contract_changes WHERE project_id = ? AND status = 'approved'`,
+        [p.id]
+      );
+      const [[col]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total FROM collection_records WHERE project_id = ? AND status = 'confirmed'`,
+        [p.id]
+      );
+      const [[realExp]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+         WHERE project_id = ? AND type='expense' AND status='confirmed'
+           AND category IN ('dispatch','purchase','manual')`,
+        [p.id]
+      );
+      // v2.3.6 hotfix 10-15：合同金额改读 payment_records.category='contract'.confirmed（不再读 contracts.contract_amount）
+      const [[contractRowP]] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total FROM payment_records
+         WHERE project_id = ? AND category='contract' AND status='confirmed'`,
+        [p.id]
+      );
+      const contractAmountP = parseFloat(contractRowP?.total || 0);
+      const increaseP = parseFloat(inc?.increase_total || 0);
+      const decreaseP = parseFloat(inc?.decrease_total || 0);
+      const receivableP = contractAmountP + increaseP - decreaseP;
+      const collectedP = parseFloat(col?.total || 0);
+      const realExpensedP = parseFloat(realExp?.total || 0);
+      byProject.push({
+        project_id: p.id,
+        project_name: p.project_name,
+        customer_name: p.customer_name || '',
+        contract_amount: contractAmountP,
+        change_net: increaseP - decreaseP,            // 增减项净额
+        receivable: receivableP,
+        collected: collectedP,
+        unpaid: receivableP - collectedP,
+        real_expensed: realExpensedP,                  // 真实已支出
+      });
+    }
+
+    // ===== 11. 返回 =====
+    res.json({
+      code: 0,
+      data: {
+        // 应收侧（合同 + 增减项 → 应收 → 未收）
+        contract_amount: contractAmount,        // 合同营收（已审核）
+        increase_total: increaseTotal,          // 增项
+        decrease_total: decreaseTotal,          // 减项
+        change_net: changeNet,                  // 增减项净额 = 增 - 减
+        receivable,                              // 应收 = 合同 + 增 - 减
+        collected,                               // 已确认实收（催收+派工到位）
+        unconfirmed,                             // 待确认催收
+        unpaid,                                  // 未收 = 应收 - 已确认实收
+
+        // 支出侧（真实支出，排除 contract_change 占位）
+        expensed,                                // 已确认支出（dispatch/purchase/manual）
+        pending_expense: pendingExpense,         // 待确认支出
+
+        // 利润（按真实收支算）
+        profit,                                  // 利润 = 实收 - 已支
+
+        // 待确认收入（催收未到账）
+        income_pending: incomePending,
+
+        // 本月/趋势
+        this_month: thisMonth.month,
+        this_month_income: thisMonthIncome,
+        this_month_expense: thisMonthExpense,
+        monthly_trend: monthlyTrend,
+        // 各项目分行
+        by_project: byProject,
+        // 元数据：服务器当前时间，方便前端显示"截至 YYYY-MM-DD HH:mm"
+        server_time: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error('finance/dashboard error:', err);
+    res.status(500).json({ code: 1, error: err.message });
+  }
 });
 
 // ==================== 派工审核通过 → 自动写入 payment_records ====================
@@ -10212,7 +10792,8 @@ app.get('/api/todo/center', async (req, res) => {
     // 6) 待收款金额 —— 仅财务（finance:read_all）或 admin 才显示
     //    应收 = 已审核合同金额 + 已通过增项 - 已通过减项
     //    已收 = 催收记录中已确认的金额（collection_records.status='confirmed'）
-    //    口径与 /api/finance/receivable-by-project 完全一致。
+    //    v2.3.6 hotfix 10-15：合同金额改读 payment_records.category='contract'.confirmed（contracts 表 project_id 全 NULL）
+    //    口径与 /api/finance/receivable-by-project / /api/finance/summary 完全一致。
     //    注意：payment_records 里 category='contract' 的收入是「合同审核通过时自动写入」的应收记录，
     //    并非实际到账，不能用于计算已收款。
     const financeScope = admin || perms.includes('finance:read_all');
@@ -10220,9 +10801,8 @@ app.get('/api/todo/center', async (req, res) => {
     if (financeScope) {
       const [[recvAgg]] = await pool.query(
         `SELECT
-           (SELECT COALESCE(SUM(c.contract_amount),0) FROM contracts c
-              JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status='approved' AND (p.status IS NULL OR p.status <> '已删除')) AS contract_amount,
+           (SELECT COALESCE(SUM(amount),0) FROM payment_records
+             WHERE category='contract' AND status='confirmed') AS contract_amount,
            (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
              WHERE cc.status='approved' AND cc.change_type='increase') AS increase_total,
            (SELECT COALESCE(SUM(cc.amount),0) FROM contract_changes cc
