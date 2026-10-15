@@ -26,6 +26,7 @@ jianyioa-app/mobile/src/pages/**/.index.vue.swp
 
 # IDE / 工作区
 .workbuddy/
+.workbuddy-ai/
 
 # node_modules
 web/node_modules/
