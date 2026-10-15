@@ -143,7 +143,9 @@ export const budgetApi = {
 }
 
 export const inspectionApi = {
-  list: () => request.get('/inspections'),
+  // v2.3.6 hotfix（10-15）：InspectionLogs.vue 改走独立 inspections 表（之前走错接口，
+  // 提交巡检被存到 project_logs 表的 type='construction' 默认值，永远查不到）
+  list: (params) => request.get('/inspections', { params }),
   create: (data) => request.post('/inspections', data),
   update: (id, data) => request.put(`/inspections/${id}`, data),
   delete: (id) => request.delete(`/inspections/${id}`)

@@ -166,7 +166,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import request from '../utils/request'
-import { projectLogApi } from '../utils/api'
+import { inspectionApi } from '../utils/api'
 import { useUserStore } from '../stores/user'
 
 const userStore = useUserStore()
@@ -348,14 +348,23 @@ const getViewImages = (imagesField) => {
     return Array.isArray(val) ? val : []
   } catch { return [] }
 }
+// v2.3.6 hotfix（10-15）：走 inspections 表（之前走 /api/project-logs?type=inspection 是错接口）
+// 后端返回字段：inspector_name / project_name / result / issues / images / score / status / rectify_status
+// 前端模板字段：operator / location / result —— loadLogs 里做映射让模板不用改
 const loadLogs = async () => {
   loading.value = true
   try {
-    const params = { page: page.value, page_size: pageSize.value, type: 'inspection' }
+    const params = {}
     if (filterProject.value) params.project_id = filterProject.value
-    const res = await projectLogApi.list(params)
-    logList.value = Array.isArray(res) ? res : (res.list || res.data || [])
-    total.value = res.total || 0
+    const res = await inspectionApi.list(params)
+    const raw = Array.isArray(res) ? res : (res.list || res.data || [])
+    // 字段映射：后端 inspector_name → 前端 operator；location 用 project_name 兜底
+    logList.value = raw.map(item => ({
+      ...item,
+      operator: item.inspector_name || item.operator || '',
+      location: item.project_name || item.location || '',
+    }))
+    total.value = raw.length
   } catch (e) {
     console.error('加载巡检日志失败', e)
     logList.value = []
@@ -411,7 +420,7 @@ const handleView = (row) => {
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm('确定删除这条巡检记录？', '删除确认', { type: 'warning' })
-    await projectLogApi.delete(row.id)
+    await inspectionApi.delete(row.id)
     ElMessage.success('删除成功')
     loadLogs()
   } catch (e) {
@@ -463,11 +472,32 @@ const handleSave = async () => {
 
   saving.value = true
   try {
-    const data = { ...form, type: 'inspection', images: formImages.value.map(i => i.serverUrl).filter(Boolean) }
+    // v2.3.6 hotfix（10-15）：映射到 inspections 表字段
+    // 前端 form: { project_id, inspection_date, location, result, issues, note, operator }
+    // 后端 inspections: { project_id, project_name, inspector_name, result, issues, images }
+    // location / inspection_date / note 这 3 个字段 inspections 表没对应列，拼接到 issues 一起存
+    const projectObj = projectList.value.find(p => String(p.id) === String(form.project_id))
+    const projectName = projectObj?.name || ''
+    const extraLines = []
+    if (form.inspection_date) extraLines.push(`巡检日期：${form.inspection_date}`)
+    if (form.location) extraLines.push(`巡检地点：${form.location}`)
+    if (form.note) extraLines.push(`备注：${form.note}`)
+    const mergedIssues = (form.issues || '').trim() +
+      (extraLines.length ? '\n\n' + extraLines.join('\n') : '')
+
+    const data = {
+      project_id: form.project_id,
+      project_name: projectName,
+      inspector_name: form.operator || userStore.userName,
+      result: form.result,
+      issues: mergedIssues,
+      images: formImages.value.map(i => i.serverUrl).filter(Boolean),
+      // status / rectify_status 默认 '待整改' 由后端填
+    }
     if (isEdit.value) {
-      await projectLogApi.update(form.id, data)
+      await inspectionApi.update(form.id, data)
     } else {
-      await projectLogApi.create(data)
+      await inspectionApi.create(data)
     }
     ElMessage.success(isEdit.value ? '更新成功' : '创建成功')
     dialogVisible.value = false

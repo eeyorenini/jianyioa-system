@@ -40,6 +40,8 @@ const InspectionLogs = () => import('../views/InspectionLogs.vue')
 const PurchaseRequests = () => import('../views/PurchaseRequests.vue')
 const ChangeOrders = () => import('../views/ChangeOrders.vue')
 const FinanceProjectList = () => import('../views/FinanceProjectList.vue')
+// v2.3.6 hotfix 10-15：补上 v2.3.4 缺失的 ProjectFiles.vue 源文件
+const ProjectFiles = () => import('../views/ProjectFiles.vue')
 
 // meta.perm = 访问该页面所需的权限模块标识（对应后端权限码的模块前缀）
 // 无 meta.perm 表示所有登录用户可访问
@@ -61,6 +63,7 @@ const routes = [
   { path: '/projects', name: 'Projects', component: Projects, meta: { perm: 'project' } },
   { path: '/change-orders', name: 'ChangeOrders', component: ChangeOrders, meta: { perm: 'contract_change' } },
   { path: '/project-logs', name: 'ProjectLogs', component: ProjectLogs, meta: { perm: 'project' } },
+  { path: '/project-files', name: 'ProjectFiles', component: ProjectFiles, meta: { perm: 'project_file' } },
   { path: '/inspection-logs', name: 'InspectionLogs', component: InspectionLogs, meta: { perm: 'inspection' } },
   { path: '/quotes', name: 'Quotes', component: Quotes, meta: { perm: 'quote' } },
   { path: '/acceptance', name: 'Acceptance', component: Acceptance, meta: { perm: 'acceptance' } },
