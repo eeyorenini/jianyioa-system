@@ -46,10 +46,12 @@
         <!-- 顶部行：缩略图 + 文件名 + 状态徽章 -->
         <view class="file-row-top">
           <view class="file-thumb" :style="thumbBg(f)">
-            <text v-if="isImage(f.file_ext)" class="file-thumb-img" :data-url="getPreviewUrl(f)">
-              <image v-if="false" :src="getPreviewUrl(f)" mode="aspectFill" class="file-thumb-img-el" />
-              <text v-else>{{ thumbIcon(f.file_ext) }}</text>
-            </text>
+            <image
+              v-if="isImage(f.file_ext)"
+              :src="getPreviewUrl(f)"
+              mode="aspectFill"
+              class="file-thumb-img-el"
+            />
             <text v-else class="file-thumb-emoji">{{ thumbIcon(f.file_ext) }}</text>
           </view>
           <view class="file-info">
@@ -75,6 +77,35 @@
           <text class="file-review-label">审核人：</text>
           <text class="file-review-name">{{ f.reviewer_name || '-' }}</text>
           <text v-if="f.review_comment" class="file-review-comment">「{{ f.review_comment }}」</text>
+        </view>
+
+        <!-- CAD / Office 文件 PDF 预览按钮（v2.3.6 hotfix 10-15：后端 convertToPdf 自动转 PDF，前端展示入口） -->
+        <view
+          v-if="isPreviewable(f.file_ext) && f.pdf_preview_url"
+          class="file-preview-link"
+          @click.stop="openCadPreview(f)"
+        >
+          <text class="preview-link-icon">📄</text>
+          <text class="preview-link-text">预览 PDF</text>
+          <text class="preview-link-arrow">›</text>
+        </view>
+        <view
+          v-else-if="isPreviewable(f.file_ext) && f.preview_error"
+          class="file-preview-error"
+          @click.stop="showPreviewError(f)"
+        >
+          <text class="preview-error-icon">❌</text>
+          <view class="preview-error-text-wrap">
+            <text class="preview-error-text">PDF 转换失败</text>
+            <text class="preview-error-hint">点击查看详情</text>
+          </view>
+        </view>
+        <view
+          v-else-if="isPreviewable(f.file_ext)"
+          class="file-preview-pending"
+        >
+          <text class="preview-pending-icon">⏳</text>
+          <text class="preview-pending-text">PDF 预览生成中...</text>
         </view>
       </view>
     </view>
@@ -124,6 +155,17 @@ const filteredList = computed(() => files.value);
 const categories = FILE_CATEGORIES;
 
 const isImage = (ext) => ["jpg", "jpeg", "png", "gif", "webp"].includes((ext || "").toLowerCase());
+// v2.3.6 hotfix 10-15：CAD + Office 文件都走 PDF 预览入口
+const isPreviewable = (ext) => ['dwg','dxf','doc','docx','xls','xlsx','ppt','pptx'].includes((ext || '').toLowerCase());
+
+const showPreviewError = (f) => {
+  uni.showModal({
+    title: 'PDF 预览生成失败',
+    content: f.preview_error || '未知错误',
+    showCancel: false,
+    confirmText: '我知道了',
+  });
+};
 
 const catLabel = (key) => {
   const c = FILE_CATEGORY_MAP[key];
@@ -137,9 +179,11 @@ const thumbBg = (f) => {
   const c = FILE_CATEGORY_MAP[f.category];
   return "background:" + (c ? c.color : "#F3F4F6");
 };
+const uid = computed(() => userStore.state.id || (uni.getStorageSync('userInfo') || {}).id || 0);
 const getPreviewUrl = (f) => {
-  // 图片预览：直接走 download 端点（H5 用 <img>，小程序用 fileID）
-  return `/api/project-files/${f.id}/download`;
+  // 图片缩略图：走 download 端点并内联返回；H5 的 <img> 不会带 x-user-id 请求头，
+  // 故把用户 ID 拼进 query（后端 getUserId 支持从 query.user_id 取用户）
+  return `/api/project-files/${f.id}/download?user_id=${uid.value}&inline=1`;
 };
 
 const formatTime = (dateStr) => {
@@ -175,6 +219,19 @@ async function loadData() {
 
 const goDetail = (f) => {
   uni.navigateTo({ url: `/pages/files/detail?id=${f.id}` });
+};
+
+// v2.3.6 hotfix 10-15：CAD 文件 PDF 预览入口
+const openCadPreview = (f) => {
+  if (!f.pdf_preview_url) return;
+  // #ifdef H5
+  // H5：开新窗口加载 PDF 预览
+  window.open(f.pdf_preview_url, '_blank');
+  // #endif
+  // #ifndef H5
+  // 小程序：跳详情页（详情页有完整 iframe 预览）
+  uni.navigateTo({ url: `/pages/files/detail?id=${f.id}` });
+  // #endif
 };
 
 const goUpload = async () => {
@@ -380,6 +437,51 @@ onShow(() => {
 .file-review-label { color: #9CA3AF; }
 .file-review-name { color: #1E3A5F; font-weight: 500; margin-right: 6px; }
 .file-review-comment { color: #EF4444; }
+
+/* CAD PDF 预览入口（v2.3.6 hotfix 10-15） */
+.file-preview-link {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #DBEAFE 0%, #EFF6FF 100%);
+  border-radius: 8px;
+  border-left: 3px solid #3B82F6;
+}
+.preview-link-icon { font-size: 18px; }
+.preview-link-text {
+  flex: 1; font-size: 13px; font-weight: 600; color: #1E3A5F;
+}
+.preview-link-arrow { font-size: 18px; color: #6B7280; font-weight: 300; }
+.file-preview-pending {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px;
+  padding: 8px 14px;
+  background: #FEF3C7;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #92400E;
+}
+.preview-pending-icon { font-size: 14px; }
+.preview-pending-text { font-size: 12px; }
+
+/* v2.3.6 hotfix 10-15：PDF 转换失败提示 */
+.file-preview-error {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: #FEE2E2;
+  border-radius: 8px;
+  border-left: 3px solid #EF4444;
+}
+.preview-error-icon { font-size: 16px; }
+.preview-error-text-wrap { flex: 1; }
+.preview-error-text {
+  font-size: 13px; font-weight: 600; color: #B91C1C;
+}
+.preview-error-hint {
+  font-size: 11px; color: #DC2626;
+  margin-top: 2px;
+}
 
 .empty-state {
   display: flex;

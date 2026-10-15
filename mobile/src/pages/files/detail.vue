@@ -23,9 +23,30 @@
         </view>
       </view>
 
-      <!-- 缩略图（图片类型显示原图） -->
-      <view v-if="isImage(file.file_ext)" class="image-preview">
-        <image :src="downloadUrl" mode="widthFix" class="image-preview-el" @click="previewImage" />
+      <!-- 预览区：图片内联 / PDF 内嵌（H5）/ 其他给提示 -->
+      <view v-if="previewType === 'image'" class="preview-block">
+        <image :src="previewUrl" mode="widthFix" class="preview-image-el" @click="previewImage" />
+      </view>
+      <!-- #ifdef H5 -->
+      <view v-if="previewType === 'pdf' && !file.preview_error" class="preview-block">
+        <iframe :src="previewUrl" class="preview-pdf-el"></iframe>
+      </view>
+      <!-- #endif -->
+
+      <!-- v2.3.6 hotfix 10-15：PDF 转换失败提示（红底卡片） -->
+      <view v-if="file.preview_error" class="preview-block preview-error-card">
+        <text class="preview-error-card-icon">❌</text>
+        <text class="preview-error-card-title">PDF 预览生成失败</text>
+        <text class="preview-error-card-detail">{{ file.preview_error }}</text>
+        <text class="preview-error-card-hint">请在服务器安装 FreeCAD / LibreOffice 后重试，或联系管理员</text>
+      </view>
+      <view
+        v-if="previewType === 'other' || (previewType === 'pdf' && !isH5)"
+        class="preview-block preview-fallback"
+      >
+        <text class="preview-fallback-icon">{{ thumbIcon(file.file_ext) }}</text>
+        <text class="preview-fallback-text">{{ (file.file_ext || '').toUpperCase() }} 文件</text>
+        <text class="preview-fallback-hint">该格式暂不支持内嵌预览，请点击下方「下载 / 打开」查看</text>
       </view>
 
       <!-- 元信息 -->
@@ -117,12 +138,23 @@ import {
 const file = ref(null);
 const loading = ref(true);
 const userStore = useUserStore();
-const userId = computed(() => userStore.userId || uni.getStorageSync('userId') || 0);
-const isAdmin = computed(() => userStore.isAdmin ? userStore.isAdmin() : false);
+// 注意：store 暴露的是 state（含 id），并没有 userId 字段；旧的 userStore.userId /
+// getStorageSync('userId') 恒为 undefined → 导致 canRevoke / canDelete 判定失效。
+const userId = computed(() => userStore.state.id || (uni.getStorageSync('userInfo') || {}).id || 0);
+const isAdmin = computed(() => userStore.isAdminUser ? userStore.isAdminUser() : false);
 
 const fileId = ref(0);
-const downloadUrl = computed(() => `/api/project-files/${fileId.value}/download`);
-
+// H5 下 <img>/window.open 无法携带 x-user-id 请求头，会 401；把用户 ID 拼进 query
+// （后端 getUserId 支持从 query.user_id 取用户，见 server.js）
+const downloadUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${userId.value}`);
+const previewUrl = computed(() => {
+  const ext = (file.value && file.value.file_ext) || '';
+  // v2.3.6 hotfix 10-15：CAD 文件用后端自动拼的 pdf_preview_url（list/detail 接口都返）
+  if (['dwg', 'dxf'].includes(ext.toLowerCase()) && file.value && file.value.pdf_preview_url) {
+    return file.value.pdf_preview_url;
+  }
+  return `/api/project-files/${fileId.value}/download?user_id=${userId.value}&inline=1`;
+});
 const canApprove = computed(() => userStore.canSee("project_file:approve"));
 const canRevoke = computed(() =>
   file.value && file.value.uploaded_by === userId.value && file.value.status === 'pending'
@@ -138,6 +170,22 @@ const isImage = (ext) => ["jpg", "jpeg", "png", "gif", "webp"].includes((ext || 
 const catLabel = (key) => (FILE_CATEGORY_MAP[key] ? FILE_CATEGORY_MAP[key].label : key);
 const catColor = (key) => (FILE_CATEGORY_MAP[key] ? FILE_CATEGORY_MAP[key].color : "#F3F4F6");
 
+// 平台标记：仅 H5 支持 iframe 内嵌 PDF
+// #ifdef H5
+const isH5 = true;
+// #endif
+// #ifndef H5
+const isH5 = false;
+// #endif
+
+const previewType = computed(() => {
+  const ext = (file.value && file.value.file_ext) || '';
+  if (isImage(ext)) return 'image';
+  if (ext.toLowerCase() === 'pdf') return 'pdf';
+  // CAD 文件如果有 pdf_preview 字段，用 PDF 预览
+  if (['dwg', 'dxf'].includes(ext.toLowerCase()) && file.value && file.value.pdf_preview) return 'pdf';
+  return 'other';
+});
 const formatTime = (s) => {
   if (!s) return '';
   const d = new Date(s.replace(/-/g, '/'));
@@ -160,7 +208,7 @@ async function loadDetail() {
 
 const previewImage = () => {
   if (!file.value) return;
-  uni.previewImage({ urls: [downloadUrl.value], current: downloadUrl.value });
+  uni.previewImage({ urls: [previewUrl.value], current: previewUrl.value });
 };
 
 const downloadFile = () => {
@@ -277,17 +325,50 @@ onShow(() => {
   font-size: 11px; padding: 3px 10px; border-radius: 10px; color: #fff;
 }
 
-.image-preview {
+.preview-block {
   background: #fff;
   border-radius: 12px;
   padding: 8px;
   margin-bottom: 12px;
-  text-align: center;
 }
-.image-preview-el {
+.preview-image-el {
   width: 100%;
   border-radius: 8px;
+  display: block;
 }
+.preview-pdf-el {
+  width: 100%;
+  height: 60vh;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  background: #F9FAFB;
+}
+.preview-block.preview-fallback {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 28px 12px; background: #F9FAFB;
+}
+
+/* v2.3.6 hotfix 10-15：PDF 转换失败卡片 */
+.preview-block.preview-error-card {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 16px; background: #FEF2F2;
+  border: 1px solid #FECACA;
+}
+.preview-error-card-icon { font-size: 40px; margin-bottom: 8px; }
+.preview-error-card-title {
+  font-size: 16px; font-weight: 700; color: #B91C1C; margin-bottom: 6px;
+}
+.preview-error-card-detail {
+  font-size: 12px; color: #7F1D1D; line-height: 1.5;
+  text-align: center; word-break: break-all; max-width: 90%;
+  font-family: 'SF Mono', Menlo, monospace;
+  background: #fff; padding: 8px 12px; border-radius: 4px;
+  margin: 8px 0;
+}
+.preview-error-card-hint { font-size: 12px; color: #DC2626; opacity: 0.8; }
+.preview-fallback-icon { font-size: 46px; margin-bottom: 8px; }
+.preview-fallback-text { font-size: 14px; font-weight: 600; color: #1E3A5F; }
+.preview-fallback-hint { font-size: 12px; color: #9CA3AF; margin-top: 4px; text-align: center; }
 
 .info-card {
   background: #fff;

@@ -25,6 +25,49 @@
         </view>
       </view>
 
+      <!-- 文件预览：图片内联 / PDF 内嵌 / 其他给打开按钮 -->
+      <view class="section preview-card">
+        <view class="section-label">文件预览</view>
+
+        <!-- 图片：内联显示，点击全屏 -->
+        <image
+          v-if="previewType === 'image'"
+          :src="previewUrl"
+          mode="widthFix"
+          class="preview-image"
+          @click="openPreview"
+        />
+
+        <!-- PDF：H5 下用 iframe 内嵌 -->
+        <!-- #ifdef H5 -->
+        <iframe
+          v-if="previewType === 'pdf'"
+          :src="previewUrl"
+          class="preview-pdf"
+        ></iframe>
+        <!-- #endif -->
+
+        <!-- 其他格式 / 非 H5 的 PDF：无法内嵌，给出提示 -->
+        <view
+          v-if="previewType === 'other' || (previewType === 'pdf' && !isH5)"
+          class="preview-fallback"
+        >
+          <text class="preview-fallback-icon">{{ thumbIcon(file.file_ext) }}</text>
+          <text class="preview-fallback-text">
+            {{ (file.file_ext || '').toUpperCase() }} 文件
+          </text>
+          <text class="preview-fallback-hint">该格式暂不支持内嵌预览，请打开查看</text>
+        </view>
+
+        <!-- 打开 / 下载 -->
+        <view class="preview-actions">
+          <view class="preview-btn" @click="openFile">
+            <text class="preview-btn-icon">⬇️</text>
+            <text class="preview-btn-text">下载 / 打开查看</text>
+          </view>
+        </view>
+      </view>
+
       <!-- 备注（如果有） -->
       <view v-if="file.description" class="desc-card">
         <text class="desc-label">上传人备注</text>
@@ -110,6 +153,48 @@ const canSubmit = computed(() => {
 const isImage = (ext) => ["jpg", "jpeg", "png", "gif", "webp"].includes((ext || "").toLowerCase());
 const catLabel = (key) => (FILE_CATEGORY_MAP[key] ? FILE_CATEGORY_MAP[key].label : key);
 const catColor = (key) => (FILE_CATEGORY_MAP[key] ? FILE_CATEGORY_MAP[key].color : "#F3F4F6");
+
+// ===== 文件预览 =====
+// H5 下 <img>/<iframe> 发起的请求无法携带 x-user-id 请求头，会导致下载接口 401。
+// 后端 getUserId 支持从 query.user_id 取用户，故这里把用户 ID 拼进 URL。
+const uid = computed(() => userStore.state.id || (uni.getStorageSync('userInfo') || {}).id || 0);
+const previewUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${uid.value}&inline=1`);
+const downloadUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${uid.value}`);
+
+// 平台标记：仅 H5 支持 iframe 内嵌 PDF
+// #ifdef H5
+const isH5 = true;
+// #endif
+// #ifndef H5
+const isH5 = false;
+// #endif
+
+const previewType = computed(() => {
+  const ext = (file.value && file.value.file_ext) || '';
+  if (isImage(ext)) return 'image';
+  if (ext.toLowerCase() === 'pdf') return 'pdf';
+  return 'other';
+});
+
+const openPreview = () => {
+  if (!file.value) return;
+  uni.previewImage({ urls: [previewUrl.value], current: previewUrl.value });
+};
+
+const openFile = () => {
+  if (!file.value) return;
+  // #ifdef H5
+  window.open(downloadUrl.value, '_blank');
+  // #endif
+  // #ifdef MP-WEIXIN
+  uni.downloadFile({
+    url: downloadUrl.value,
+    success: (res) => {
+      if (res.tempFilePath) uni.openDocument({ filePath: res.tempFilePath, showMenu: true });
+    },
+  });
+  // #endif
+};
 
 async function loadDetail() {
   loading.value = true;
@@ -206,6 +291,28 @@ if (fileId.value) loadDetail();
 }
 .desc-label { font-size: 11px; color: #92400E; display: block; margin-bottom: 4px; }
 .desc-text { font-size: 13px; color: #92400E; line-height: 1.5; white-space: pre-wrap; }
+
+/* ===== 文件预览 ===== */
+.preview-card { padding: 14px; }
+.preview-image { width: 100%; border-radius: 8px; background: #F3F4F6; display: block; }
+.preview-pdf {
+  width: 100%; height: 60vh; border: 1px solid #E5E7EB;
+  border-radius: 8px; background: #F9FAFB;
+}
+.preview-fallback {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 28px 12px; background: #F9FAFB; border-radius: 8px;
+}
+.preview-fallback-icon { font-size: 46px; margin-bottom: 8px; }
+.preview-fallback-text { font-size: 14px; font-weight: 600; color: #1E3A5F; }
+.preview-fallback-hint { font-size: 12px; color: #9CA3AF; margin-top: 4px; }
+.preview-actions { margin-top: 12px; }
+.preview-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 44px; background: #EFF6FF; border-radius: 10px;
+}
+.preview-btn-icon { font-size: 16px; }
+.preview-btn-text { font-size: 14px; color: #1E3A5F; font-weight: 600; }
 
 .section {
   background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px;

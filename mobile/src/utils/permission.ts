@@ -88,7 +88,9 @@ export const HOME_QUICK_ENTRIES: EntryItem[] = [
   { label: "主材管理", icon: "🧱", bg: "#EDE9FE", action: "newMaterial", perm: "purchase:read" },
   { label: "验收管理", icon: "✅", bg: "#D1FAE5", action: "newAccept", perm: "acceptance:read" },
   { label: "增减项", icon: "📄", bg: "#FEF3C7", action: "newChange", perm: "contract_change:write" },
-  { label: "收支记录", icon: "💰", bg: "#DBEAFE", action: "newFinance", perm: "finance:write" },
+  // v2.3.6: 首页快捷入口的"收支记录"原本 action=newFinance → 跳新建收支页（add.vue，写入老 finance 表），
+  // 是命名和逻辑双重错位。改成 url 直跳全公司财务大盘（基于 payment_records 活数据）。
+  { label: "公司财务", icon: "💰", bg: "#DBEAFE", url: "/pages/finance/dashboard", perm: "finance:read" },
   { label: "催收记录", icon: "💰", bg: "#DBEAFE", action: "newCollection", perm: "finance:write" },
   { label: "通讯录", icon: "📒", bg: "#EDE9FE", action: "addressbook", perm: "employee:read" },
   { label: "甘特图", icon: "📊", bg: "#FEE2E2", action: "gantt", perm: "" },
@@ -162,7 +164,7 @@ export const MY_WORK_ITEMS: EntryItem[] = [
   { label: "我的派工", icon: "👷", bg: "#FEF3C7", url: "/pages/dispatch/list", perm: "dispatch:read" },
   { label: "我的日志", icon: "📝", bg: "#D1FAE5", url: "/pages/mine/my-logs", perm: "" },
   { label: "我的巡检", icon: "🔍", bg: "#FEE2E2", url: "/pages/mine/my-inspections", perm: "inspection:read" },
-  { label: "收支管理", icon: "💰", bg: "#DBEAFE", url: "/pages/finance/list", perm: "finance:read" },
+  { label: "收支管理", icon: "💰", bg: "#DBEAFE", url: "/pages/finance/dashboard", perm: "finance:read" },
   { label: "采购审核", icon: "🛒", bg: "#FEF3C7", url: "/pages/purchase/list", perm: "purchase:approve" },
   { label: "财务受理", icon: "🧾", bg: "#E0E7FF", url: "/pages/purchase/list", perm: "purchase:finance" },
 ];
