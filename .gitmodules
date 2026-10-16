@@ -1,0 +1,4 @@
+[submodule "jianyioa-app"]
+	path = jianyioa-app
+	url = https://github.com/eeyorenini/jianyioa-system.git
+	branch = mobile
