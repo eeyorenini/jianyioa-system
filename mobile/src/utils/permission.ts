@@ -175,6 +175,48 @@ export function visibleEntries(items: EntryItem[]): EntryItem[] {
   return (items || []).filter((it) => store.canSee(it.perm));
 }
 
+/**
+ * uni.request 的鉴权请求头：后端 getUserId 优先读 x-user-id（见 server.js）。
+ * 20+ 个页面都在手动拼 { 'x-user-id': String(id) }，这里收拢成一份，避免遗漏导致 401。
+ * 注意：<img>/<iframe>/uni.previewImage 无法带自定义头，那类 URL 用 projectFileUrl（拼 query）。
+ */
+export function authHeader(uid?: number): Record<string, string> {
+  let id: any = uid;
+  if (!id) {
+    try {
+      id = (uni.getStorageSync("userInfo") || {}).id || 0;
+    } catch (_) {
+      id = 0;
+    }
+  }
+  return { "x-user-id": String(id || "") };
+}
+
+/**
+ * 项目文件下载/预览 URL（自动拼 user_id，供 <image>/<iframe>/uni.previewImage/window.open 用）
+ *
+ * ⚠️ H5 必须返回【绝对 URL】：uni-h5 的 <image> / uni.previewImage 会把以 "/" 开头的 src
+ * 交给 getRealPath() 拼上 router.base="/m/"（见 manifest.json 的 h5.router.base），实际
+ * 请求 /m/api/... —— 后端没有这条路由，命中 SPA fallback 返回 index.html（text/html），
+ * 图片/预览必然裂开（后端 getUserId 支持 query.user_id，故 URL 里带 user_id 即可鉴权）。
+ * getRealPath 对 http(s):// 开头的路径原样返回，用 location.origin 拼绝对 URL 绕过；
+ * 小程序端没有 window/location，保持相对路径。
+ *
+ * @param id    文件 id
+ * @param query 额外 query，如 '?user_id=1&inline=1'
+ */
+export function projectFileUrl(id: number, query = ""): string {
+  const p = `/api/project-files/${id}/download${query}`;
+  try {
+    if (typeof window !== "undefined" && window.location && /^https?:/i.test(window.location.href)) {
+      return window.location.origin + p;
+    }
+  } catch (_) {
+    /* 非浏览器环境（小程序/App）走下边的相对路径 */
+  }
+  return p;
+}
+
 /** 角色样式 class（优先 role_code，兼容中文角色名，避免各处重复 includes 判断） */
 export function roleClass(roleCode?: string, roleName?: string): string {
   const code = (roleCode || "").toLowerCase();

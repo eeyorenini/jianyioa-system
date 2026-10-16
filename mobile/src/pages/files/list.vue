@@ -128,7 +128,7 @@ import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { pickProject } from "@/utils/projectPicker";
 import {
-  FILE_CATEGORIES, FILE_CATEGORY_MAP,
+  FILE_CATEGORIES, FILE_CATEGORY_MAP, projectFileUrl, authHeader,
   fileStatusText as statusText, fileStatusColor as statusColor,
   fileThumbIcon as thumbIcon, fileSizeText as sizeText,
 } from "@/utils/permission";
@@ -183,7 +183,9 @@ const uid = computed(() => userStore.state.id || (uni.getStorageSync('userInfo')
 const getPreviewUrl = (f) => {
   // 图片缩略图：走 download 端点并内联返回；H5 的 <img> 不会带 x-user-id 请求头，
   // 故把用户 ID 拼进 query（后端 getUserId 支持从 query.user_id 取用户）
-  return `/api/project-files/${f.id}/download?user_id=${uid.value}&inline=1`;
+  // ⚠️ projectFileUrl 返回【绝对 URL】：uni-h5 的 <image> 会给以 "/" 开头的 src 拼上
+  // router.base="/m/"，导致缩略图实际请求 /m/api/... 拿到 SPA 的 index.html 而裂图。
+  return projectFileUrl(f.id, `?user_id=${uid.value}&inline=1`);
 };
 
 const formatTime = (dateStr) => {
@@ -203,7 +205,11 @@ async function loadData() {
     const params = [`project_id=${projectId.value}`];
     if (curStatus.value) params.push(`status=${curStatus.value}`);
     if (curCategory.value) params.push(`category=${curCategory.value}`);
-    const res = await uni.request({ url: `/api/project-files?${params.join('&')}` });
+    // 必须带 x-user-id，否则后端 getUserId 取不到用户直接 401
+    const res = await uni.request({
+      url: `/api/project-files?${params.join('&')}`,
+      header: authHeader(uid.value),
+    });
     if (res.data && Array.isArray(res.data.list)) {
       files.value = res.data.list;
     } else {

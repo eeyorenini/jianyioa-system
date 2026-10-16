@@ -132,7 +132,7 @@
 import { ref, computed } from "vue";
 import { useUserStore } from "@/stores/user";
 import {
-  FILE_CATEGORY_MAP,
+  FILE_CATEGORY_MAP, projectFileUrl, authHeader,
   fileThumbIcon as thumbIcon, fileSizeText as sizeText,
 } from "@/utils/permission";
 
@@ -157,9 +157,19 @@ const catColor = (key) => (FILE_CATEGORY_MAP[key] ? FILE_CATEGORY_MAP[key].color
 // ===== 文件预览 =====
 // H5 下 <img>/<iframe> 发起的请求无法携带 x-user-id 请求头，会导致下载接口 401。
 // 后端 getUserId 支持从 query.user_id 取用户，故这里把用户 ID 拼进 URL。
+// ⚠️ projectFileUrl 返回【绝对 URL】：uni-h5 的 <image>/uni.previewImage 会给以 "/" 开头的
+// src 拼上 router.base="/m/"，导致实际请求 /m/api/... 拿到 SPA 的 index.html 而裂图。
 const uid = computed(() => userStore.state.id || (uni.getStorageSync('userInfo') || {}).id || 0);
-const previewUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${uid.value}&inline=1`);
-const downloadUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${uid.value}`);
+const isCad = (ext) => ['dwg', 'dxf'].includes((ext || '').toLowerCase());
+const previewUrl = computed(() => {
+  const ext = (file.value && file.value.file_ext) || '';
+  // v2.3.6：CAD 文件用后端 FreeCAD 转好的 PDF 预览（list/detail 接口都返 pdf_preview_url）
+  if (isCad(ext) && file.value && file.value.pdf_preview_url) {
+    return file.value.pdf_preview_url;
+  }
+  return projectFileUrl(fileId.value, `?user_id=${uid.value}&inline=1`);
+});
+const downloadUrl = computed(() => projectFileUrl(fileId.value, `?user_id=${uid.value}`));
 
 // 平台标记：仅 H5 支持 iframe 内嵌 PDF
 // #ifdef H5
@@ -173,6 +183,8 @@ const previewType = computed(() => {
   const ext = (file.value && file.value.file_ext) || '';
   if (isImage(ext)) return 'image';
   if (ext.toLowerCase() === 'pdf') return 'pdf';
+  // v2.3.6：CAD 转 PDF 成功 → 走 iframe 内嵌预览
+  if (isCad(ext) && file.value && file.value.pdf_preview) return 'pdf';
   return 'other';
 });
 
@@ -199,7 +211,11 @@ const openFile = () => {
 async function loadDetail() {
   loading.value = true;
   try {
-    const res = await uni.request({ url: `/api/project-files/${fileId.value}` });
+    // 必须带 x-user-id，否则后端 getUserId 取不到用户直接 401
+    const res = await uni.request({
+      url: `/api/project-files/${fileId.value}`,
+      header: authHeader(uid.value),
+    });
     if (res.data && res.data.id) {
       file.value = res.data;
       if (file.value.status !== 'pending') {
@@ -224,6 +240,7 @@ const submit = async () => {
         action: curAction.value,
         comment: comment.value.trim() || null,
       },
+      header: authHeader(uid.value),
     });
     if (res.statusCode === 200) {
       uni.showToast({

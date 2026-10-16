@@ -130,7 +130,7 @@ import { ref, computed } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import {
-  FILE_CATEGORY_MAP,
+  FILE_CATEGORY_MAP, projectFileUrl, authHeader,
   fileStatusText as statusText, fileStatusColor as statusColor,
   fileThumbIcon as thumbIcon, fileSizeText as sizeText,
 } from "@/utils/permission";
@@ -144,16 +144,18 @@ const userId = computed(() => userStore.state.id || (uni.getStorageSync('userInf
 const isAdmin = computed(() => userStore.isAdminUser ? userStore.isAdminUser() : false);
 
 const fileId = ref(0);
-// H5 下 <img>/window.open 无法携带 x-user-id 请求头，会 401；把用户 ID 拼进 query
-// （后端 getUserId 支持从 query.user_id 取用户，见 server.js）
-const downloadUrl = computed(() => `/api/project-files/${fileId.value}/download?user_id=${userId.value}`);
+// H5 下 <img>/<iframe>/window.open 无法携带 x-user-id 请求头，会 401；把用户 ID 拼进 query
+// （后端 getUserId 支持从 query.user_id 取用户，见 server.js）。
+// ⚠️ projectFileUrl 会返回【绝对 URL】：uni-h5 的 <image>/uni.previewImage 会给以 "/" 开头的
+// src 拼上 router.base="/m/"，导致 <image> 实际请求 /m/api/... 拿到 SPA 的 index.html 而裂图。
+const downloadUrl = computed(() => projectFileUrl(fileId.value, `?user_id=${userId.value}`));
 const previewUrl = computed(() => {
   const ext = (file.value && file.value.file_ext) || '';
   // v2.3.6 hotfix 10-15：CAD 文件用后端自动拼的 pdf_preview_url（list/detail 接口都返）
   if (['dwg', 'dxf'].includes(ext.toLowerCase()) && file.value && file.value.pdf_preview_url) {
     return file.value.pdf_preview_url;
   }
-  return `/api/project-files/${fileId.value}/download?user_id=${userId.value}&inline=1`;
+  return projectFileUrl(fileId.value, `?user_id=${userId.value}&inline=1`);
 });
 const canApprove = computed(() => userStore.canSee("project_file:approve"));
 const canRevoke = computed(() =>
@@ -195,7 +197,11 @@ const formatTime = (s) => {
 async function loadDetail() {
   loading.value = true;
   try {
-    const res = await uni.request({ url: `/api/project-files/${fileId.value}` });
+    // 必须带 x-user-id，否则后端 getUserId 取不到用户直接 401（页面会误报"文件不存在"）
+    const res = await uni.request({
+      url: `/api/project-files/${fileId.value}`,
+      header: authHeader(userId.value),
+    });
     if (res.data && res.data.id) {
       file.value = res.data;
     }
@@ -240,7 +246,7 @@ const onRevoke = () => {
     success: async (res) => {
       if (!res.confirm) return;
       try {
-        const r = await uni.request({ url: `/api/project-files/${fileId.value}/revoke`, method: 'POST' });
+        const r = await uni.request({ url: `/api/project-files/${fileId.value}/revoke`, method: 'POST', header: authHeader(userId.value) });
         if (r.statusCode === 200) {
           uni.showToast({ title: '已撤销', icon: 'success' });
           setTimeout(() => uni.navigateBack(), 600);
@@ -261,7 +267,7 @@ const onDelete = () => {
     success: async (res) => {
       if (!res.confirm) return;
       try {
-        const r = await uni.request({ url: `/api/project-files/${fileId.value}`, method: 'DELETE' });
+        const r = await uni.request({ url: `/api/project-files/${fileId.value}`, method: 'DELETE', header: authHeader(userId.value) });
         if (r.statusCode === 200) {
           uni.showToast({ title: '已删除', icon: 'success' });
           setTimeout(() => uni.navigateBack(), 600);
