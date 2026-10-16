@@ -1835,7 +1835,7 @@ app.post('/api/upload-image', upload.single('file'), (req, res) => {
     const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
     let ext = path.extname(req.file.originalname).toLowerCase();
 
-    // v2.3.6-hotfix3：文件名没有扩展名时，按 MIME 类型推断
+    // v2.3.7：文件名没有扩展名时，按 MIME 类型推断
     // 背景：前端 compressImage() 用 canvas.toBlob() 压缩，产物是**无文件名**的 Blob，
     // 浏览器 FormData 会把它命名成 "blob"（无扩展名）。原来 path.extname('blob') === ''
     // → 不在白名单 → 误报"仅支持图片格式"，而用户上传的确实是 jpg/png。
@@ -7923,7 +7923,7 @@ if (_chromePath) {
 }
 
 // ============================================================
-// v2.3.6-hotfix3：修复「导出 PDF 里图片空白」
+// v2.3.7：修复「导出 PDF 里图片空白」
 // 背景：编辑器上传的图片插入的是**相对路径** `/uploads/logs/xxx.png`。
 // page.setContent() 渲染在空白页(about:blank)上，相对路径没有 origin 可解析
 // → 图片全部加载失败 → 导出的 PDF 里图片位置一片空白。
@@ -11001,7 +11001,7 @@ app.get('*', (req, res) => {
 });
 
 // ================================================================
-// multer 错误处理中间件（v2.3.6-hotfix3）
+// multer 错误处理中间件（v2.3.7）
 // ⚠️ 必须注册在**所有路由之后**（app.listen 之前）。Express 只会在出错位置*之后*的
 // 中间件里找错误处理器，注册在路由前面永远不会被命中。
 // 背景：upload.single() 抛错（如 File too large / Unexpected field）时，Express 默认处理器
