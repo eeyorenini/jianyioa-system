@@ -1,6 +1,6 @@
 {
   "name": "uni-preset-vue",
-  "version": "2.3.6-hotfix2",
+  "version": "2.3.7",
   "scripts": {
     "dev:custom": "uni -p",
     "dev:h5": "uni",
