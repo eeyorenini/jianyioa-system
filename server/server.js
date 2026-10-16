@@ -1729,6 +1729,28 @@ app.delete('/api/signers/:id', async (req, res) => {
   }
 });
 
+// ==================== 上传文件名中文乱码修复 ====================
+// 背景：busboy 解析 multipart 的 filename 时按 latin1 解读原始字节，而移动端/浏览器
+// 传的是 UTF-8 字节 → 中文被解成「å®8å¥½」这类字符，再存进 utf8mb4 就成了双重编码。
+// 例：「合同」正确字节 e59088e5908c，latin1 解读后每字节各占一个字符（Å æ…），
+//      最终落库为 c3a5c290c288c3a5c290c28c，前端显示乱码。
+// 解法：把字符串按 latin1 还原成原始字节，再按 utf8 解一次。
+// 注意：已正常的中文和纯 ASCII 文件名不受影响（不含 latin1 高位区，直接原样返回）。
+function fixMojibake(name) {
+  if (typeof name !== 'string' || !name) return name;
+  // 不含 latin1 高位区（U+0080-U+00FF）的名字直接跳过：
+  // 纯 ASCII 文件名和已经显示正常的中文都走这条分支，不会被二次解码
+  if (!/[\u0080-\u00ff]/.test(name)) return name;
+  try {
+    const recovered = Buffer.from(name, 'latin1').toString('utf8');
+    // 还原结果含替换字符 U+FFFD，说明原名并非「UTF-8 被误读」，保持原样
+    if (recovered.includes('�')) return name;
+    return recovered;
+  } catch {
+    return name;
+  }
+}
+
 const uploadDir = path.join(__dirname, 'uploads/');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -1740,7 +1762,9 @@ app.post('/api/contracts/upload-word', upload.single('file'), async (req, res) =
     if (!req.file) {
       return res.json({ error: '未找到文件' });
     }
-    
+    // v2.3.6-hotfix2：修复中文文件名乱码
+    req.file.originalname = fixMojibake(req.file.originalname);
+
     const fileName = req.file.originalname;
     if (!fileName.endsWith('.docx')) {
       fs.unlinkSync(req.file.path);
@@ -1766,6 +1790,8 @@ app.post('/api/upload-contract-file', upload.single('file'), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: '未找到文件' });
     }
+    // v2.3.6-hotfix2：修复中文文件名乱码
+    req.file.originalname = fixMojibake(req.file.originalname);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.pdf', '.doc', '.docx'];
     if (!allowedExts.includes(ext)) {
@@ -1797,6 +1823,8 @@ app.post('/api/upload-image', upload.single('file'), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: '未找到文件' });
     }
+    // v2.3.6-hotfix2：修复中文文件名乱码
+    req.file.originalname = fixMojibake(req.file.originalname);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
     if (!allowedExts.includes(ext)) {
@@ -1842,6 +1870,8 @@ app.post('/api/upload-pdf', upload.single('file'), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: '未找到文件' });
     }
+    // v2.3.6-hotfix2：修复中文文件名乱码
+    req.file.originalname = fixMojibake(req.file.originalname);
     if (path.extname(req.file.originalname).toLowerCase() !== '.pdf') {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: '仅支持 PDF 格式' });
@@ -3491,6 +3521,8 @@ app.post('/api/main-materials/import', upload.single('file'), async (req, res) =
     res.status(400).json({ message: '未上传文件' });
     return;
   }
+  // v2.3.6-hotfix2：修复中文文件名乱码
+  req.file.originalname = fixMojibake(req.file.originalname);
   const originalExt = path.extname(req.file.originalname || '').toLowerCase();
   if (!['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls'].includes(originalExt)) {
     try {
@@ -5666,6 +5698,10 @@ app.put('/api/purchase-requests/:id/unapprove', async (req, res) => {
 // 支持两种方式：1) multipart/form-data（files字段）2) JSON body { images: ["url1","url2"] }
 app.post('/api/purchase-requests/:id/reimburse', upload.array('files', 10), async (req, res) => {
   try {
+    // v2.3.6-hotfix2：修复中文文件名乱码（upload.array 后是 req.files 数组）
+    if (Array.isArray(req.files)) {
+      req.files.forEach(f => { f.originalname = fixMojibake(f.originalname); });
+    }
     const { userId, userName } = await getCurrentUser(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
 
@@ -6479,7 +6515,8 @@ const projectFileStorage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
+    // 先修乱码再取扩展名，保证中文名文件的 ext 也正确
+    const ext = path.extname(fixMojibake(file.originalname)).toLowerCase();
     cb(null, crypto.randomUUID() + ext);
   },
 });
@@ -6490,7 +6527,7 @@ const projectFileUpload = multer({
     const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp',
                      '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
                      '.dwg', '.dxf', '.zip', '.rar'];
-    const ext = path.extname(file.originalname).toLowerCase();
+    const ext = path.extname(fixMojibake(file.originalname)).toLowerCase();
     if (allowed.includes(ext)) cb(null, true);
     else cb(new Error('不支持的文件类型: ' + ext));
   },
@@ -6857,6 +6894,8 @@ app.post('/api/project-files', projectFileUpload.single('file'), async (req, res
       return res.status(400).json({ error: '缺少 project_id 或 category' });
     }
     if (!req.file) return res.status(400).json({ error: '请选择文件' });
+    // v2.3.6-hotfix2：修复中文文件名乱码（见 fixMojibake 注释）
+    req.file.originalname = fixMojibake(req.file.originalname);
     const fileExt = path.extname(req.file.originalname).toLowerCase().slice(1);
     const relPath = path.relative(path.join(__dirname, 'uploads'), req.file.path);
     const [result] = await pool.query(
