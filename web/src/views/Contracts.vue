@@ -578,7 +578,7 @@ import { Table } from '@tiptap/extension-table'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
-import Image from '@tiptap/extension-image'
+import ImageExtension from '@tiptap/extension-image'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table as DocxTable, TableRow as DocxTableRow, TableCell as DocxTableCell, WidthType, AlignmentType, BorderStyle, convertInchesToTwip, ShadingType, VerticalAlign, Header, Footer } from 'docx'
 import { saveAs } from 'file-saver'
 
@@ -974,7 +974,7 @@ const editor = useEditor({
     }),
     Placeholder.configure({ placeholder: '在此输入合同内容...' }),
     WordTablePasteExtension,
-    Image.configure({ inline: false, allowBase64: true }),
+    ImageExtension.configure({ inline: false, allowBase64: true }),
   ],
   content: '',
   onUpdate: ({ editor }) => {
@@ -2406,6 +2406,14 @@ const compressImage = (file) => {
   })
 }
 
+// 生成带扩展名的文件名（canvas.toBlob 产物是无名 Blob，直接 append 会被浏览器命名为 "blob"，
+// 没有扩展名 → 后端判定为非图片格式）
+const buildUploadFilename = (file) => {
+  const base = (file.name || 'image').replace(/\.[^.]*$/, '')
+  const ext = (file.type || '').split('/')[1] || 'png'
+  return `${base}.${ext}`
+}
+
 // 处理图片上传
 const handleImageUpload = async (e) => {
   const file = e.target.files?.[0]
@@ -2415,7 +2423,8 @@ const handleImageUpload = async (e) => {
   try {
     const compressedFile = await compressImage(file)
     const formData = new FormData()
-    formData.append('file', compressedFile)
+    // 第三个参数指定文件名：Blob 默认会变成无扩展名的 "blob"，必须显式给
+    formData.append('file', compressedFile, buildUploadFilename(file))
     const { data } = await axios.post('/api/upload-image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
@@ -2426,7 +2435,9 @@ const handleImageUpload = async (e) => {
       ElMessage.error(data.error || '图片上传失败')
     }
   } catch (err) {
-    ElMessage.error('图片上传失败')
+    // 展示后端真实原因（如「文件超过 50MB 上限」），不再只报笼统的失败
+    const msg = err.response?.data?.error || err.message || '图片上传失败'
+    ElMessage.error(`图片上传失败：${msg}`)
   } finally {
     uploadLoading.value = false
     e.target.value = ''

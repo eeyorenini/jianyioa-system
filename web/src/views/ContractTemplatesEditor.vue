@@ -249,7 +249,7 @@ import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import Link from '@tiptap/extension-link'
-import Image from '@tiptap/extension-image'
+import ImageExtension from '@tiptap/extension-image'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -375,7 +375,7 @@ const createNewEditor = () => {
       Link.configure({
         openOnClick: false
       }),
-      Image.configure({ inline: false, allowBase64: true }),
+      ImageExtension.configure({ inline: false, allowBase64: true }),
     ],
     editorProps: {
       attributes: {
@@ -651,7 +651,10 @@ const handleImageUpload = async (e) => {
     // 压缩图片：限制最大边 1920px，质量 0.8
     const compressedFile = await compressImage(file)
     const formData = new FormData()
-    formData.append('file', compressedFile)
+    // Blob 默认会被浏览器命名为无扩展名的 "blob"，必须显式指定文件名
+    const baseName = (file.name || 'image').replace(/\.[^.]*$/, '')
+    const ext = (file.type || '').split('/')[1] || 'png'
+    formData.append('file', compressedFile, `${baseName}.${ext}`)
     const { data } = await axios.post('/api/upload-image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })

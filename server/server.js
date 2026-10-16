@@ -14,7 +14,14 @@ const fs = require('fs');
 const multer = require('multer');
 const os = require('os');
 const { spawnSync, spawn } = require('child_process');
-const puppeteer = require('puppeteer');
+// puppeteer 懒加载（v2.3.5 PDF 预览用）：缺失时不致命，其他功能照常工作
+// 改成 try-catch + 懒加载：避免残缺 puppeteer 包让 server.js 启动崩溃
+let puppeteer = null;
+try {
+  puppeteer = require('puppeteer');
+} catch (e) {
+  console.warn('[warn] puppeteer 未安装或包残缺，PDF 预览功能不可用，其他功能不受影响');
+}
 
 // 权限核心（v2.3.1 P2）—— 替代旧 checkPermission 实现，
 // 提供 canAction / canReadAll / visibleScope / relatedProjectIds / requirePerm
@@ -1825,10 +1832,31 @@ app.post('/api/upload-image', upload.single('file'), (req, res) => {
     }
     // v2.3.6-hotfix2：修复中文文件名乱码
     req.file.originalname = fixMojibake(req.file.originalname);
-    const ext = path.extname(req.file.originalname).toLowerCase();
     const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
+    let ext = path.extname(req.file.originalname).toLowerCase();
+
+    // v2.3.6-hotfix3：文件名没有扩展名时，按 MIME 类型推断
+    // 背景：前端 compressImage() 用 canvas.toBlob() 压缩，产物是**无文件名**的 Blob，
+    // 浏览器 FormData 会把它命名成 "blob"（无扩展名）。原来 path.extname('blob') === ''
+    // → 不在白名单 → 误报"仅支持图片格式"，而用户上传的确实是 jpg/png。
+    // 修复：扩展名缺失时回退到 mimetype 推断。
+    if (!ext) {
+      const mimeExt = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'image/bmp': '.bmp',
+      }[(req.file.mimetype || '').toLowerCase()];
+      if (mimeExt) ext = mimeExt;
+    }
+
     if (!allowedExts.includes(ext)) {
       fs.unlinkSync(req.file.path);
+      const reason = `文件名=${req.file.originalname} 类型=${req.file.mimetype}`;
+      console.error(`[上传] 非图片格式被拒: ${reason}`);
+      res.errorMessage = `非图片格式被拒 (${reason})`;
       return res.status(400).json({ error: '仅支持图片格式：jpg/png/gif/webp' });
     }
     // 重命名为唯一文件名，保留扩展名
@@ -1836,11 +1864,13 @@ app.post('/api/upload-image', upload.single('file'), (req, res) => {
     const newPath = path.join(logsUploadDir, newName);
     fs.renameSync(req.file.path, newPath);
     const url = `/uploads/logs/${newName}`;
-    console.log(`[上传] 图片: ${req.file.originalname} -> ${url}`);
+    console.log(`[上传] 图片: ${req.file.originalname} (${req.file.mimetype}) -> ${url}`);
     res.json({ url, size: fs.statSync(newPath).size });
   } catch (error) {
     console.error('图片上传错误:', error);
-    res.status(500).json({ error: '图片上传失败' });
+    // 写入 errorMessage，让全局日志中间件能记录真实原因（原来恒为空）
+    res.errorMessage = '图片上传失败: ' + (error && error.message ? error.message : String(error));
+    res.status(500).json({ error: '图片上传失败: ' + (error && error.message ? error.message : '未知错误') });
   }
 });
 
@@ -7834,13 +7864,81 @@ function extractVariablesByRules(content) {
 // ============================================================
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
+
+// 依次探测可用的 Chrome/Edge 可执行文件。
+// 背景：服务器（Windows Server 2012 R2 + PM2 跑在 systemprofile 下）执行 npm install 时
+// puppeteer 的 postinstall 没把 Chromium 下载到
+// C:\Windows\system32\config\systemprofile\.cache\puppeteer，导致 launch 直接抛
+// "Could not find Chromium (rev. xxx)"。此时若系统装了 Chrome/Edge，指过去就能救。
+function resolveChromePath() {
+  // 1) 显式指定优先（部署时可配 CHROME_PATH 环境变量）
+  const envPath = process.env.CHROME_PATH;
+  if (envPath && fs.existsSync(envPath)) return envPath;
+
+  const candidates = isMac
+    ? [
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      ]
+    : isWindows
+      ? [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+          'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+          `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
+        ]
+      : [
+          '/usr/bin/google-chrome',
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/chromium',
+          '/usr/bin/chromium-browser',
+          '/snap/bin/chromium',
+        ];
+
+  for (const p of candidates) {
+    try { if (p && fs.existsSync(p)) return p; } catch (e) { /* ignore */ }
+  }
+
+  // 2) 退回 puppeteer 自带的 Chromium（若 postinstall 下载成功）
+  try {
+    const bundled = puppeteer.executablePath();
+    if (bundled && fs.existsSync(bundled)) return bundled;
+  } catch (e) { /* ignore */ }
+
+  return null; // 交给 puppeteer 自己报错，错误信息更完整
+}
+
 const PUPPETEER_CONFIG = {
   headless: true,
   args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 };
-// Mac 本地开发用指定 Chrome；Windows/Linux 用系统 Chrome 或让 puppeteer 自动找
-if (isMac) {
-  PUPPETEER_CONFIG.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const _chromePath = resolveChromePath();
+if (_chromePath) {
+  PUPPETEER_CONFIG.executablePath = _chromePath;
+  console.log('[PDF] 使用浏览器:', _chromePath);
+} else {
+  console.warn('[PDF][warn] 未找到 Chrome/Edge，PDF 导出将失败。请安装 Chrome 或设置 CHROME_PATH 环境变量');
+}
+
+// ============================================================
+// v2.3.6-hotfix3：修复「导出 PDF 里图片空白」
+// 背景：编辑器上传的图片插入的是**相对路径** `/uploads/logs/xxx.png`。
+// page.setContent() 渲染在空白页(about:blank)上，相对路径没有 origin 可解析
+// → 图片全部加载失败 → 导出的 PDF 里图片位置一片空白。
+// （上传的 PDF 之所以能正常导出，是因为 /api/upload-pdf 已把它转成
+//   base64 data URL，自带数据、不依赖路径。）
+// 解决：渲染前补一个 <base>，让相对路径指向本机后端（同端口托管的 /uploads）。
+// 纯新增，不改动任何原有的 PDF 生成流程。
+const LOCAL_BASE = `http://127.0.0.1:${PORT}/`;
+function withLocalBase(html) {
+  if (typeof html !== 'string' || !html) return html;
+  if (/<base\s/i.test(html)) return html; // 前端已带 base，不重复插
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, (m) => `${m}<base href="${LOCAL_BASE}">`);
+  }
+  return `<base href="${LOCAL_BASE}">` + html;
 }
 
 let browserInstance = null;
@@ -7887,7 +7985,7 @@ app.post('/api/export-pdf', async (req, res) => {
       <body>${html}</body>
       </html>
     `;
-    await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
+    await page.setContent(withLocalBase(fullHtml), { waitUntil: 'networkidle0' });
 
     // 生成 PDF（交给 Chrome 根据 @page size:A4 自动处理）
     const pdfBuffer = await page.pdf({
@@ -7924,7 +8022,7 @@ app.post('/api/export-pdf-multi', async (req, res) => {
       const page = await browser.newPage();
       // 直接使用前端传来的完整 HTML（已包含 DOCTYPE、<html>、<head>、<body>）
       // 不再二次包装，避免 body 没有高度导致 absolute 定位失效
-      await page.setContent(html, { waitUntil: 'networkidle0' });
+      await page.setContent(withLocalBase(html), { waitUntil: 'networkidle0' });
       const pdfBytes = await page.pdf({ format:'A4', printBackground:true, margin:{top:0,right:0,bottom:0,left:0} });
       const pdfDoc = await PDFDocument.load(pdfBytes);
       const [copied] = await mergedPdf.copyPages(pdfDoc, [0]);
@@ -10902,6 +11000,47 @@ app.get('*', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 装企云ERP系统后端运行在 http://localhost:${PORT}`);
+// ================================================================
+// multer 错误处理中间件（v2.3.6-hotfix3）
+// ⚠️ 必须注册在**所有路由之后**（app.listen 之前）。Express 只会在出错位置*之后*的
+// 中间件里找错误处理器，注册在路由前面永远不会被命中。
+// 背景：upload.single() 抛错（如 File too large / Unexpected field）时，Express 默认处理器
+// 返回 **HTML 堆栈 + 500**，前端 axios 只能看到"图片上传失败"，system_logs.error_message 恒为空，
+// 排查完全瞎猜（线上就是这样定位了半天）。这里统一转成 JSON + 正确状态码，
+// 并把原因写进 res.errorMessage，让全局日志能记录真实错误。
+const MULTER_MSG = {
+  LIMIT_FILE_SIZE: '文件超过 50MB 上限',
+  LIMIT_FILE_COUNT: '文件数量超出限制',
+  LIMIT_UNEXPECTED_FILE: '上传字段名不正确（应为 file）',
+  LIMIT_PART_COUNT: '表单分段超出限制',
+  LIMIT_FIELD_KEY: '字段名过长',
+  LIMIT_FIELD_VALUE: '字段值过长',
+  LIMIT_FIELD_COUNT: '字段数量超出限制',
+};
+app.use((err, req, res, next) => {
+  if (err && err.name === 'MulterError') {
+    const msg = MULTER_MSG[err.code] || err.message || '文件上传失败';
+    console.error(`[上传失败] ${req.path} ${err.code}: ${msg}`);
+    res.errorMessage = `MulterError ${err.code}: ${msg}`;
+    return res.status(400).json({ error: msg });
+  }
+  next(err);
 });
+
+// v2.3.6-hotfix2：listen 失败时（端口被 TIME_WAIT/CLOSE_WAIT 占用）重试 3 次，每次间隔 2 秒
+// 解决宝塔拉起新进程时 EADDRINUSE 死循环
+function startServer(retry = 0) {
+  const maxRetry = 3;
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 装企云ERP系统后端运行在 http://localhost:${PORT}`);
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && retry < maxRetry) {
+      console.warn(`[port] 3001 端口被占用，${2*(retry+1)} 秒后重试 (${retry+1}/${maxRetry})`);
+      setTimeout(() => startServer(retry + 1), 2000);
+    } else {
+      console.error('[port] listen 失败:', err.message);
+    }
+  });
+}
+startServer();

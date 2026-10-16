@@ -32,6 +32,16 @@ function detectBin(name) {
 const NODE_BIN = detectBin('node');
 const NPM_BIN = detectBin('npm');
 
+// 本地 Mac（Intel）缺少 poppler，upload-pdf 依赖 pdfinfo/pdftoppm。
+// 用 micromamba 装到了 ~/micromamba/envs/poppler/bin，这里仅在目录存在时注入 PATH。
+// 服务器（Windows 自带 poppler）不存在该目录，配置原样生效，不受影响。
+const POPPLER_BIN = path.join(process.env.HOME || '', 'micromamba/envs/poppler/bin');
+const BACKEND_ENV = { NODE_ENV: 'development' };
+if (fs.existsSync(POPPLER_BIN)) {
+  BACKEND_ENV.PATH = `${POPPLER_BIN}:${process.env.PATH}`;
+  console.log('[ecosystem] 注入 poppler PATH:', POPPLER_BIN);
+}
+
 module.exports = {
   apps: [
     {
@@ -45,7 +55,7 @@ module.exports = {
       max_memory_restart: '500M',
       out_file: path.join(ROOT, '.run-logs/backend.out.log'),
       error_file: path.join(ROOT, '.run-logs/backend.err.log'),
-      env: { NODE_ENV: 'development' }
+      env: BACKEND_ENV
     },
     {
       name: 'jianyioa-frontend',
