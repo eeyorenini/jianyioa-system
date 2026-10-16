@@ -9,6 +9,9 @@ web/dist_*/
 web/dist_prev_*/
 web/vite.config.js.timestamp-*.mjs
 
+# vite 依赖预构建缓存（本地构建时自动生成，不应进版本控制）
+web/.vite/
+
 # 系统文件
 .DS_Store
 *.log
