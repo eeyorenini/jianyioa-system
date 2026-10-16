@@ -55,10 +55,11 @@
             "urlCheck" : false,
             "es6" : true,
             "postcss" : false,
-            "minified" : false,
+            "minified" : true,
             "bigPackageSizeSupport" : true
         },
-        "usingComponents" : true
+        "usingComponents" : true,
+        "lazyCodeLoading" : "requiredComponents"
     },
     "mp-alipay" : {
         "usingComponents" : true
