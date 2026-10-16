@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "录入催收",
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "bottom-picker": "../../components/bottom-picker"
+  }
+}

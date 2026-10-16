@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">消息通知</text>
       <!-- 按钮永远显示：没未读时置灰，避免"按钮不见了"的错觉 -->

@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航（首页不需要返回按钮） -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <view class="nav-placeholder"></view>
       <text class="nav-title">首页</text>
       <view class="msg-icon" @click="goMessage">
@@ -56,7 +56,9 @@
       <view class="quick-entry-section">
         <view class="section-title">快捷操作</view>
         <view class="quick-grid">
-          <view class="quick-item" v-for="item in quickEntries" :key="item.icon" @click="handleQuick(item)">
+          <!-- key 必须唯一：原先用 item.icon，而「公司财务」和「催收记录」都是 💰，
+               导致微信报 `Do not set same key in wx:key`。label 在本列表里唯一。 -->
+          <view class="quick-item" v-for="item in quickEntries" :key="item.label" @click="handleQuick(item)">
             <view class="quick-icon" :style="{ background: item.bg }">
               <text>{{ item.icon }}</text>
             </view>

@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">项目信息</text>
       <view class="nav-placeholder"></view>
@@ -317,6 +317,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import customerTabbar from "@/components/customer-tabbar.vue";
 import customerEmptyState from "@/components/customer-empty-state.vue";
 
@@ -549,7 +550,7 @@ function getLogPhotos(log) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {
@@ -573,7 +574,7 @@ function getIssuePhotos(issue) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {
@@ -1238,9 +1239,12 @@ onMounted(() => {
   border-radius: 10px;
 }
 
-.status-pending, .status-待整改 { background: #FEF3C7; color: #92400E; }
-.status-completed, .status-已完成 { background: #D1FAE5; color: #065F46; }
-.status-verified, .status-已验收 { background: #DBEAFE; color: #1E40AF; }
+/* ⚠️ 选择器只能用 ASCII：源码里写 .status-待整改 会被构建转义成
+   .status-\5f85\6574\6539，微信 WXSS 编译器不认反斜杠转义而报错。
+   这三个中文选择器原本就没有任何模板引用（已确认是死代码），此处直接移除。 */
+.status-pending { background: #FEF3C7; color: #92400E; }
+.status-completed { background: #D1FAE5; color: #065F46; }
+.status-verified { background: #DBEAFE; color: #1E40AF; }
 
 .issue-desc {
   font-size: 13px;

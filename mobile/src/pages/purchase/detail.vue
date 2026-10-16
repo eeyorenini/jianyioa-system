@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">采购详情</text>
       <view class="nav-placeholder"></view>
@@ -97,7 +97,7 @@
             <text class="upload-text">添加凭证</text>
           </view>
           <view v-for="(img, idx) in pendingImages" :key="idx" class="pending-img-wrap">
-            <image class="preview-img" :src="img" mode="aspectFill" />
+            <image class="preview-img" :src="absAsset(img)" mode="aspectFill" />
             <view class="remove-btn" @click="removeImage(idx)">×</view>
           </view>
         </view>
@@ -201,7 +201,7 @@
               <text class="label">上传凭证</text>
               <view class="img-list">
                 <view v-for="(img, idx) in pendingFinanceImages" :key="idx" class="img-item">
-                  <image :src="img" mode="aspectFill" @click="previewImage(img, pendingFinanceImages)" />
+                  <image :src="absAsset(img)" mode="aspectFill" @click="previewImage(img, pendingFinanceImages)" />
                   <view class="img-remove" @click="removeFinanceImage(idx)">×</view>
                 </view>
                 <view v-if="pendingFinanceImages.length < 3" class="img-add" @click="chooseFinanceImage">+</view>
@@ -224,6 +224,7 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 import { onLoad } from '@dcloudio/uni-app'
 
 const loading = ref(true)
@@ -327,9 +328,7 @@ const reimburseImages = computed(() => {
 })
 
 function getImgUrl(path) {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
+  return absAsset(path)
 }
 
 function goBack() { uni.navigateBack() }

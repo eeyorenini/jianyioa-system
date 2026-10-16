@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">项目甘特图</text>
       <text class="nav-set-btn" :class="{ 'is-active': settingMode }" @click="toggleSettingMode">

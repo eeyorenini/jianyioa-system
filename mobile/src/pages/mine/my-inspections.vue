@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">我的巡检</text>
       <view class="nav-placeholder"></view>
@@ -56,7 +56,7 @@
           <!-- 底部信息 -->
           <view class="inspect-footer">
             <text class="inspect-time">{{ formatDate(item.created_at) }}</text>
-            <text class="inspect-status" :class="`status-${item.status}`">{{ getStatusText(item.status) }}</text>
+            <text class="inspect-status" :class="`status-${statusSlug(item.status)}`">{{ getStatusText(item.status) }}</text>
             <view class="inspect-actions">
               <text class="action-btn" @click="editInspect(item)">编辑</text>
               <text class="action-btn delete" @click="deleteInspect(item)">删除</text>
@@ -111,7 +111,7 @@
           <view class="photo-label">巡检照片</view>
           <view class="photo-grid">
             <view class="photo-item" v-for="(img, idx) in editPhotos" :key="idx">
-              <image class="photo-img" :src="img" mode="aspectFill" />
+              <image class="photo-img" :src="absAsset(img)" mode="aspectFill" />
               <view class="photo-del" @click="removePhoto(idx)">✕</view>
             </view>
             <view class="photo-add" @click="addPhoto">
@@ -133,6 +133,7 @@
 
 <script setup>
 import { ref, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 
 const loading = ref(true);
@@ -178,7 +179,7 @@ const getPhotos = (item) => {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {
@@ -201,6 +202,14 @@ const getLevelText = (level) => {
 const getStatusText = (status) => {
   const map = { '待处理': '待处理', '处理中': '处理中', '已完成': '已完成' };
   return map[status] || status || '待处理';
+};
+
+// 状态 → ASCII 类名后缀
+// ⚠️ 类名里不能出现中文：构建会把 .status-已完成 转义成 .status-\5df2\5b8c\6210，
+// 微信 WXSS 编译器遇到反斜杠转义直接报编译错误。所以这里统一映射成英文。
+const statusSlug = (status) => {
+  const map = { '待处理': 'pending', '处理中': 'processing', '已完成': 'done' };
+  return map[status] || 'pending';
 };
 
 // 编辑巡检
@@ -482,12 +491,12 @@ onMounted(() => {
   color: #92400E;
 }
 
-.inspect-status.status-已完成 {
+.inspect-status.status-done {
   background: #D1FAE5;
   color: #065F46;
 }
 
-.inspect-status.status-处理中 {
+.inspect-status.status-processing {
   background: #DBEAFE;
   color: #1E40AF;
 }

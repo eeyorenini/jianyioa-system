@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">财务受理</text>
       <view class="nav-placeholder"></view>
@@ -138,6 +138,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 
 const loading = ref(true)
 const detail = ref(null)
@@ -187,9 +188,7 @@ const reimburseImages = computed(() => {
 })
 
 function getImgUrl(path) {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
+  return absAsset(path)
 }
 
 function goBack() { uni.navigateBack() }

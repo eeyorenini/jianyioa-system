@@ -1,6 +1,9 @@
 <template>
   <!-- 统一顶部导航栏 -->
-  <view class="top-nav">
+  <!-- 注意：本组件当前未被任何页面引用；保留备用。
+       状态栏避让用 navTop 而非全局的 navStyle —— 这里 height:44px + 状态栏高度，
+       不需要 navStyle 里那额外的 12px 内容间距。 -->
+  <view class="top-nav" :style="navTop">
     <view class="nav-left" @click="goBack">
       <text class="nav-back">‹</text>
     </view>
@@ -10,7 +13,16 @@
 </template>
 
 <script setup >
+import { computed } from "vue";
+import { getStatusBarHeight } from "@/utils/navbar";
+
 const props = defineProps<{ title? }>();
+
+const navTop = computed(() => {
+  const h = getStatusBarHeight();
+  // H5 下返回空对象，保留 CSS 的 env(safe-area-inset-top)
+  return h ? { paddingTop: `${h}px` } : {};
+});
 
 const goBack = () => {
   uni.navigateBack();

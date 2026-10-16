@@ -1,6 +1,7 @@
 // 移动端权限映射中心
 // 所有"角色 → 菜单/入口"的差异都在这里集中定义，页面只消费结果，不再硬编码角色名。
 import { useUserStore } from "@/stores/user";
+import { API_ORIGIN } from "@/utils/api";
 
 export interface TabPerm {
   index: number;   // 必须与 pages.json 的 tabBar.list 顺序一致
@@ -8,14 +9,18 @@ export interface TabPerm {
   perm: string;    // 空字符串 = 所有人可见
 }
 
-/** 员工端原生 tabBar 的权限映射 */
+/**
+ * 员工端原生 tabBar 的权限映射
+ * ⚠️ 微信小程序 tabBar 硬上限 5 项，原「派工」已移出 tabBar，
+ *    改由首页快捷入口「派工管理」(newDispatch) 进入，故此处不再有 dispatch 项。
+ *    改动 tabBar 顺序时务必同步 pages.json。
+ */
 export const TAB_BAR_PERMS: TabPerm[] = [
   { index: 0, path: "/pages/home/index", perm: "" },
   { index: 1, path: "/pages/projects/list", perm: "" },
   { index: 2, path: "/pages/inspection/list", perm: "inspection:read" },
-  { index: 3, path: "/pages/dispatch/list", perm: "dispatch:read" },
-  { index: 4, path: "/pages/purchase/list", perm: "purchase:read" },
-  { index: 5, path: "/pages/mine/index", perm: "" },
+  { index: 3, path: "/pages/purchase/list", perm: "purchase:read" },
+  { index: 4, path: "/pages/mine/index", perm: "" },
 ];
 
 /** 按当前用户权限动态隐藏/显示原生 tab（H5 / App 支持 visible，不支持的平台静默降级） */
@@ -200,7 +205,7 @@ export function authHeader(uid?: number): Record<string, string> {
  * 请求 /m/api/... —— 后端没有这条路由，命中 SPA fallback 返回 index.html（text/html），
  * 图片/预览必然裂开（后端 getUserId 支持 query.user_id，故 URL 里带 user_id 即可鉴权）。
  * getRealPath 对 http(s):// 开头的路径原样返回，用 location.origin 拼绝对 URL 绕过；
- * 小程序端没有 window/location，保持相对路径。
+ * 小程序端没有 window/location，改用 utils/api 的 API_ORIGIN（https://erp.fujinwanjia.com）拼绝对 URL。
  *
  * @param id    文件 id
  * @param query 额外 query，如 '?user_id=1&inline=1'
@@ -212,9 +217,10 @@ export function projectFileUrl(id: number, query = ""): string {
       return window.location.origin + p;
     }
   } catch (_) {
-    /* 非浏览器环境（小程序/App）走下边的相对路径 */
+    /* 非浏览器环境（小程序/App）走下边的绝对地址 */
   }
-  return p;
+  // 小程序 / App：必须绝对 HTTPS 地址，否则 <image>/<iframe>/previewImage 无法加载
+  return API_ORIGIN ? API_ORIGIN + p : p;
 }
 
 /** 角色样式 class（优先 role_code，兼容中文角色名，避免各处重复 includes 判断） */

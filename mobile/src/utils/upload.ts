@@ -1,7 +1,11 @@
 /**
  * 统一图片上传工具
  * 所有页面图片上传都调用这里，name 字段固定为 'file'，方便后期统一替换后端接口
+ *
+ * 说明：`uni.uploadFile` 的 url 无需在此补绝对地址 —— App.vue 的 onLaunch 已统一拦截补齐。
  */
+
+import { absAsset } from './api';
 
 /** 单图上传（Promise 版本） */
 export function uploadImage(filePath: string): Promise<string> {
@@ -47,9 +51,8 @@ export function chooseAndUpload(count = 9): Promise<string[]> {
   });
 }
 
-/** 补全图片 http 地址 */
+/** 补全图片 http 地址（小程序 <image :src> 必须绝对地址） */
 export function getImageUrl(path: string): string {
   if (!path) return '';
-  if (path.startsWith('http')) return path;
-  return path.startsWith('/') ? path : '/' + path;
+  return absAsset(path);
 }

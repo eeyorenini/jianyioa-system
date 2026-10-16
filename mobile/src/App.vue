@@ -2,24 +2,87 @@
 import { onLaunch, onShow, onHide } from "@dcloudio/uni-app";
 import { useUserStore } from "./stores/user";
 import { applyRoleTabBar } from "./utils/permission";
+import { API_ORIGIN, absUrl, absAsset } from "./utils/api";
 
 onLaunch(() => {
   console.log("App Launch");
 
-  // 包装 uni.request，自动注入 x-user-id 和 x-user-role（用于后端权限过滤）
-  const _origRequest = uni.request.bind(uni);
-  uni.request = (options) => {
-    const userInfo = uni.getStorageSync('userInfo');
+  // 包装 uni.request / uploadFile / downloadFile，做三件事：
+  //   1) 自动注入 x-user-id 和 x-user-role（用于后端权限过滤）
+  //   2) 把相对路径 `/api/xxx` 补成绝对地址（微信小程序不支持相对路径）
+  //   3) 兜底补 Content-Type（见下方说明）
+  //
+  // ⚠️ 关于 Content-Type：uni 运行时在小程序端**不会**给请求补默认 Content-Type
+  //    （全产物里搜不到任何默认值，只有少数页面自己手写了 header）。
+  //    后端用 bodyParser.json() 解析请求体，拿不到 Content-Type 就解析不出 body，
+  //    req.body 变成空对象 → 登录接口 `WHERE username=? AND password=?` 匹配不到任何行
+  //    → 一直返回"用户名或密码错误"。这里统一兜底，省得每个页面都手写。
+  const hasContentType = (headers) =>
+    Object.keys(headers).some((k) => k.toLowerCase() === 'content-type');
+
+  /** 注入身份头 + 兜底 Content-Type（调用方已显式指定的绝不覆盖） */
+  const buildHeaders = (options, allowJsonDefault) => {
     const headers = options.header || {};
-    if (userInfo?.id) {
-      headers['x-user-id'] = userInfo.id;
-    }
+    const userInfo = uni.getStorageSync('userInfo');
+    if (userInfo?.id) headers['x-user-id'] = userInfo.id;
     if (userInfo?.role_code || userInfo?.role_name) {
       headers['x-user-role'] = userInfo.role_code || userInfo.role_name || '';
     }
-    options.header = headers;
+    const method = String(options.method || 'GET').toUpperCase();
+    const d = options.data;
+    const isBinary = typeof ArrayBuffer !== 'undefined' && d instanceof ArrayBuffer;
+    if (
+      allowJsonDefault &&
+      !hasContentType(headers) &&
+      method !== 'GET' &&
+      method !== 'HEAD' &&
+      d !== undefined && d !== null &&
+      typeof d === 'object' &&
+      !isBinary
+    ) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return headers;
+  };
+
+  const _origRequest = uni.request.bind(uni);
+  uni.request = (options) => {
+    options.header = buildHeaders(options, true);
+    options.url = absUrl(options.url);
     return _origRequest(options);
   };
+
+  // 上传：补绝对地址 + 注入身份头。
+  // 注意不能补 application/json —— uploadFile 是 multipart，Content-Type 由框架自己带 boundary。
+  const _origUpload = uni.uploadFile.bind(uni);
+  uni.uploadFile = (options) => {
+    options.header = buildHeaders(options, false);
+    options.url = absUrl(options.url);
+    return _origUpload(options);
+  };
+
+  // 下载：补绝对地址
+  const _origDownload = uni.downloadFile.bind(uni);
+  uni.downloadFile = (options) => {
+    options.url = absUrl(options.url);
+    return _origDownload(options);
+  };
+
+  // 图片预览：统一把相对路径补成绝对地址。
+  // 全项目约 40 处 uni.previewImage 调用，逐个改成本高且易漏；在此统一兜底。
+  // absAsset 对已是绝对地址的字符串原样返回，因此重复调用无副作用。
+  const _origPreview = uni.previewImage.bind(uni);
+  uni.previewImage = (options) => {
+    if (options && Array.isArray(options.urls)) {
+      options.urls = options.urls.map((u) => absAsset(u));
+      if (options.current) options.current = absAsset(options.current);
+    }
+    return _origPreview(options);
+  };
+
+  if (API_ORIGIN) {
+    console.log('[api] 后端基址:', API_ORIGIN);
+  }
 
   // 全局兜底：捕获未处理的 Promise 拒绝（H5 下 navigator.onLine 抖动 /
   // 第三方库副作用冒出的 reject），避免污染控制台（之前用户反馈"登录后控制台报错"）。

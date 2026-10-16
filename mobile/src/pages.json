@@ -506,38 +506,32 @@
       {
         "pagePath": "pages/home/index",
         "text": "首页",
-        "iconPath": "static/tab-home.svg",
-        "selectedIconPath": "static/tab-home-active.svg"
+        "iconPath": "static/tab-home.png",
+        "selectedIconPath": "static/tab-home-active.png"
       },
       {
         "pagePath": "pages/projects/list",
         "text": "项目",
-        "iconPath": "static/tab-project.svg",
-        "selectedIconPath": "static/tab-project-active.svg"
+        "iconPath": "static/tab-project.png",
+        "selectedIconPath": "static/tab-project-active.png"
       },
       {
         "pagePath": "pages/inspection/list",
         "text": "巡检",
-        "iconPath": "static/tab-inspect.svg",
-        "selectedIconPath": "static/tab-inspect-active.svg"
-      },
-      {
-        "pagePath": "pages/dispatch/list",
-        "text": "派工",
-        "iconPath": "static/tab-dispatch.svg",
-        "selectedIconPath": "static/tab-dispatch-active.svg"
+        "iconPath": "static/tab-inspect.png",
+        "selectedIconPath": "static/tab-inspect-active.png"
       },
       {
         "pagePath": "pages/purchase/list",
         "text": "采购",
-        "iconPath": "static/tab-purchase.svg",
-        "selectedIconPath": "static/tab-purchase-active.svg"
+        "iconPath": "static/tab-purchase.png",
+        "selectedIconPath": "static/tab-purchase-active.png"
       },
       {
         "pagePath": "pages/mine/index",
         "text": "我的",
-        "iconPath": "static/tab-mine.svg",
-        "selectedIconPath": "static/tab-mine-active.svg"
+        "iconPath": "static/tab-mine.png",
+        "selectedIconPath": "static/tab-mine-active.png"
       }
     ]
   }

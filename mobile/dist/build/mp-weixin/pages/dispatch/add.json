@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "新建派工",
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "bottom-picker": "../../components/bottom-picker"
+  }
+}

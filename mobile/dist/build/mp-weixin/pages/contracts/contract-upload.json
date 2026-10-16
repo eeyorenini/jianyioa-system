@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "上传合同",
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "bottom-picker": "../../components/bottom-picker"
+  }
+}

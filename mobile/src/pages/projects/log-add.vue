@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">新建施工日志</text>
       <view class="nav-placeholder"></view>
@@ -97,7 +97,7 @@
       <view class="form-label">现场照片（自动加水印）</view>
       <view class="photo-grid">
         <view class="photo-item" v-for="(img, idx) in photos" :key="img.id || idx">
-          <image class="photo-img" :src="img.url || img" mode="aspectFill" @click="previewImg(idx)"></image>
+          <image class="photo-img" :src="absAsset(img.url || img)" mode="aspectFill" @click="previewImg(idx)"></image>
           <view class="photo-del" @click="delPhoto(idx)">✕</view>
           <view class="photo-uploading" v-if="uploadingPhotoIdx === idx">
             <view class="photo-uploading-icon">⟳</view>
@@ -134,6 +134,7 @@
 
 <script setup >
 import { ref, reactive, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 import VoiceInput from "@/components/voice-input.vue";
 
@@ -275,11 +276,7 @@ const asyncUploadPhoto = (filePath, index, total, placeholder) => {
 };
 
 const previewImg = (idx) => {
-  const urls = photos.value.map(p => {
-    const url = p.url || p;
-    if (url.startsWith('/uploads/') || url.startsWith('http') || url.startsWith('blob:')) return url;
-    return url;
-  });
+  const urls = photos.value.map(p => absAsset(p.url || p));
   uni.previewImage({ urls, current: idx });
 };
 

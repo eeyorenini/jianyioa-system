@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">验收详情</text>
       <view class="nav-placeholder"></view>
@@ -78,6 +78,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 
 const record = ref(null);
 const photos = ref([]);
@@ -100,7 +101,7 @@ const parsePhotos = (att) => {
     let p = att;
     if (typeof p === 'string') p = JSON.parse(p);
     if (typeof p === 'string') p = JSON.parse(p);
-    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()) : [];
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()).map(absAsset) : [];
   } catch { return []; }
 };
 

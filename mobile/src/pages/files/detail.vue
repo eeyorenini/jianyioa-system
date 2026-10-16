@@ -1,6 +1,6 @@
 <template>
   <view class="page">
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">文件详情</text>
       <view class="nav-placeholder"></view>

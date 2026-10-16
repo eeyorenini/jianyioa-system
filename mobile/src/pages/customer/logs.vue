@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">施工日志</text>
       <view class="nav-placeholder"></view>
@@ -79,6 +79,7 @@
 
 <script setup>
 import { ref, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import customerTabbar from "@/components/customer-tabbar.vue";
 import { useUserStore } from "@/stores/user";
 const userStore = useUserStore();
@@ -135,7 +136,7 @@ function getLogPhotos(log) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {

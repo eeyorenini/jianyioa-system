@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">节点管理</text>
       <view class="nav-placeholder"></view>
@@ -799,7 +799,9 @@ const goBack = () => {
   50%  { transform: scale(1.04); box-shadow: 0 0 18px rgba(102, 126, 234, 0.5); }
   100% { transform: scale(1); }
 }
-.sort-mode .node-main > * { pointer-events: none; }
+/* ⚠️ 不能用 * 通配选择器：WXSS 不支持，编译直接报 "error at token *"。
+   .node-main 的直接子元素都是 <view>，用元素选择器等价替代。 */
+.sort-mode .node-main > view { pointer-events: none; }
 
 .node-main { flex: 1; min-width: 0; }
 

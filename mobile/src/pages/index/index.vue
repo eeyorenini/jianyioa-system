@@ -1,7 +1,7 @@
 <template>
   <view class="index-container">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">首页</text>
       <view class="nav-placeholder"></view>

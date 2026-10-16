@@ -1,6 +1,6 @@
 <template>
   <view class="page">
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">上传文件</text>
       <view class="nav-placeholder"></view>

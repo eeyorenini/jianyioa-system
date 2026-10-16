@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">项目详情</text>
       <view class="nav-placeholder"></view>
@@ -228,7 +228,7 @@
                   <text class="log-tag-icon" :class="`level-tag-${issue.level}`" v-if="issue.level">
                     {{ issue.level === 'serious' ? '⚠️ 严重' : issue.level === 'stop' ? '🛑 停工' : 'ℹ️ 一般' }}
                   </text>
-                  <text class="log-tag-icon status-tag" :class="`status-${issue.rectify_status || issue.status}`">
+                  <text class="log-tag-icon status-tag" :class="`status-${statusSlug(issue)}`">
                     {{ getIssueStatusText(issue) }}
                   </text>
                 </view>
@@ -681,7 +681,7 @@
             </view>
           </view>
           <view v-if="collectionModal.data.images" class="modal-images">
-            <image v-for="(img, idx) in JSON.parse(collectionModal.data.images)" :key="idx" :src="img" class="modal-img" mode="aspectFill" @click="previewImage(JSON.parse(collectionModal.data.images), idx)" />
+            <image v-for="(img, idx) in JSON.parse(collectionModal.data.images)" :key="idx" :src="absAsset(img)" class="modal-img" mode="aspectFill" @click="previewImage(JSON.parse(collectionModal.data.images), idx)" />
           </view>
           <view class="modal-actions">
             <button class="modal-btn cancel" @click="collectionModal.visible = false">取消</button>
@@ -719,7 +719,7 @@
             class="thumb-cell"
             @click="previewGalleryImage(idx, galleryPhotos)"
           >
-            <image class="thumb-img" :src="photo.url" mode="aspectFill" />
+            <image class="thumb-img" :src="absAsset(photo.url)" mode="aspectFill" />
             <view class="thumb-overlay">
               <text class="thumb-cat">{{ photo.category }}</text>
             </view>
@@ -787,6 +787,8 @@
 
 <script setup >
 import { ref, computed, onMounted, watch } from "vue";
+import { onShow } from "@dcloudio/uni-app";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 
 const projectId = ref(0);
@@ -902,7 +904,7 @@ const loadGalleryStats = async () => {
         stats[item.category] = (stats[item.category] || 0) + 1;
       }
       galleryStats.value = stats;
-      galleryPhotos.value = res.data.list;
+      galleryPhotos.value = (res.data.list || []).map((x) => ({ ...x, url: absAsset(x.url) }));
     }
   } catch (e) { console.error('loadGalleryStats', e); }
 };
@@ -1069,7 +1071,7 @@ const getLogPhotos = (log) => {
     if (Array.isArray(parsed)) {
       console.log('返回图片数组，长度:', parsed.length);
       // 过滤掉空字符串或无效数据
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     console.log('不是数组，返回空');
     return [];
@@ -1095,7 +1097,7 @@ const getIssuePhotos = (issue) => {
     let photosStr = issue.images;
     let parsed = JSON.parse(photosStr);
     if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-    if (Array.isArray(parsed)) return parsed.filter(p => p && p.trim());
+    if (Array.isArray(parsed)) return parsed.filter(p => p && p.trim()).map(absAsset);
     return [];
   } catch (e) {
     return [];
@@ -1116,6 +1118,20 @@ const getIssueStatusText = (issue) => {
   if (s === '待验收') return '👀 待验收';
   if (s === '已完成') return '✅ 已完成';
   return '⏳ 待整改';
+};
+
+// 状态 → ASCII 类名后缀
+// ⚠️ 类名里不能出现中文：构建会把 .status-待整改 转义成 .status-\5f85\6574\6539，
+// 微信 WXSS 编译器遇到反斜杠转义直接报编译错误。所以这里统一映射成英文。
+const statusSlug = (issue) => {
+  const s = (issue && (issue.rectify_status || issue.status)) || '';
+  const map = {
+    '待整改': 'pending', '待处理': 'pending', pending: 'pending',
+    '整改中': 'fixing',
+    '待验收': 'review',
+    '已完成': 'done', completed: 'done',
+  };
+  return map[s] || 'pending';
 };
 
 const goLogAdd = () => {
@@ -1420,7 +1436,8 @@ const parseAttachments = (raw) => {
 // 打开单个附件
 const openOneAttachment = (url) => {
   if (!url) return;
-  const fullUrl = url.startsWith('http') ? url : (location.origin + url);
+  // 小程序无 location，统一用 absAsset 补绝对地址（H5 下同源相对路径也能正确解析）
+  const fullUrl = absAsset(url);
   const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(url);
 
   // #ifdef H5
@@ -1748,7 +1765,7 @@ const getAcceptPhotos = (a) => {
     let p = a.attachment;
     if (typeof p === 'string') p = JSON.parse(p);
     if (typeof p === 'string') p = JSON.parse(p);
-    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()) : [];
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()).map(absAsset) : [];
   } catch { return []; }
 };
 
@@ -1800,8 +1817,23 @@ onMounted(() => {
   }
 });
 
+// #ifdef H5
+// 仅在 H5 有效：从后台切回前台时刷新合同/变更列表。
+// 小程序/App 没有 document，直接用 onShow 生命周期替代（见下方 onShow）。
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && projectId.value) {
+    loadContracts();
+    loadChanges();
+    checkContractApprovePermission();
+    checkChangeApprovePermission();
+  }
+});
+// #endif
+
+// 小程序 / App 没有 document.visibilitychange，用页面 onShow 替代：
+// 从其他页面返回时刷新合同/变更列表。首次进入 projectId 仍为 0，自动跳过，避免重复请求。
+onShow(() => {
+  if (projectId.value) {
     loadContracts();
     loadChanges();
     checkContractApprovePermission();
@@ -2996,10 +3028,10 @@ const goBack = () => {
   border-radius: 8px;
 }
 
-.status-待整改, .status-待处理, .status-pending { background: #FEF3C7; color: #D97706; }
-.status-整改中 { background: #EDE9FE; color: #7C3AED; }
-.status-待验收 { background: #DBEAFE; color: #2563EB; }
-.status-已完成, .status-completed { background: #D1FAE5; color: #059669; }
+.status-pending { background: #FEF3C7; color: #D97706; }
+.status-fixing { background: #EDE9FE; color: #7C3AED; }
+.status-review { background: #DBEAFE; color: #2563EB; }
+.status-done { background: #D1FAE5; color: #059669; }
 
 .level-tag-serious { background: #FEE2E2; color: #DC2626; }
 .level-tag-stop { background: #1E3A5F; color: #fff; }

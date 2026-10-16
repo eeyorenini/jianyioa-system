@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-title">消息通知</text>
       <view class="nav-right" v-if="list.length > 0" @click="markAllRead">
         <text class="mark-all-btn">全部已读</text>

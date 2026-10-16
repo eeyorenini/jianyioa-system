@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">采购申请</text>
       <view class="nav-placeholder"></view>
@@ -181,7 +181,7 @@
             <text class="form-label">报销凭证 *</text>
             <view class="img-uploader">
               <view v-for="(img, idx) in reimburseForm.images" :key="idx" class="img-thumb-wrap">
-                <image class="img-thumb" :src="img" mode="aspectFill" @click="previewReimburseImage(img)" />
+                <image class="img-thumb" :src="absAsset(img)" mode="aspectFill" @click="previewReimburseImage(img)" />
                 <view class="img-remove" @click="removeReimburseImage(idx)">×</view>
               </view>
               <view v-if="reimburseForm.images.length < 9" class="img-add" @click="chooseReimburseImages">
@@ -202,6 +202,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { absAsset } from "@/utils/api";
 import { useUserStore } from '@/stores/user'
 import { guardTab } from '@/utils/permission'
 
@@ -315,11 +316,7 @@ const reimburseImagesOf = (item) => {
   return getImages(item.reimbursement.images)
 }
 
-const getImgUrl = (path) => {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
-}
+const getImgUrl = (path) => absAsset(path)
 
 const previewImage = (current, list) => {
   uni.previewImage({ current, urls: list })

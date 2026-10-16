@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">巡检详情</text>
       <view class="nav-placeholder"></view>
@@ -130,6 +130,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 
 const loading = ref(true)
 const detail = ref(null)
@@ -259,7 +260,7 @@ function getPhotos(item) {
     let s = item.images
     let p = JSON.parse(s)
     if (typeof p === 'string') p = JSON.parse(p)
-    if (Array.isArray(p)) return p.filter(x => x && x.trim())
+    if (Array.isArray(p)) return p.filter(x => x && x.trim()).map(absAsset)
     return []
   } catch { return [] }
 }

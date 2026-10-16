@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">新建采购</text>
       <text class="nav-btn" @click="submit" :class="{ disabled: submitting }">提交</text>
@@ -132,6 +132,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 import BottomPicker from '@/components/bottom-picker.vue'
 
 const selectedProject = ref(null)
@@ -330,11 +331,7 @@ const onUnitSelect = ({ item }) => {
   unitPicker.value.visible = false
 }
 
-const getImageUrl = (path) => {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
-}
+const getImageUrl = (path) => absAsset(path)
 
 const chooseImage = () => {
   if (uploadingImage.value) return

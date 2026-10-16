@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">财务确认</text>
       <view class="nav-placeholder"></view>
@@ -73,7 +73,7 @@
         </view>
         <view v-if="pendingFinanceImages.length > 0" class="image-list">
           <view v-for="(img, idx) in pendingFinanceImages" :key="idx" class="img-wrap">
-            <image class="preview-img" :src="img" mode="aspectFill" />
+            <image class="preview-img" :src="absAsset(img)" mode="aspectFill" />
             <view class="img-remove" @click="removePendingImage(idx)">×</view>
           </view>
         </view>
@@ -108,6 +108,7 @@
 
 <script setup>
 import { ref, computed, reactive, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 
 const loading = ref(true)
 const detail = ref(null)
@@ -155,9 +156,7 @@ const financeImages = computed(() => {
 const totalImages = computed(() => financeImages.value.length + pendingFinanceImages.value.length)
 
 function getImgUrl(path) {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
+  return absAsset(path)
 }
 
 function goBack() { uni.navigateBack() }
