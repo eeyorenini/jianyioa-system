@@ -85,12 +85,9 @@
         </template>
       </view>
 
-      <!-- 角色展示 -->
+      <!-- 版本号（构建时从 package.json 注入，与小程序一致） -->
       <view class="roles-demo" v-if="loginType === 'employee'">
-        <text class="roles-label">系统角色</text>
-        <view class="roles-row">
-          <view class="role-chip" v-for="r in roles" :key="r">{{ r }}</view>
-        </view>
+        <text class="app-version">v{{ APP_VERSION }}</text>
       </view>
 
       <view class="roles-demo" v-else>
@@ -107,6 +104,9 @@ import { useUserStore } from "@/stores/user";
 const loginType = ref('employee');
 const loading = ref(false);
 
+// 版本号由 vite.config.ts 的 define 在构建时注入（来源：package.json 的 version）
+const APP_VERSION = __APP_VERSION__;
+
 const empForm = reactive({
   username: '',
   password: '',
@@ -116,8 +116,6 @@ const custForm = reactive({
   phone: '',
   name: '',
 });
-
-const roles = ['管理员', '设计师', '工长', '监理', '业主', '主材', '财务', '助理'];
 
 // 员工登录
 const handleEmployeeLogin = async () => {
@@ -356,19 +354,11 @@ const goBack = () => {
   letter-spacing: 1px;
 }
 
-.roles-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-}
-
-.role-chip {
+.app-version {
+  display: block;
   font-size: 11px;
-  padding: 3px 10px;
-  border: 1px solid rgba(255,255,255,0.2);
-  border-radius: 20px;
-  color: rgba(255,255,255,0.5);
+  letter-spacing: 1px;
+  color: rgba(255,255,255,0.45);
 }
 /* 导航栏 */
 .nav-bar {
