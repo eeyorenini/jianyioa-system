@@ -9321,6 +9321,168 @@ app.get('/api/wechat/bind-status/:phone', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ==================== 小程序微信登录（静默 openid + 手机号绑定） ====================
+// 设计说明：
+//   微信自 2022-10-25 回收 getUserProfile 后，小程序端**拿不到**真实头像昵称，
+//   头像昵称只能由用户主动填写（chooseAvatar / input type=nickname），且不能作为身份标识。
+//   因此身份链路改为：wx.login 静默拿 openid → 手机号（唯一认证标识）绑定 → 映射到 customers。
+//   openid 仅用于"记住这台微信"，不承担认证作用。
+
+/** 读取小程序 appid/secret：优先环境变量，其次 system_settings.wechat_mini */
+async function getMiniConfig() {
+  const envId = (process.env.WX_MINI_APPID || '').trim();
+  const envSecret = (process.env.WX_MINI_SECRET || '').trim();
+  if (envId && envSecret) return { app_id: envId, app_secret: envSecret };
+  const cfg = await getSetting('wechat_mini');
+  if (cfg && cfg.app_id && cfg.app_secret) return { app_id: cfg.app_id, app_secret: cfg.app_secret };
+  return null;
+}
+
+/**
+ * 按手机号解析客户身份（主账户 / 家庭成员）。
+ * 返回结构与 /api/customers/login 保持一致，供小程序端直接复用。
+ */
+async function resolveCustomerByPhone(phone) {
+  const fm = await db.prepare('SELECT * FROM family_members WHERE phone = ? LIMIT 1').get(phone);
+  if (fm) {
+    if (fm.is_master === 1 || fm.relation === '本人') {
+      const master = await db.prepare('SELECT * FROM customers WHERE id = ? LIMIT 1').get(fm.customer_id);
+      if (master) return { ok: true, customer: master };
+    }
+    const master = await db.prepare('SELECT * FROM customers WHERE id = ? LIMIT 1').get(fm.customer_id);
+    if (master) {
+      return {
+        ok: true,
+        customer: { id: fm.id, name: fm.name, phone: fm.phone, relation: fm.relation, is_master: 0 },
+        masterCustomer: master,
+        masterCustomerId: master.id,
+        isFamilyMember: true,
+        familyMemberId: fm.id,
+        relation: fm.relation,
+      };
+    }
+  }
+  const customer = await db.prepare('SELECT * FROM customers WHERE phone = ? LIMIT 1').get(phone);
+  if (customer) return { ok: true, customer };
+  return { ok: false, message: '该手机号未登记' };
+}
+
+// POST /api/wechat/mini-login — 静默登录：code 换 openid，返回是否已绑定
+app.post('/api/wechat/mini-login', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ success: false, message: '缺少 code' });
+
+    const cfg = await getMiniConfig();
+    if (!cfg) return res.status(500).json({ success: false, message: '微信小程序配置未完成' });
+
+    const session = await getWechatSession(code, 'mini', cfg);
+    if (!session || session.errcode) {
+      return res.json({ success: false, message: (session && session.errmsg) || '微信登录失败' });
+    }
+    const openid = session.openid;
+    if (!openid) return res.json({ success: false, message: '未获取到 openid' });
+
+    const [rows] = await pool.query(
+      'SELECT * FROM wechat_users WHERE mini_openid = ? AND status = 1 LIMIT 1', [openid]
+    );
+    const wxUser = rows[0];
+    const unionid = (wxUser && wxUser.unionid) || session.unionid || null;
+
+    // 还没填过资料：返回空资料，前端展示头像昵称填写页
+    if (!wxUser) {
+      return res.json({
+        success: true, bound: false, openid, unionid,
+        nickname: '', avatar: '', hasProfile: false,
+      });
+    }
+
+    // 有资料但没绑手机号：可以进小程序，只是看不到自己名下的工地
+    if (!wxUser.phone) {
+      return res.json({
+        success: true, bound: false, openid, unionid,
+        nickname: wxUser.nickname || '', avatar: wxUser.avatar || '',
+        hasProfile: !!(wxUser.nickname || wxUser.avatar),
+      });
+    }
+
+    const ident = await resolveCustomerByPhone(wxUser.phone);
+    if (!ident.ok) {
+      // 绑定的手机号在客户表里已不存在 → 当作未绑定，让用户重新绑
+      return res.json({
+        success: true, bound: false, openid, unionid: session.unionid || null,
+        message: '原绑定手机号已失效，请重新绑定',
+      });
+    }
+    return res.json({
+      success: true, bound: true, openid,
+      unionid: wxUser.unionid || session.unionid || null,
+      nickname: wxUser.nickname || '', avatar: wxUser.avatar || '', phone: wxUser.phone,
+      ...ident,
+    });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// POST /api/wechat/mini-bind — 绑定手机号（手机号是唯一认证标识）
+app.post('/api/wechat/mini-bind', async (req, res) => {
+  try {
+    const { openid, phone, nickname, avatar } = req.body || {};
+    if (!openid) return res.status(400).json({ success: false, message: '缺少 openid' });
+    const p = String(phone || '').trim();
+    if (!/^1\d{10}$/.test(p)) return res.json({ success: false, message: '请输入正确的手机号' });
+
+    const ident = await resolveCustomerByPhone(p);
+    if (!ident.ok) {
+      return res.json({ success: false, message: '未查询到您的预约记录，请联系您的设计师核对手机号' });
+    }
+
+    const now = new Date().toISOString();
+    const [existing] = await pool.query('SELECT id FROM wechat_users WHERE mini_openid = ? LIMIT 1', [openid]);
+    if (existing.length) {
+      await pool.query(
+        `UPDATE wechat_users SET phone=?, nickname=COALESCE(?,nickname), avatar=COALESCE(?,avatar),
+         bind_time=?, status=1, unsubscribe_time=NULL, update_time=? WHERE id=?`,
+        [p, nickname || null, avatar || null, now, now, existing[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO wechat_users (mini_openid, phone, nickname, avatar, bind_time, status, create_time, update_time)
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        [openid, p, nickname || '', avatar || '', now, now, now]
+      );
+    }
+
+    return res.json({ success: true, message: '绑定成功', phone: p, ...ident });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// POST /api/wechat/mini-profile — 保存头像昵称（不绑手机号也能存）
+// 说明：微信 2022-10-25 回收 getUserProfile 后，头像昵称只能由用户主动填写
+//      （button open-type=chooseAvatar / input type=nickname），这里接收前端上传后的地址。
+app.post('/api/wechat/mini-profile', async (req, res) => {
+  try {
+    const { openid, nickname, avatar } = req.body || {};
+    if (!openid) return res.status(400).json({ success: false, message: '缺少 openid' });
+
+    const now = new Date().toISOString();
+    const [existing] = await pool.query('SELECT id FROM wechat_users WHERE mini_openid = ? LIMIT 1', [openid]);
+    if (existing.length) {
+      await pool.query(
+        `UPDATE wechat_users SET nickname=COALESCE(?,nickname), avatar=COALESCE(?,avatar),
+         status=1, update_time=? WHERE id=?`,
+        [nickname || null, avatar || null, now, existing[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO wechat_users (mini_openid, nickname, avatar, status, create_time, update_time)
+         VALUES (?, ?, ?, 1, ?, ?)`,
+        [openid, nickname || '', avatar || '', now, now]
+      );
+    }
+    res.json({ success: true, openid, nickname: nickname || '', avatar: avatar || '' });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // ==================== 合同上传（移动端） ====================
 app.post('/api/contracts/upload', async (req, res) => {
   try {
