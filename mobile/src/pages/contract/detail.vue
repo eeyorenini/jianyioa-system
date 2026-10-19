@@ -46,6 +46,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { toDate } from '@/utils/date'
 
 const loading = ref(true)
 const detail = ref(null)
@@ -75,7 +76,7 @@ const statusText = computed(() => {
 
 function formatDate(str) {
   if (!str) return ''
-  const d = new Date(str)
+  const d = toDate(str)
   return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')}`
 }
 

@@ -74,6 +74,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { toDate } from '@/utils/date'
 
 const type = ref('all')
 const records = ref([])
@@ -144,7 +145,7 @@ function onTypeChange(val) {
 
 function formatDate(str) {
   if (!str) return ''
-  const d = new Date(str)
+  const d = toDate(str)
   return `${d.getMonth()+1}月${d.getDate()}日`
 }
 

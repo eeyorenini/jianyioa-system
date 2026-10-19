@@ -65,6 +65,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { toDate } from '@/utils/date'
 
 const keyword = ref('')
 const status = ref('all')
@@ -130,7 +131,7 @@ function statusText(s) {
 
 function formatDate(str) {
   if (!str) return ''
-  const d = new Date(str)
+  const d = toDate(str)
   return `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')}`
 }
 

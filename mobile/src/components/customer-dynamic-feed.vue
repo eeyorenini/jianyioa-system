@@ -112,6 +112,7 @@
 
 <script setup>
 import { ref } from "vue";
+import { toDate } from "@/utils/date";
 
 const props = defineProps({
   list: { type: Array, default: () => [] },
@@ -136,7 +137,7 @@ const getContentText = (item) => {
 // 格式化日期
 const formatDate = (dateStr) => {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
+  const d = toDate(dateStr);
   const now = new Date();
   const diff = now - d;
   

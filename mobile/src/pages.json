@@ -522,12 +522,6 @@
         "selectedIconPath": "static/tab-inspect-active.svg"
       },
       {
-        "pagePath": "pages/dispatch/list",
-        "text": "派工",
-        "iconPath": "static/tab-dispatch.svg",
-        "selectedIconPath": "static/tab-dispatch-active.svg"
-      },
-      {
         "pagePath": "pages/purchase/list",
         "text": "采购",
         "iconPath": "static/tab-purchase.svg",

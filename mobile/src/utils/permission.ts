@@ -8,14 +8,18 @@ export interface TabPerm {
   perm: string;    // 空字符串 = 所有人可见
 }
 
-/** 员工端原生 tabBar 的权限映射 */
+/**
+ * 员工端原生 tabBar 的权限映射
+ * ⚠️ 与微信小程序保持一致：tabBar 固定 5 项，原「派工」已移出 tabBar
+ *    （派工页仍保留，从首页快捷入口「派工管理」进入）。
+ *    改动 tabBar 顺序时务必同步 pages.json。
+ */
 export const TAB_BAR_PERMS: TabPerm[] = [
   { index: 0, path: "/pages/home/index", perm: "" },
   { index: 1, path: "/pages/projects/list", perm: "" },
   { index: 2, path: "/pages/inspection/list", perm: "inspection:read" },
-  { index: 3, path: "/pages/dispatch/list", perm: "dispatch:read" },
-  { index: 4, path: "/pages/purchase/list", perm: "purchase:read" },
-  { index: 5, path: "/pages/mine/index", perm: "" },
+  { index: 3, path: "/pages/purchase/list", perm: "purchase:read" },
+  { index: 4, path: "/pages/mine/index", perm: "" },
 ];
 
 /** 按当前用户权限动态隐藏/显示原生 tab（H5 / App 支持 visible，不支持的平台静默降级） */

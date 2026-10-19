@@ -1,8 +1,20 @@
 import { defineConfig } from "vite";
 import uni from "@dcloudio/vite-plugin-uni";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// 版本号单一来源：package.json 的 version。
+// 构建时注入为全局常量 __APP_VERSION__，页面里直接引用即可，
+// 避免发版时手写版本号与 package.json 漂移（此前「我的」页写死 v2.3.4）。
+const pkg = JSON.parse(
+  readFileSync(resolve(process.cwd(), "package.json"), "utf-8")
+) as { version?: string };
 
 export default defineConfig({
   plugins: [uni()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version || "0.0.0"),
+  },
   // 关键修复：uni-h5 的 manifest.json 设了 h5.router.base = "/m/"，
   // dev 模式也走这套路由前缀。但 vite 默认从 10086 根路径起服务，
   // 不加这个 rewrite 用户访问 http://localhost:10086/ 会 404，

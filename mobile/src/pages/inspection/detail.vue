@@ -130,6 +130,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { toDate } from '@/utils/date'
 
 const loading = ref(true)
 const detail = ref(null)
@@ -213,7 +214,7 @@ const severityText = computed(() => {
 // - normal：否则
 const daysLeft = computed(() => {
   if (!detail.value?.due_date) return null
-  const due = new Date(detail.value.due_date)
+  const due = toDate(detail.value.due_date)
   const today = new Date()
   // 仅比较日期部分（去掉时分秒）
   due.setHours(0, 0, 0, 0)

@@ -79,7 +79,7 @@
 
     <!-- 版本信息 -->
     <view class="version-info">
-      <text>简逸装饰 · 工地管理系统 v2.3.4</text>
+      <text>简逸装饰 · 工地管理系统 v{{ APP_VERSION }}</text>
     </view>
 
     <!-- 借权对象选择弹窗（员工列表） -->
@@ -101,6 +101,8 @@ import BottomPicker from "@/components/bottom-picker.vue";
 import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
 
 const userStore = useUserStore();
+// 版本号来自 package.json（vite define 注入），不再手写
+const APP_VERSION = __APP_VERSION__;
 const imp = userStore.imp;
 const userName = computed(() => userStore.state.name || '用户');
 const roleName = computed(() => userStore.state.position || userStore.state.role_name || '未知');
@@ -116,11 +118,12 @@ const loadUnread = () => {
     success: (res) => {
       const count = res.data?.count || 0;
       unreadCount.value = count;
-      // 设置 TabBar「我的」tab 的badge —— tabBar 共6项：首页0 项目1 巡检2 派工3 采购4 我的5
+      // 设置 TabBar「我的」tab 的 badge —— tabBar 共5项：
+      // 首页0 项目1 巡检2 采购3 我的4（派工已移出 tabBar）
       if (count > 0) {
-        uni.setTabBarBadge({ index: 5, text: count > 99 ? '99+' : String(count) });
+        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
       } else {
-        uni.removeTabBarBadge({ index: 5 });
+        uni.removeTabBarBadge({ index: 4 });
       }
     },
     fail: () => {}

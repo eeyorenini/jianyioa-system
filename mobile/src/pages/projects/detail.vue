@@ -788,6 +788,7 @@
 <script setup >
 import { ref, computed, onMounted, watch } from "vue";
 import { useUserStore } from "@/stores/user";
+import { toDate } from "@/utils/date";
 
 const projectId = ref(0);
 const project = ref({});
@@ -853,7 +854,7 @@ const financeRecords = computed(() => {
       });
     }
   });
-  return records.sort((a, b) => new Date(b.date) - new Date(a.date));
+  return records.sort((a, b) => toDate(b.date).getTime() - toDate(a.date).getTime());
 });
 
 const financeIncome = computed(() =>
@@ -1177,8 +1178,8 @@ const filteredChanges = computed(() => {
   if (changeFilter.value === 'decrease') arr = arr.filter(c => c.change_type === 'decrease');
   // 按"审核时间/提交时间"倒序：最新的在最上面（大王指示）
   return arr.slice().sort((a, b) => {
-    const ta = new Date(a.reviewed_at || a.submitted_at || a.created_at || 0).getTime();
-    const tb = new Date(b.reviewed_at || b.submitted_at || b.created_at || 0).getTime();
+    const ta = toDate(a.reviewed_at || a.submitted_at || a.created_at || 0).getTime();
+    const tb = toDate(b.reviewed_at || b.submitted_at || b.created_at || 0).getTime();
     return tb - ta;
   });
 });
