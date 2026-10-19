@@ -75,6 +75,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+import { toDate } from '@/utils/date'
 
 const messages = ref([])
 const loading = ref(false)
@@ -203,7 +204,7 @@ function loadMore() {
 
 function formatTime(str) {
   if (!str) return ''
-  const d = new Date(str)
+  const d = toDate(str)
   const now = new Date()
   const diff = now - d
   if (diff < 60000) return '刚刚'

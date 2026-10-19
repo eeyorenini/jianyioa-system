@@ -130,6 +130,7 @@
 <script setup >
 import { ref, computed, onMounted } from "vue";
 import { useUserStore } from "@/stores/user";
+import { toDate } from "@/utils/date";
 
 const project = ref({});
 const projectId = ref(0);
@@ -163,8 +164,8 @@ const isInRange = (idx) => {
 // 获取甘特条显示文字（同一日期只显示单个日期）
 const getBarText = (node) => {
   if (!node.plan_date || !node.plan_end_date) return '';
-  const start = new Date(node.plan_date);
-  const end = new Date(node.plan_end_date);
+  const start = toDate(node.plan_date);
+  const end = toDate(node.plan_end_date);
   const fmt = (d) => `${d.getMonth() + 1}月${d.getDate()}日`;
   if (start.getTime() === end.getTime()) {
     return fmt(start);
@@ -226,8 +227,8 @@ const onCellTap = async (node, idx) => {
 // 计算工期天数
 const totalDays = computed(() => {
   if (!project.value.start_date || !project.value.end_date) return 0;
-  const s = new Date(project.value.start_date);
-  const e = new Date(project.value.end_date);
+  const s = toDate(project.value.start_date);
+  const e = toDate(project.value.end_date);
   return Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 });
 
@@ -246,8 +247,8 @@ const validNodes = computed(() => {
 const days = computed(() => {
   if (!project.value.start_date || !project.value.end_date) return [];
   const result = [];
-  const start = new Date(project.value.start_date);
-  const end = new Date(project.value.end_date);
+  const start = toDate(project.value.start_date);
+  const end = toDate(project.value.end_date);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -275,8 +276,8 @@ const days = computed(() => {
 const getBarStyle = (node) => {
   if (!node.plan_date || !node.plan_end_date) return {};
   const start = new Date(project.value.start_date);
-  const nodeStart = new Date(node.plan_date);
-  const nodeEnd = new Date(node.plan_end_date);
+  const nodeStart = toDate(node.plan_date);
+  const nodeEnd = toDate(node.plan_end_date);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 

@@ -85,6 +85,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { absAsset } from "@/utils/api";
+import { toDate } from "@/utils/date";
 
 const log = ref(null)
 const loading = ref(true)
@@ -136,19 +137,19 @@ function getPhotos(log) {
 
 function formatDate(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
 }
 
 function formatFullTime(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
 function formatFullDateTime(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 

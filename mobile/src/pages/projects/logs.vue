@@ -120,6 +120,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { absAsset } from "@/utils/api";
+import { toDate } from "@/utils/date";
 
 const projectId = ref(0);
 const keyword = ref('')
@@ -195,20 +196,20 @@ function loadMore() {
 // 格式化日期
 function formatDay(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   return String(d.getDate()).padStart(2, '0')
 }
 
 function formatMonth(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   const months = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
   return months[d.getMonth()]
 }
 
 function formatFullTime(dateStr) {
   if (!dateStr) return ''
-  const d = new Date(dateStr)
+  const d = toDate(dateStr)
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 

@@ -5,10 +5,12 @@
  * @param {string} planEndDate
  * @returns {string}
  */
+import { toDate } from './date'
+
 export function formatNodeDateRange(planDate, planEndDate) {
   if (!planDate) return '';
   const fmt = (d) => {
-    const date = new Date(d);
+    const date = toDate(d);
     return `${date.getMonth() + 1}月${date.getDate()}日`;
   };
   if (!planEndDate || planDate === planEndDate) {

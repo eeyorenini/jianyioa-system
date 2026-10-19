@@ -135,6 +135,7 @@
 import { ref, onMounted } from "vue";
 import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
+import { toDate } from "@/utils/date";
 
 const loading = ref(true);
 const inspections = ref([]);
@@ -190,7 +191,7 @@ const getPhotos = (item) => {
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
+  const d = toDate(dateStr);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 

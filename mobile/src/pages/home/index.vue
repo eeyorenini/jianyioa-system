@@ -119,7 +119,9 @@
         <text>⚠️ 逾期预警</text>
       </view>
       <view class="warning-list">
-        <view class="warning-item" v-for="w in warnings" :key="w.id" @click="goProject(w.id)">
+        <!-- ⚠️ key 用后端返回数据里预生成的 _key（见 loadStats 里 warnings 的 map），
+             不能只用 w.id：同一项目多个逾期节点会导致重复 key。 -->
+        <view class="warning-item" v-for="w in warnings" :key="w._key" @click="goProject(w.id)">
           <view class="warning-info">
             <text class="warning-name">{{ w.name }}</text>
             <text class="warning-desc">{{ w.node }} 已逾期 {{ w.days }} 天</text>
@@ -291,7 +293,11 @@ const loadHomeStats = async () => {
     // 1) stats
     if (d.home && d.home.stats) stats.value = { ...stats.value, ...d.home.stats };
     // 2) warnings（逾期预警）
-    if (d.home && Array.isArray(d.home.warnings)) warnings.value = d.home.warnings;
+    // 后端按「节点」出预警，id 取的是 project_id —— 同一个项目有多个逾期节点时 id 会重复，
+    // 直接当 wx:key 会报 Do not set same key "15"。这里预生成唯一键 _key。
+    if (d.home && Array.isArray(d.home.warnings)) {
+      warnings.value = d.home.warnings.map((w, i) => ({ ...w, _key: `${w.id}-${i}` }));
+    }
     // 3) 待办列表：合并审批流 groups + 项目相关 home.sections
     const merged = [];
     // 审批流按权限：财务优先报销/回执；经理/设计师：采购审批；所有人：通用审批

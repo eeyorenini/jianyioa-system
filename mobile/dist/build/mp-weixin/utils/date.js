@@ -1,0 +1,1 @@
+"use strict";exports.toDate=function(e){if(e instanceof Date)return e;if(null==e||""===e)return new Date(NaN);if("number"==typeof e)return new Date(e);const t=String(e).trim();return/^\d{4}-\d{2}-\d{2}T/.test(t)?new Date(t):new Date(t.replace(/-/g,"/"))};

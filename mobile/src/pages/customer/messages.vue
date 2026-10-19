@@ -65,6 +65,7 @@
 import { ref, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
 import { useUserStore } from "@/stores/user";
+import { toDate } from "@/utils/date";
 const userStore = useUserStore();
 
 const list = ref([]);
@@ -91,7 +92,7 @@ const getPhone = () => {
 // 格式化时间
 const formatTime = (timeStr) => {
   if (!timeStr) return '';
-  const d = new Date(timeStr);
+  const d = toDate(timeStr);
   const now = new Date();
   const diff = now - d;
   if (diff < 60000) return '刚刚';
