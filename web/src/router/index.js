@@ -9,6 +9,7 @@ const Projects = () => import('../views/Projects.vue')
 const Quotes = () => import('../views/Quotes.vue')
 const Warehouse = () => import('../views/Warehouse.vue')
 const Customers = () => import('../views/Customers.vue')
+const WechatUsers = () => import('../views/WechatUsers.vue')
 const Contracts = () => import('../views/Contracts.vue')
 const ContractTemplates = () => import('../views/ContractTemplates.vue')
 const ContractTemplatesEditor = () => import('../views/ContractTemplatesEditor.vue')
@@ -53,6 +54,7 @@ const routes = [
   { path: '/message-center', name: 'MessageCenter', component: MessageCenter },
 
   { path: '/customers', name: 'Customers', component: Customers, meta: { perm: 'customer' } },
+  { path: '/wechat-users', name: 'WechatUsers', component: WechatUsers, meta: { perm: 'customer' } },
   { path: '/channels', name: 'Channels', component: Channels, meta: { perm: 'customer' } },
   { path: '/sms-templates', name: 'SmsTemplates', component: SmsTemplates, meta: { perm: 'sms' } },
 

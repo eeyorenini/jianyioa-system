@@ -145,6 +145,7 @@ const menuConfig = [
     type: 'group', index: 'customer-group', icon: 'User', title: '客户服务',
     children: [
       { path: '/customers', title: '客户列表', perm: 'customer' },
+      { path: '/wechat-users', title: '微信客户', perm: 'customer' },
       { path: '/sms-templates', title: '短信模板', perm: 'sms' }
     ]
   },
@@ -247,6 +248,7 @@ const pageTitle = computed(() => {
   const titles = {
     '/dashboard': '数据看板', '/personal-center': '个人中心',
     '/customers': '客户服务', '/channels': '渠道管理',
+    '/wechat-users': '微信客户',
     '/contracts': '合同编辑', '/contract-templates': '合同模板',
     '/operation-logs': '操作日志', '/budgets': '预算报价',
     '/finance': '财务管理', '/finance-projects': '财务管理', '/projects': '工程管理',

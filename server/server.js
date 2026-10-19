@@ -9157,54 +9157,89 @@ app.delete('/api/wechat/bind/:id', checkPermission('settings:write'), async (req
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/wechat/users — 微信用户列表（含关联客户信息）
+// GET /api/wechat/users — 微信客户列表（含关联客户信息 + 统计）
+// 2026-10-19 v2.3.9：支持 linked 筛选、openid 关键字搜索、返回 stats 统计
 app.get('/api/wechat/users', async (req, res) => {
   try {
-    const { page = 1, pageSize = 20, status, keyword, type } = req.query;
+    const { page = 1, pageSize = 20, status, keyword, type, linked } = req.query;
     const userId = getUserId(req);
     const userRole = req.headers['x-user-role'];
 
-    let where = 'WHERE w.status = 1';
+    const conds = [];
     const params = [];
 
-    if (status !== undefined) {
-      where += ' AND w.status = ?';
-      params.push(status);
+    if (status !== undefined && status !== '') {
+      conds.push('w.status = ?'); params.push(Number(status));
+    } else {
+      conds.push('w.status = 1');
     }
     if (keyword) {
-      where += ' AND (w.nickname LIKE ? OR w.phone LIKE ? OR c.name LIKE ?)';
-      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+      conds.push('(w.nickname LIKE ? OR w.phone LIKE ? OR w.mini_openid LIKE ? OR w.mp_openid LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)');
+      const k = `%${keyword}%`;
+      params.push(k, k, k, k, k, k);
     }
-    if (type) {
-      const field = type === 'mini' ? 'w.mini_openid' : 'w.mp_openid';
-      where += ` AND ${field} IS NOT NULL AND ${field} != ''`;
-    }
+    if (type === 'mini') conds.push("w.mini_openid IS NOT NULL AND w.mini_openid != ''");
+    if (type === 'mp') conds.push("w.mp_openid IS NOT NULL AND w.mp_openid != ''");
+    if (linked === '1') conds.push('w.customer_id IS NOT NULL');
+    if (linked === '0') conds.push('w.customer_id IS NULL');
 
-    // 普通员工只能看自己关联的客户，admin 和有 customer_all 权限的看全部
-    let customerFilter = '';
+    // 普通员工只能看自己名下客户关联的微信用户（未关联客户的不隐藏，避免绑定后"消失"）
     if (userRole !== 'admin') {
       const [empRows] = await pool.query('SELECT permissions FROM employees WHERE id = ?', [userId]);
       const perms = empRows[0] ? JSON.parse(empRows[0].permissions || '[]') : [];
       if (!perms.includes('customer_all')) {
-        customerFilter = ' AND c.creator_id = ?';
+        conds.push('(c.creator_id = ? OR w.customer_id IS NULL)');
         params.push(userId);
       }
     }
 
+    const where = `WHERE ${conds.join(' AND ')}`;
     const offset = (parseInt(page) - 1) * parseInt(pageSize);
+
     const [total] = await pool.query(
-      `SELECT COUNT(*) as cnt FROM wechat_users w LEFT JOIN customers c ON w.customer_id = c.id ${where}${customerFilter}`, params);
+      `SELECT COUNT(*) as cnt FROM wechat_users w LEFT JOIN customers c ON w.customer_id = c.id ${where}`, params);
     const [list] = await pool.query(
-      `SELECT w.*, c.name as customer_name, c.phone as customer_phone, c.customer_no
+      `SELECT w.*, c.name as customer_name, c.phone as customer_phone, c.customer_no,
+              e.name as employee_name
        FROM wechat_users w
        LEFT JOIN customers c ON w.customer_id = c.id
-       ${where}${customerFilter}
-       ORDER BY w.bind_time DESC
+       LEFT JOIN employees e ON w.employee_id = e.id
+       ${where}
+       ORDER BY w.bind_time DESC, w.id DESC
        LIMIT ? OFFSET ?`,
       [...params, parseInt(pageSize), offset]
     );
 
-    res.json({ list, total: total[0].cnt, page: parseInt(page), pageSize: parseInt(pageSize) });
+    // 统计看全量（不受当前筛选影响）
+    // 注意：wechat_users 的时间字段统一用 toISOString() 写入（UTC），
+    // 所以「今日」的起点要取本地零点的 UTC 表示，否则会差 8 小时。
+    const now = new Date();
+    const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayStart = localMidnight.toISOString().slice(0, 19).replace('T', ' ');
+    const [[stat]] = await pool.query(
+      `SELECT COUNT(*) as total,
+              SUM(CASE WHEN mini_openid IS NOT NULL AND mini_openid != '' THEN 1 ELSE 0 END) as mini,
+              SUM(CASE WHEN mp_openid IS NOT NULL AND mp_openid != '' THEN 1 ELSE 0 END) as mp,
+              SUM(CASE WHEN phone IS NOT NULL AND phone != '' THEN 1 ELSE 0 END) as phoneBound,
+              SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) as linked,
+              SUM(CASE WHEN bind_time >= ? THEN 1 ELSE 0 END) as today
+       FROM wechat_users WHERE status = 1`, [todayStart]
+    );
+
+    res.json({
+      list,
+      total: total[0].cnt,
+      page: parseInt(page),
+      pageSize: parseInt(pageSize),
+      stats: {
+        total: Number(stat.total || 0),
+        mini: Number(stat.mini || 0),
+        mp: Number(stat.mp || 0),
+        phoneBound: Number(stat.phoneBound || 0),
+        linked: Number(stat.linked || 0),
+        today: Number(stat.today || 0),
+      },
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -9414,6 +9449,16 @@ app.post('/api/wechat/mini-login', async (req, res) => {
         message: '原绑定手机号已失效，请重新绑定',
       });
     }
+
+    // 兼容历史数据：早期绑定没写 customer_id，这里顺手补上（PC 端「微信客户」才能显示关联客户）
+    if (!wxUser.customer_id) {
+      const cid = ident.isFamilyMember ? (ident.masterCustomerId || null) : ((ident.customer && ident.customer.id) || null);
+      if (cid) {
+        await pool.query('UPDATE wechat_users SET customer_id=?, update_time=? WHERE id=?',
+          [cid, new Date().toISOString(), wxUser.id]);
+      }
+    }
+
     return res.json({
       success: true, bound: true, openid,
       unionid: wxUser.unionid || session.unionid || null,
@@ -9437,22 +9482,27 @@ app.post('/api/wechat/mini-bind', async (req, res) => {
     }
 
     const now = new Date().toISOString();
+    // 关联到 customers 主档：家庭成员也挂到主账户上，PC 端「微信客户」才能显示关联客户
+    const linkedCustomerId = ident.isFamilyMember
+      ? (ident.masterCustomerId || null)
+      : ((ident.customer && ident.customer.id) || null);
+
     const [existing] = await pool.query('SELECT id FROM wechat_users WHERE mini_openid = ? LIMIT 1', [openid]);
     if (existing.length) {
       await pool.query(
         `UPDATE wechat_users SET phone=?, nickname=COALESCE(?,nickname), avatar=COALESCE(?,avatar),
-         bind_time=?, status=1, unsubscribe_time=NULL, update_time=? WHERE id=?`,
-        [p, nickname || null, avatar || null, now, now, existing[0].id]
+         customer_id=COALESCE(?,customer_id), bind_time=?, status=1, unsubscribe_time=NULL, update_time=? WHERE id=?`,
+        [p, nickname || null, avatar || null, linkedCustomerId, now, now, existing[0].id]
       );
     } else {
       await pool.query(
-        `INSERT INTO wechat_users (mini_openid, phone, nickname, avatar, bind_time, status, create_time, update_time)
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-        [openid, p, nickname || '', avatar || '', now, now, now]
+        `INSERT INTO wechat_users (mini_openid, phone, nickname, avatar, customer_id, bind_time, status, create_time, update_time)
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [openid, p, nickname || '', avatar || '', linkedCustomerId, now, now, now]
       );
     }
 
-    return res.json({ success: true, message: '绑定成功', phone: p, ...ident });
+    return res.json({ success: true, message: '绑定成功', phone: p, customer_id: linkedCustomerId, ...ident });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
