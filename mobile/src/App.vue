@@ -102,7 +102,8 @@ onLaunch(() => {
 onShow(() => {
   const { checkAuth } = useUserStore();
   checkAuth();
-  // 已登录时按角色应用底部 tabBar（未登录会被 checkAuth 重定向到登录页，此处跳过）
+  // 已登录时按角色应用底部 tabBar
+  // （未登录只会被拦截在受保护页面，落地页/登录页放行 —— 见 stores/user 的 PUBLIC_PAGES）
   if (uni.getStorageSync("token")) {
     try {
       applyRoleTabBar();

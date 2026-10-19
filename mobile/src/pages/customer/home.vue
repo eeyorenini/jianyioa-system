@@ -30,6 +30,16 @@
       </view>
     </view>
 
+    <!-- 未绑定手机号 -->
+    <view v-else-if="notBound" class="bind-guide">
+      <view class="bind-guide-badge"><text class="bind-guide-badge-text">1</text></view>
+      <text class="bind-guide-title">还差一步</text>
+      <text class="bind-guide-desc">绑定预约手机号后，即可查看您名下的工地</text>
+      <view class="bind-guide-btn" @click="goBindPhone">
+        <text class="bind-guide-btn-text">绑定手机号</text>
+      </view>
+    </view>
+
     <!-- 无项目状态 -->
     <customer-empty-state
       v-else-if="!hasProject"
@@ -96,6 +106,8 @@ const pageLoading = ref(true);
 const hasProject = ref(false);
 const hasError = ref(false);
 const errorType = ref('');
+// 微信已登录但未绑定手机号
+const notBound = ref(false);
 
 // 项目信息
 const project = ref(null);
@@ -138,10 +150,13 @@ const loadData = async () => {
     const customerId = uni.getStorageSync('masterCustomerId') || userInfo?.id;
     
     if (!customerId) {
+      // 微信登录了但还没绑定手机号 → 引导绑定，而不是显示"暂无项目"
+      notBound.value = true;
       hasProject.value = false;
       pageLoading.value = false;
       return;
     }
+    notBound.value = false;
 
     // 获取项目列表 - 添加管理员权限头以获取完整数据（包括nodes）
     const res = await uni.request({
@@ -341,6 +356,11 @@ const saveCurrentProject = () => {
   }
 };
 
+// 未绑定手机号 → 去绑定页
+const goBindPhone = () => {
+  uni.navigateTo({ url: '/pages/bind/phone' });
+};
+
 // 返回
 const goBack = () => {
   uni.navigateBack();
@@ -527,5 +547,59 @@ onMounted(() => {
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+
+/* 未绑定手机号引导 */
+.bind-guide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 70px 32px 40px;
+}
+
+.bind-guide-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #E8EEF6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.bind-guide-badge-text {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1E3A5F;
+}
+
+.bind-guide-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1A1F36;
+  margin-bottom: 10px;
+}
+
+.bind-guide-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #6B7280;
+  text-align: center;
+  margin-bottom: 26px;
+}
+
+.bind-guide-btn {
+  background: #1E3A5F;
+  border-radius: 12px;
+  padding: 14px 48px;
+  box-shadow: 0 4px 14px rgba(30, 58, 95, 0.22);
+}
+
+.bind-guide-btn-text {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 </style>

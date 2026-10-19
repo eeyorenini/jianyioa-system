@@ -1,6 +1,9 @@
 {
   "pages": [
+    "pages/landing/index",
     "pages/login/login",
+    "pages/bind/index",
+    "pages/bind/phone",
     "pages/home/index",
     "pages/todo/index",
     "pages/customer/home",

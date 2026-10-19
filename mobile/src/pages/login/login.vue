@@ -57,6 +57,17 @@
 
         <!-- 客户登录 -->
         <template v-else>
+          <!-- #ifdef MP-WEIXIN -->
+          <!-- 微信一键登录：静默拿 openid，已绑定直接进工地；未绑定再补手机号 -->
+          <view class="wx-login-btn" @click="goWxLogin">
+            <text class="wx-login-text">微信一键登录</text>
+          </view>
+          <view class="wx-split">
+            <view class="wx-split-line"></view>
+            <text class="wx-split-text">或使用预约手机号</text>
+            <view class="wx-split-line"></view>
+          </view>
+          <!-- #endif -->
           <view class="form-item">
             <view class="form-label">手机号</view>
             <input
@@ -99,10 +110,21 @@
 
 <script setup >
 import { ref, reactive } from "vue";
+import { onLoad } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
+import { bindOpenidQuietly } from "@/utils/wechat";
 
-const loginType = ref('employee');
+// 默认「客户登录」：业主是主要使用者，进页面就能看到微信一键登录；
+// 员工从落地页「员工登录」进入时会带 ?type=employee 自动切回员工 tab。
+const loginType = ref('customer');
 const loading = ref(false);
+
+// 支持从落地页带身份进入：?type=customer / ?type=employee
+onLoad((opt) => {
+  if (opt && (opt.type === 'customer' || opt.type === 'employee')) {
+    loginType.value = opt.type;
+  }
+});
 
 // 版本号由 vite.config.ts 的 define 在构建时注入（来源：package.json 的 version）
 const APP_VERSION = __APP_VERSION__;
@@ -186,6 +208,8 @@ const handleCustomerLogin = async () => {
         uni.removeStorageSync('masterPhone');
       }
       // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
+      // 小程序端顺手把当前微信 openid 绑上，下次进入免输手机号（失败不影响登录）
+      bindOpenidQuietly(custForm.phone);
       uni.reLaunch({ url: '/pages/customer/home' });
     } else {
       uni.showToast({ title: data?.message || '登录失败', icon: 'none' });
@@ -199,8 +223,29 @@ const handleCustomerLogin = async () => {
 };
 
 
+// 微信一键登录：跳绑定页（该页会先静默登录，已绑定直接进工地，未绑定才要手机号）
+const goWxLogin = () => {
+  uni.navigateTo({ url: '/pages/bind/index' });
+};
+
 const goBack = () => {
-  uni.navigateBack();
+  // 登录页可能作为启动页（栈底），此时 navigateBack 无效 → 回落地页
+  // 微信审核要求登录环节必须提供有效的「取消/返回」途径
+  let canBack = false;
+  try {
+    const fn =
+      typeof getCurrentPages === "function"
+        ? getCurrentPages
+        : globalThis.getCurrentPages;
+    canBack = typeof fn === "function" && (fn() || []).length > 1;
+  } catch (_) {
+    canBack = false;
+  }
+  if (canBack) {
+    uni.navigateBack();
+  } else {
+    uni.reLaunch({ url: '/pages/landing/index' });
+  }
 };
 </script>
 
@@ -280,6 +325,42 @@ const goBack = () => {
 .role-tab.active {
   background: #1E3A5F;
   color: #fff;
+}
+
+/* 微信一键登录（仅小程序端出现） */
+.wx-login-btn {
+  background: #07C160;
+  border-radius: 10px;
+  padding: 14px 0;
+  text-align: center;
+  min-height: 48px;
+  box-shadow: 0 4px 12px rgba(7, 193, 96, 0.22);
+}
+
+.wx-login-text {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.wx-split {
+  display: flex;
+  align-items: center;
+  margin: 18px 0 16px;
+}
+
+.wx-split-line {
+  flex: 1;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+.wx-split-text {
+  font-size: 11px;
+  color: #9CA3AF;
+  padding: 0 10px;
+  letter-spacing: 0.5px;
 }
 
 .form-item {

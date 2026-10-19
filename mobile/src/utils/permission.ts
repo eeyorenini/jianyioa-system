@@ -74,6 +74,28 @@ export function guardTab(perm: string) {
   return true;
 }
 
+/**
+ * 登录守卫：需要身份的入口在点击时调用。
+ * 未登录不直接跳转，而是弹窗让用户自己选「去登录 / 再逛逛」——
+ * 微信审核明确要求登录环节必须提供可取消/拒绝的选择权，禁止强制跳转。
+ * @returns true 表示已登录、可继续执行；false 表示已弹窗拦截
+ */
+export function requireLogin(content = "该功能需登录后使用"): boolean {
+  if (uni.getStorageSync("token")) return true;
+  uni.showModal({
+    title: "需要登录",
+    content,
+    confirmText: "去登录",
+    cancelText: "再逛逛",
+    success: (res) => {
+      if (res.confirm) {
+        uni.navigateTo({ url: "/pages/login/login" });
+      }
+    },
+  });
+  return false;
+}
+
 export interface EntryItem {
   label: string;
   icon: string;
