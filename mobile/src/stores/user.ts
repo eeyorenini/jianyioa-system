@@ -147,12 +147,58 @@ export const useUserStore = () => {
     }
   };
 
+  // ============ 登录守卫 ============
+  // 微信审核要求「先体验后授权」：未登录时必须允许浏览公开页面，
+  // 不得一进小程序就强制跳登录页。故只有受保护页面才拦截。
+  // 注意 pages/bind/index 属于登录流程本身（微信静默登录 + 手机号绑定），必须放行，
+  // 否则冷启动直达时会被守卫踢回登录页。
+  const PUBLIC_PAGES = ["pages/landing/index", "pages/login/login", "pages/bind/index"];
+
+  /** 安全取页面栈（小程序 / H5 都可用，取不到返回空数组） */
+  const getPages = (): any[] => {
+    try {
+      const fn: any =
+        typeof getCurrentPages === "function"
+          ? getCurrentPages
+          : (globalThis as any).getCurrentPages;
+      return typeof fn === "function" ? fn() || [] : [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  /** 当前路由；冷启动时页面栈为空，回退到启动参数里的 path */
+  const currentRoute = (): string => {
+    const pages = getPages();
+    if (pages.length) {
+      const cur: any = pages[pages.length - 1];
+      return (cur && (cur.route || cur.$page?.fullPath)) || "";
+    }
+    try {
+      const opt: any =
+        (uni as any).getEnterOptionsSync?.() || (uni as any).getLaunchOptionsSync?.();
+      return String(opt?.path || "").replace(/^\//, "");
+    } catch (_) {
+      return "";
+    }
+  };
+
+  /** 是否处于免登录页（拿不到路由时放行，交给页面自身守卫） */
+  const isPublicPage = (): boolean => {
+    const route = currentRoute();
+    if (!route) return true;
+    return PUBLIC_PAGES.some((p) => route === p || route.indexOf(p) === 0);
+  };
+
   const checkAuth = () => {
     const token = uni.getStorageSync("token");
-    if (!token) {
-      uni.reLaunch({ url: "/pages/login/login" });
-    } else {
+    if (token) {
       loadUser();
+      return;
+    }
+    // 未登录：仅在受保护页面强制跳登录，公开页放行
+    if (!isPublicPage()) {
+      uni.reLaunch({ url: "/pages/login/login" });
     }
   };
 
@@ -295,6 +341,7 @@ export const useUserStore = () => {
     loadUser,
     fetchMe,
     checkAuth,
+    isPublicPage,
     logout,
     hasPermission,
     can,
