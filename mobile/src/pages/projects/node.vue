@@ -38,19 +38,19 @@
     <view class="status-action-row">
       <view class="status-btn" :class="node.status === 'pending' ? 'active' : ''" @click="changeStatus('pending')">
         <text class="status-btn-icon">⏳</text>
-        <text class="status-btn-text">待处理</text>
+        <text class="status-btn-text">待开始</text>
       </view>
       <view class="status-btn" :class="node.status === 'in_progress' ? 'active' : ''" @click="changeStatus('in_progress')">
         <text class="status-btn-icon">▶</text>
-        <text class="status-btn-text">开工</text>
+        <text class="status-btn-text">进行中</text>
       </view>
       <view class="status-btn" :class="node.status === 'completed' ? 'active' : ''" @click="changeStatus('completed')">
         <text class="status-btn-icon">✅</text>
-        <text class="status-btn-text">已验收</text>
+        <text class="status-btn-text">已完成</text>
       </view>
       <view class="status-btn" :class="node.status === 'skipped' ? 'active' : ''" @click="changeStatus('skipped')">
         <text class="status-btn-icon">⏭</text>
-        <text class="status-btn-text">跳过</text>
+        <text class="status-btn-text">已跳过</text>
       </view>
     </view>
 
@@ -158,7 +158,7 @@ const getNodeStatusText = (status) => {
 const changeStatus = async (newStatus) => {
   // 2026-10-09 修复：加防重复点击 + 接收 res + 按短信结果弹反馈
   if (submitting.value) return;
-  const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
+  const statusLabel = { pending: '待开始', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
   // 完工时需要填 progress_percent 和 actual_date
   const extra = newStatus === 'completed'
     ? { progress_percent: 100, actual_date: new Date().toISOString().split('T')[0] }
@@ -168,9 +168,11 @@ const changeStatus = async (newStatus) => {
     uni.showModal({
       title: `确认修改状态`,
       content: `确定将「${node.value.node_name || node.value.stage_name}」设为「${statusLabel[newStatus]}」？\n\n是否发送短信通知？`,
-      confirmText: '确认并发送短信',
+      // 微信小程序 confirmText / cancelText 上限 4 个字符，超长会导致 showModal fail、回调不触发
+      confirmText: '发送短信',
       cancelText: '仅保存',
       success: (m) => resolve(m.confirm ? 'sms' : 'save'),
+      fail: () => resolve('save'),
     });
   });
 
