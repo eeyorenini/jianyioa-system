@@ -720,39 +720,53 @@
         </view>
       </view>
 
-      <!-- 项目文件（v2.3.4） -->
+      <!-- 项目文件（v2.3.4 · UI 美化 2026-10-20） -->
       <view v-if="curTab === 'files'" class="tab-panel">
-        <view class="panel-toolbar">
-          <text class="panel-title">项目文件</text>
-          <text class="panel-subtitle">共 {{ projectFiles.length }} 个</text>
-        </view>
-        <view class="files-cats">
-          <view class="files-cat" v-for="c in fileCatStats" :key="c.key" @click="goFilesList">
-            <text class="files-cat-icon">{{ c.icon }}</text>
-            <text class="files-cat-name">{{ c.label }}</text>
-            <text class="files-cat-count">{{ c.count }}</text>
+        <!-- 文件概览卡片 -->
+        <view class="files-hero">
+          <view class="files-hero-bg" />
+          <view class="files-hero-row">
+            <view class="files-hero-info">
+              <text class="files-hero-label">项目文件总数</text>
+              <text class="files-hero-count">{{ projectFiles.length }}<text class="files-hero-unit"> 个</text></text>
+              <text class="files-hero-sub">{{ fileCatStats.filter(c => c.count > 0).length }} 个分类 · 最近上传 {{ recentFiles.length ? formatRecentTime(recentFiles[0].uploaded_at) : '暂无' }}</text>
+            </view>
+            <view class="files-hero-btn" @click="goFilesUpload">
+              <text class="files-hero-btn-text">+ 上传文件</text>
+            </view>
           </view>
         </view>
+
+        <!-- 分类网格 -->
+        <view class="files-cats">
+          <view class="files-cat" v-for="c in fileCatStats" :key="c.key" @click="goFilesList(c.key)">
+            <view class="files-cat-icon" :style="{ background: catBg(c.key) }">
+              <text class="files-cat-emoji">{{ c.icon }}</text>
+            </view>
+            <text class="files-cat-name">{{ c.label }}</text>
+            <text v-if="c.count" class="files-cat-count">{{ c.count }}</text>
+          </view>
+        </view>
+
         <view class="section-divider">
           <text class="section-divider-text">最近上传</text>
           <text class="section-divider-sub" @click="goFilesList">查看全部 ›</text>
         </view>
         <view v-if="recentFiles.length === 0" class="empty-state small">
-          <text class="empty-text">暂无文件</text>
+          <text class="empty-icon">📂</text>
+          <text class="empty-text">暂无文件，点击右上角上传</text>
         </view>
         <view v-else class="recent-files">
           <view v-for="f in recentFiles" :key="f.id" class="recent-file" @click="goFileDetail(f.id)">
-            <text class="recent-file-icon">{{ fileThumbIcon(f.file_ext) }}</text>
+            <view class="recent-file-icon" :style="{ background: fileExtBg(f.file_ext) }">
+              <text class="recent-file-emoji">{{ fileThumbIcon(f.file_ext) }}</text>
+            </view>
             <view class="recent-file-info">
               <text class="recent-file-title">{{ f.title }}</text>
               <text class="recent-file-meta">{{ fileCatLabel(f.category) }} · {{ f.uploader_name || '员工' }} · {{ formatRecentTime(f.uploaded_at) }}</text>
             </view>
-            <view class="recent-file-status" :style="'background:' + fileStatusColor(f.status)">{{ fileStatusText(f.status) }}</view>
+            <view class="recent-file-status" :style="fileStatusStyle(f.status)">{{ fileStatusText(f.status) }}</view>
           </view>
-        </view>
-        <view class="files-actions">
-          <view class="files-action" @click="goFilesList"><text>查看全部</text></view>
-          <view class="files-action primary" @click="goFilesUpload"><text>+ 上传</text></view>
         </view>
       </view>
     </view>
@@ -969,6 +983,39 @@ const fileThumbIcon = (ext) => {
   if (['jpg','jpeg','png','gif','webp'].includes(e)) return '🖼';
   return '📎';
 };
+// 分类图标底色（柔和色系，按分类固定）
+const catBg = (key) => ({
+  contract: '#FEE2E2',
+  design_cad: '#DBEAFE',
+  design_render: '#FCE7F3',
+  point_layout: '#FEF3C7',
+  construction_drawing: '#D1FAE5',
+  quote: '#E0E7FF',
+  change_order: '#FFEDD5',
+  other: '#F1F5F9',
+}[key] || '#F1F5F9');
+
+// 文件类型图标底色（按扩展名）
+const fileExtBg = (ext) => {
+  const e = (ext || '').toLowerCase();
+  if (e === 'pdf') return '#FEE2E2';
+  if (['doc', 'docx'].includes(e)) return '#DBEAFE';
+  if (['xls', 'xlsx', 'csv'].includes(e)) return '#D1FAE5';
+  if (['ppt', 'pptx'].includes(e)) return '#FEF3C7';
+  if (['dwg', 'dxf'].includes(e)) return '#EDE9FE';
+  if (['zip', 'rar', '7z'].includes(e)) return '#E2E8F0';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(e)) return '#FCE7F3';
+  return '#F1F5F9';
+};
+
+// 审核状态样式（软底 + 深字 pill）
+const fileStatusStyle = (s) => ({
+  pending:    { background: '#FEF3C7', color: '#B45309' },
+  approved:   { background: '#D1FAE5', color: '#047857' },
+  rejected:   { background: '#FEE2E2', color: '#B91C1C' },
+  revoked:    { background: '#F1F5F9', color: '#64748B' },
+}[s] || { background: '#F1F5F9', color: '#64748B' });
+
 const formatRecentTime = (s) => {
   if (!s) return '';
   const d = new Date(s.replace(/-/g, '/'));
@@ -976,8 +1023,8 @@ const formatRecentTime = (s) => {
   return `${m}-${day} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 };
 
-const goFilesList = () => uni.navigateTo({
-  url: `/pages/files/list?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}`,
+const goFilesList = (catKey) => uni.navigateTo({
+  url: `/pages/files/list?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}${catKey ? '&category=' + catKey : ''}`,
 });
 const goFilesUpload = () => uni.navigateTo({
   url: `/pages/files/upload?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}`,
@@ -3168,4 +3215,219 @@ const goBack = () => {
 .modal-btn.cancel { background: #F1F5F9; color: #64748B; }
 .modal-btn.confirm { background: #059669; color: #fff; }
 
+/* ==================== 项目文件 tab（2026-10-20 美化） ==================== */
+/* 概览卡片 */
+.files-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+  background: linear-gradient(135deg, #1E3A5F 0%, #2D5A8E 100%);
+  box-shadow: 0 6px 16px rgba(30, 58, 95, 0.22);
+}
+/* 装饰性圆形（右上/左下淡淡光晕） */
+.files-hero-bg {
+  position: absolute;
+  right: -30px;
+  top: -40px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+}
+.files-hero-row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.files-hero-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.files-hero-label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 1px;
+}
+.files-hero-count {
+  font-size: 30px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.1;
+}
+.files-hero-unit {
+  font-size: 14px;
+  font-weight: 500;
+  margin-left: 2px;
+}
+.files-hero-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.files-hero-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.files-hero-btn:active { background: rgba(255, 255, 255, 0.28); }
+.files-hero-btn-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* 分类网格 4 列 */
+.files-cats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.files-cat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 4px 10px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.05);
+}
+.files-cat:active { transform: scale(0.96); }
+.files-cat-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.files-cat-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.files-cat-name {
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.2;
+  text-align: center;
+}
+.files-cat-count {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #1E3A5F;
+  color: #fff;
+  font-size: 10px;
+  line-height: 17px;
+  text-align: center;
+  font-weight: 600;
+}
+
+/* 最近上传列表 */
+.recent-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.recent-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.05);
+}
+.recent-file:active { background: #F8FAFC; }
+.recent-file-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.recent-file-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+.recent-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.recent-file-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1A1F36;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-file-meta {
+  font-size: 11px;
+  color: #94A3B8;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-file-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 20px;
+  line-height: 1.2;
+}
+
+/* 底部操作栏 */
+.files-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.files-action {
+  flex: 1;
+  height: 42px;
+  line-height: 42px;
+  text-align: center;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  background: #fff;
+  color: #1E3A5F;
+  border: 1px solid #E2E8F0;
+}
+.files-action:active { background: #F1F5F9; }
+.files-action.primary {
+  background: linear-gradient(135deg, #1E3A5F, #2D5A8E);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 12px rgba(30, 58, 95, 0.25);
+  font-weight: 600;
+}
 </style>

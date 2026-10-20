@@ -7,32 +7,43 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <!-- 状态筛选 -->
+    <!-- 状态筛选（本地即时筛选） -->
     <view class="filter-row">
       <view
         v-for="s in STATUS_FILTERS"
         :key="s.value"
         class="filter-tag"
         :class="{ active: curStatus === s.value, danger: s.value === 'rejected', warning: s.value === 'pending', success: s.value === 'approved' }"
-        @click="curStatus = s.value; loadData()"
-      >{{ s.label }}</view>
+        @click="curStatus = s.value"
+      >
+        <text>{{ s.label }}</text>
+        <text v-if="statusCounts[s.value]" class="filter-tag-count">{{ statusCounts[s.value] }}</text>
+      </view>
     </view>
 
-    <!-- 分类筛选 -->
-    <view class="cat-row" v-if="files.length">
+    <!-- 分类筛选（本地即时筛选，不重新请求；空分类也保留入口，避免整行消失） -->
+    <view class="cat-row" v-if="projectId">
       <view
         class="cat-tag"
         :class="{ active: curCategory === '' }"
-        @click="curCategory = ''; loadData()"
-      >全部分类</view>
+        @click="curCategory = ''"
+      >
+        <text class="cat-tag-emoji">📁</text>
+        <text class="cat-tag-label">全部</text>
+        <text class="cat-tag-count">{{ files.length }}</text>
+      </view>
       <view
         v-for="c in categories"
         :key="c.key"
         class="cat-tag"
-        :class="{ active: curCategory === c.key }"
-        :style="curCategory === c.key ? 'background:' + c.color : ''"
-        @click="curCategory = c.key; loadData()"
-      >{{ c.icon }} {{ c.label }}</view>
+        :class="{ active: curCategory === c.key, 'is-empty': !catCounts[c.key] }"
+        :style="curCategory === c.key ? { background: c.color, borderColor: c.color } : ''"
+        @click="curCategory = c.key"
+      >
+        <text class="cat-tag-emoji">{{ c.icon }}</text>
+        <text class="cat-tag-label">{{ c.label }}</text>
+        <text v-if="catCounts[c.key]" class="cat-tag-count">{{ catCounts[c.key] }}</text>
+      </view>
     </view>
 
     <!-- 加载中 -->
@@ -112,7 +123,8 @@
 
     <view class="empty-state" v-else>
       <text class="empty-icon">📎</text>
-      <text class="empty-text">{{ curStatus ? '暂无' + statusText(curStatus) + '文件' : (projectId ? '本项目暂无文件' : '请先选择项目') }}</text>
+      <text class="empty-text">{{ emptyText }}</text>
+      <text class="empty-hint">切换上方状态或分类查看其他文件</text>
     </view>
 
     <!-- 上传按钮（仅项目已选且有 write 权限显示） -->
@@ -151,7 +163,36 @@ const projectName = ref("");
 const userStore = useUserStore();
 const canWrite = computed(() => userStore.canSee("project_file:write") || userStore.canSee("project_file:approve"));
 
-const filteredList = computed(() => files.value);
+// 后端 /api/project-files 不分页、全量返回，因此一次拉全量数据，
+// 状态/分类一律前端本地筛选：点 tab 零延迟、无"加载中"闪烁，且能算出各分类数量。
+const filteredList = computed(() => {
+  let list = files.value;
+  if (curStatus.value) list = list.filter((f) => f.status === curStatus.value);
+  if (curCategory.value) list = list.filter((f) => f.category === curCategory.value);
+  return list;
+});
+
+// 各分类文件数（含 0，用于角标和空分类置灰）
+const catCounts = computed(() => {
+  const m = {};
+  files.value.forEach((f) => { m[f.category] = (m[f.category] || 0) + 1; });
+  return m;
+});
+
+// 各状态文件数（'' = 全部）
+const statusCounts = computed(() => {
+  const m = { '': files.value.length };
+  files.value.forEach((f) => { m[f.status] = (m[f.status] || 0) + 1; });
+  return m;
+});
+
+// 空状态文案（按当前筛选组合）
+const emptyText = computed(() => {
+  if (!projectId.value) return '请先选择项目';
+  if (curCategory.value || curStatus.value) return '当前筛选条件下暂无文件';
+  return '本项目暂无文件';
+});
+
 const categories = FILE_CATEGORIES;
 
 const isImage = (ext) => ["jpg", "jpeg", "png", "gif", "webp"].includes((ext || "").toLowerCase());
@@ -202,12 +243,9 @@ async function loadData() {
   if (!projectId.value) return;
   loading.value = true;
   try {
-    const params = [`project_id=${projectId.value}`];
-    if (curStatus.value) params.push(`status=${curStatus.value}`);
-    if (curCategory.value) params.push(`category=${curCategory.value}`);
-    // 必须带 x-user-id，否则后端 getUserId 取不到用户直接 401
+    // 只按项目拉全量；status/category 由前端 computed 本地筛选
     const res = await uni.request({
-      url: `/api/project-files?${params.join('&')}`,
+      url: `/api/project-files?project_id=${projectId.value}`,
       header: authHeader(uid.value),
     });
     if (res.data && Array.isArray(res.data.list)) {
@@ -263,6 +301,10 @@ onMounted(() => {
   const opts = (cur && cur.options) || {};
   projectId.value = parseInt(opts.projectId || opts.project_id || 0);
   projectName.value = opts.projectName || opts.project_name || '';
+  // 支持从项目详情"项目文件"tab 点分类进来：预选该分类
+  if (opts.category && FILE_CATEGORY_MAP[opts.category]) {
+    curCategory.value = opts.category;
+  }
   // 如果 URL 没带 projectId，弹选项目
   if (!projectId.value) {
     pickProject('选择项目后查看文件').then((p) => {
@@ -312,8 +354,12 @@ onShow(() => {
   gap: 8px;
   margin-bottom: 10px;
   overflow-x: auto;
+  padding-bottom: 2px;
 }
 .filter-tag {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 5px 14px;
   border-radius: 20px;
   font-size: 13px;
@@ -326,23 +372,74 @@ onShow(() => {
 .filter-tag.warning.active { background: #F59E0B; }
 .filter-tag.danger.active { background: #EF4444; }
 .filter-tag.success.active { background: #10B981; }
+.filter-tag-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #F1F5F9;
+  color: #64748B;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+.filter-tag.active .filter-tag-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
 
+/* 分类筛选 tabs（横向滚动） */
 .cat-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 12px;
   overflow-x: auto;
-  white-space: nowrap;
+  padding-bottom: 2px;
 }
 .cat-tag {
-  padding: 4px 10px;
-  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 20px;
   font-size: 12px;
   background: #fff;
-  color: #6B7280;
+  color: #475569;
+  border: 1px solid #E2E8F0;
+  white-space: nowrap;
   flex-shrink: 0;
 }
-.cat-tag.active { color: #1E3A5F; font-weight: 600; }
+.cat-tag:active { border-color: #CBD5E1; }
+.cat-tag-emoji {
+  font-size: 13px;
+  line-height: 1;
+}
+.cat-tag-label {
+  line-height: 1.2;
+}
+.cat-tag-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #F1F5F9;
+  color: #64748B;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+.cat-tag.active {
+  color: #1E3A5F;
+  font-weight: 600;
+  border-color: transparent;
+}
+.cat-tag.active .cat-tag-count {
+  background: rgba(30, 58, 95, 0.12);
+  color: #1E3A5F;
+}
+/* 该分类暂无文件：保留入口但置灰，不再是"整行消失" */
+.cat-tag.is-empty { opacity: 0.45; }
+.cat-tag.is-empty.active { opacity: 0.9; }
 
 .loading-state {
   text-align: center;
@@ -497,6 +594,7 @@ onShow(() => {
 }
 .empty-icon { font-size: 50px; margin-bottom: 8px; opacity: 0.5; }
 .empty-text { font-size: 14px; color: #9CA3AF; }
+.empty-hint { font-size: 12px; color: #CBD5E1; margin-top: 6px; }
 
 .fab {
   position: fixed;

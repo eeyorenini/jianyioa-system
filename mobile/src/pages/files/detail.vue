@@ -111,7 +111,7 @@
           <text class="action-icon">↩</text>
           <text class="action-text">撤销</text>
         </view>
-        <!-- 删除：未审前可删，admin 通杀 -->
+        <!-- 删除：仅未通过审核的文件可删（审核通过即归档，任何人不可删） -->
         <view
           v-if="canDelete"
           class="action-btn danger"
@@ -163,8 +163,9 @@ const canRevoke = computed(() =>
 );
 const canDelete = computed(() => {
   if (!file.value) return false;
+  // 规则（v2.3.11）：已通过审核的文件视为归档凭证，任何人（含 admin）都不可删除
+  if (file.value.status === 'approved') return false;
   if (isAdmin.value) return true;
-  if (file.value.status === 'approved') return false; // 已通过审核非 admin 不能删
   return file.value.uploaded_by === userId.value;
 });
 
