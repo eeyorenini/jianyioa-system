@@ -160,6 +160,7 @@ const menuConfig = [
     type: 'group', index: 'project-group', icon: 'FolderOpened', title: '项目管理',
     children: [
       { path: '/projects', title: '工程管理', perm: 'project' },
+      { path: '/project-files', title: '项目文件', perm: 'project_file' },
       { path: '/change-orders', title: '增减项管理', perm: 'contract_change' },
       { path: '/project-logs', title: '施工日志', perm: 'project' },
       { path: '/inspection-logs', title: '巡检日志', perm: 'inspection' },
@@ -263,7 +264,7 @@ const pageTitle = computed(() => {
     '/departments': '部门管理', '/sms-templates': '短信模板',
     '/progress-node-templates': '节点模板',
     '/system-settings': '系统设置', '/system-logs': '系统日志',
-    '/project-logs': '施工日志', '/inspection-logs': '巡检日志',
+    '/project-logs': '施工日志', '/project-files': '项目文件', '/inspection-logs': '巡检日志',
     '/message-center': '消息中心'
   }
   return titles[route.path] || '简逸ERP'

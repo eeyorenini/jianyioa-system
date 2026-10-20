@@ -614,6 +614,11 @@
             暂无采购记录
           </div>
         </el-tab-pane>
+
+        <!-- 文件（v2.3.11 新增）：本项目的合同/设计图/施工图/报价单等，含上传 -->
+        <el-tab-pane label="文件" name="files" lazy>
+          <ProjectFilesPanel :project-id="detailProject?.id || 0" :project-name="detailProject?.name || ''" />
+        </el-tab-pane>
       </el-tabs>
     </el-dialog>
 
@@ -649,6 +654,7 @@ import { ref, reactive, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank, Histogram } from '@element-plus/icons-vue'
+import ProjectFilesPanel from '../components/ProjectFilesPanel.vue'
 
 const projectList = ref([])
 const loading = ref(false)

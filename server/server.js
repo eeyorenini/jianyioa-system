@@ -6898,34 +6898,93 @@ async function convertToPdf(inputPath, outputDir) {
 }
 
 // 1. GET 列表
+// v2.3.11：PC 端「项目文件」独立页需要跨项目检索 → project_id 改为可选
+//   - 不传 project_id：按权限返回全部（read_all）或仅关联项目（read）
+//   - keyword：同时匹配 文件名 / 项目名 / 上传备注（PC 的「项目检索」靠它）
+//   - page/pageSize：分页，默认 20 条
+//   - stats.byCategory / stats.byStatus：分类与状态计数（不受当前分类/状态筛选影响）
+//   - 返回结构在原 { list } 基础上新增字段，移动端 pages/files/list.vue 仍读 list，兼容
 app.get('/api/project-files', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
     const perms = await permCore.loadUserPermissions(userId);
-    if (!perms.has('*') && !perms.has('project_file:read_all') && !perms.has('project_file:read')) {
-      return res.status(403).json({ error: '无权限' });
-    }
-    const projectId = parseInt(req.query.project_id);
-    if (!projectId) return res.status(400).json({ error: '缺少 project_id' });
+    const isAdmin = perms.has('*');
+    const canReadAll = isAdmin || perms.has('project_file:read_all');
+    const canRead = canReadAll || perms.has('project_file:read');
+    if (!canRead) return res.status(403).json({ error: '无权限' });
+
+    const projectId = parseInt(req.query.project_id) || 0;
+    const keyword = String(req.query.keyword || '').trim();
     const { status, category, mine } = req.query;
-    let sql = `SELECT f.*, e.name AS uploader_name, r.name AS reviewer_name, p.name AS project_name
-               FROM project_files f
-               LEFT JOIN employees e ON e.id = f.uploaded_by
-               LEFT JOIN employees r ON r.id = f.reviewed_by
-               LEFT JOIN projects p ON p.id = f.project_id
-               WHERE f.project_id = ?`;
-    const args = [projectId];
-    if (status) { sql += ' AND f.status = ?'; args.push(status); }
-    if (category) { sql += ' AND f.category = ?'; args.push(category); }
-    if (mine === '1') { sql += ' AND f.uploaded_by = ?'; args.push(userId); }
-    sql += ' ORDER BY f.uploaded_at DESC';
-    const [rows] = await pool.query(sql, args);
+
+    // 基础条件：项目范围 + 关键词（分类/状态计数也基于这一层）
+    const baseConds = [];
+    const baseArgs = [];
+    if (projectId) {
+      baseConds.push('f.project_id = ?');
+      baseArgs.push(projectId);
+    } else if (!canReadAll) {
+      // 只有 project_file:read（没有 read_all）：只能看自己关联的项目
+      const ids = Array.from(await permCore.relatedProjectIds(userId));
+      if (!ids.length) {
+        return res.json({ list: [], total: 0, page: 1, pageSize: 20, stats: { byCategory: {}, byStatus: {} } });
+      }
+      baseConds.push(`f.project_id IN (${ids.map(() => '?').join(',')})`);
+      baseArgs.push(...ids);
+    }
+    if (keyword) {
+      baseConds.push('(f.title LIKE ? OR p.name LIKE ? OR IFNULL(f.description, \'\') LIKE ?)');
+      const kw = `%${keyword}%`;
+      baseArgs.push(kw, kw, kw);
+    }
+
+    const conds = [...baseConds];
+    const args = [...baseArgs];
+    if (status) { conds.push('f.status = ?'); args.push(status); }
+    if (category) { conds.push('f.category = ?'); args.push(category); }
+    if (mine === '1') { conds.push('f.uploaded_by = ?'); args.push(userId); }
+
+    const whereSql = conds.length ? ' WHERE ' + conds.join(' AND ') : '';
+    const baseWhereSql = baseConds.length ? ' WHERE ' + baseConds.join(' AND ') : '';
+    const fromSql = 'FROM project_files f LEFT JOIN projects p ON p.id = f.project_id';
+
+    let page = parseInt(req.query.page) || 1;
+    let pageSize = parseInt(req.query.pageSize) || 20;
+    if (page < 1) page = 1;
+    if (pageSize < 1) pageSize = 20;
+    if (pageSize > 200) pageSize = 200;
+    const offset = (page - 1) * pageSize;
+
+    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS total ${fromSql}${whereSql}`, args);
+    const total = Number(countRow && countRow.total) || 0;
+
+    const [rows] = await pool.query(
+      `SELECT f.*, e.name AS uploader_name, r.name AS reviewer_name, p.name AS project_name
+       FROM project_files f
+       LEFT JOIN employees e ON e.id = f.uploaded_by
+       LEFT JOIN employees r ON r.id = f.reviewed_by
+       LEFT JOIN projects p ON p.id = f.project_id
+       ${whereSql}
+       ORDER BY f.uploaded_at DESC, f.id DESC
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      args
+    );
     // v2.3.6 hotfix 10-15：自动拼 pdf_preview_url + 透传 preview_error（前端能看见）
     for (const r of rows) {
       r.pdf_preview_url = r.pdf_preview ? `/uploads/${r.pdf_preview}` : null;
     }
-    res.json({ list: rows });
+
+    const [catRows] = await pool.query(
+      `SELECT f.category, COUNT(*) AS n ${fromSql}${baseWhereSql} GROUP BY f.category`, baseArgs);
+    const [stRows] = await pool.query(
+      `SELECT f.status, COUNT(*) AS n ${fromSql}${baseWhereSql} GROUP BY f.status`, baseArgs);
+    const byCategory = {};
+    for (const r of catRows) byCategory[r.category] = Number(r.n) || 0;
+    const byStatus = {};
+    for (const r of stRows) byStatus[r.status] = Number(r.n) || 0;
+
+    res.json({ list: rows, total, page, pageSize, stats: { byCategory, byStatus } });
   } catch (e) {
     console.error('[project-files list] error:', e.message);
     res.status(500).json({ error: e.message });
@@ -6937,6 +6996,11 @@ app.get('/api/project-files/:id', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
+    // v2.3.11：补权限校验（原先只校验登录，任何登录用户可遍历 id 读他人项目文件）
+    const perms = await permCore.loadUserPermissions(userId);
+    if (!perms.has('*') && !perms.has('project_file:read_all') && !perms.has('project_file:read')) {
+      return res.status(403).json({ error: '无权限' });
+    }
     const [rows] = await pool.query(
       `SELECT f.*, e.name AS uploader_name, r.name AS reviewer_name, p.name AS project_name
        FROM project_files f
@@ -7102,8 +7166,9 @@ app.delete('/api/project-files/:id', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM project_files WHERE id = ?', [id]);
     if (!rows.length) return res.status(404).json({ error: '文件不存在' });
     const file = rows[0];
-    if (file.status === 'approved' && !isAdmin) {
-      return res.status(403).json({ error: '已通过审核的文件不能删除（仅 admin 可删）' });
+    // v2.3.11 规则：项目文件一旦审核通过即视为归档凭证，任何角色（含 admin）都不得删除
+    if (file.status === 'approved') {
+      return res.status(403).json({ error: '该文件已通过审核，不允许删除' });
     }
     if (file.uploaded_by !== userId && !isAdmin) {
       return res.status(403).json({ error: '只能删除自己上传的文件（admin 通杀）' });
