@@ -91,8 +91,9 @@
                 <view class="node-card-header">
                   <text class="node-seq">{{ idx + 1 }}</text>
                   <text class="node-title">{{ node.node_name || node.stage_name || '未命名' }}</text>
-                  <view class="node-status-pill" :class="getNodeStatusClass(node.status)">
-                    {{ getNodeStatusText(node.status) }}
+                  <view class="node-status-pill node-status-btn" :class="getNodeStatusClass(displayStatus(node, idx))" @click.stop="openWheel(node, idx)">
+                    <text>{{ getNodeStatusText(displayStatus(node, idx)) }}</text>
+                    <text class="pill-caret">▾</text>
                   </view>
                 </view>
                 <view class="node-card-body">
@@ -106,15 +107,7 @@
                     <text class="node-date-text muted">未排期</text>
                   </view>
                 </view>
-                <!-- 操作按钮 -->
-                <view class="node-card-actions" v-if="node.status !== 'completed' && node.status !== 'skipped'">
-                  <view class="action-btn-sm" v-if="node.status === 'pending'" @click.stop="reportStart(node)">
-                    ▶ 开工
-                  </view>
-                  <view class="action-btn-sm accent" v-if="node.status === 'in_progress'" @click.stop="reportComplete(node)">
-                    ✅ 完工上报
-                  </view>
-                </view>
+                <!-- 状态直接在列表内改（点状态按钮弹滚轮），不再放单独的操作按钮 -->
               </view>
             </view>
           </view>
@@ -766,9 +759,6 @@
 
     <!-- 底部快捷操作 -->
     <view class="bottom-actions">
-      <view class="action-quick" @click="reportStart({})">
-        <text>▶ 开工</text>
-      </view>
       <view class="action-quick" @click="goLogAdd">
         <text>📝 日志</text>
       </view>
@@ -782,6 +772,16 @@
         <text>+ 派工</text>
       </view>
     </view>
+
+    <!-- 节点状态滚轮 -->
+    <StatusWheel
+      :visible="wheel.visible"
+      :title="wheel.title"
+      :items="statusOptions"
+      :current="wheel.current"
+      @cancel="wheel.visible = false"
+      @confirm="onWheelConfirm"
+    />
   </view>
 </template>
 
@@ -789,6 +789,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useUserStore } from "@/stores/user";
 import { toDate } from "@/utils/date";
+import StatusWheel from "@/components/status-wheel.vue";
 
 const projectId = ref(0);
 const project = ref({});
@@ -1520,68 +1521,123 @@ const goGallery = (cat) => {
   uni.navigateTo({ url: `/pages/gallery/index?projectId=${projectId.value}&cat=${cat}` });
 };
 
-const reportStart = (node) => {
-  uni.showActionSheet({
-    itemList: ['确认开工', '取消'],
-    success: async (res) => {
-      if (res.tapIndex === 0 && node.id) {
-        try {
-          const token = uni.getStorageSync("token");
-          await uni.request({
-            url: `/api/project-stages/${node.id}`,
-            method: "PUT",
-            header: { Authorization: token },
-            data: { status: 'in_progress' },
-          });
-          uni.showToast({ title: '已开工', icon: 'success' });
-          await fetchDetail();
-        } catch (e) {
-          uni.showToast({ title: '操作失败', icon: 'none' });
-        }
-      }
-    },
-  });
+// ===== 节点状态：列表内直接改（滚轮）=====
+const statusOptions = [
+  { name: '待开始', value: 'pending' },
+  { name: '进行中', value: 'in_progress' },
+  { name: '已完成', value: 'completed' },
+  { name: '已跳过', value: 'skipped' },
+];
+
+const wheel = ref({ visible: false, title: '', current: '', node: null, display: '' });
+
+// 与 PC 端 Projects.vue 的 isFirstPending 保持一致：
+// 前面节点全部完成/跳过时，第一个「待开始」节点在视觉上视为「进行中」（仅显示，不写库）
+const isFirstPending = (nodes, index) => {
+  for (let i = 0; i < index; i++) {
+    if (nodes[i].status !== 'completed' && nodes[i].status !== 'skipped') return false;
+  }
+  return true;
 };
 
-const reportComplete = (node) => {
-  uni.showModal({
-    title: '完工上报',
-    content: `确认「${node.node_name || node.stage_name}」已完成？`,
-    confirmText: '确认完工',
-    success: async (res) => {
-      if (res.confirm) {
-        try {
-          const token = uni.getStorageSync("token");
-          await uni.request({
-            url: `/api/project-stages/${node.id}`,
-            method: "PUT",
-            header: { Authorization: token },
-            data: {
-              status: 'completed',
-              progress_percent: 100,
-              actual_date: new Date().toISOString().split('T')[0],
-            },
+const displayStatus = (node, idx) => {
+  if (node.status === 'pending' && isFirstPending(project.value.nodes || [], idx)) return 'in_progress';
+  return node.status;
+};
+
+const openWheel = (node, idx) => {
+  const shown = displayStatus(node, idx);
+  wheel.value = {
+    visible: true,
+    title: node.node_name || node.stage_name || '节点状态',
+    current: shown,
+    display: shown,
+    node,
+  };
+};
+
+const onWheelConfirm = async (item) => {
+  const cur = wheel.value;
+  wheel.value = { ...cur, visible: false };
+  if (!cur.node || !item) return;
+  // 没改动选择 → 不写库（自动推进只是显示效果，不落库）
+  if (item.value === cur.display) return;
+  await applyNodeStatus(cur.node, item.value);
+};
+
+const applyNodeStatus = async (node, status) => {
+  const token = uni.getStorageSync('token');
+  // 与 PC 端一致：标记完成时询问是否发送服务通知短信
+  let sendSms = false;
+  if (status === 'completed') {
+    sendSms = await new Promise((resolve) => {
+      uni.showModal({
+        title: '节点完成',
+        content: '是否发送服务通知短信？',
+        // 微信小程序按钮文案上限 4 个字
+        confirmText: '发送短信',
+        cancelText: '仅保存',
+        success: (m) => resolve(!!m.confirm),
+        fail: () => resolve(false),
+      });
+    });
+  }
+  try {
+    await uni.request({
+      url: `/api/project-stages/${node.id}`,
+      method: 'PUT',
+      header: { Authorization: token },
+      data: {
+        status,
+        actual_date: status === 'completed' ? new Date().toISOString().split('T')[0] : null,
+      },
+    });
+
+    if (sendSms) {
+      try {
+        const r = await uni.request({
+          url: '/api/sms-send',
+          method: 'POST',
+          header: { Authorization: token },
+          data: { node_id: node.id, project_id: projectId.value },
+        });
+        const d = r.data || {};
+        if (d.status === 'success') {
+          uni.showToast({ title: '短信已发送', icon: 'success' });
+        } else {
+          uni.showModal({
+            title: '短信未发送',
+            content: (d.message || '未知原因') + '\n\n请检查：\n1. 系统设置 → 阿里云短信配置\n2. 节点是否绑定了短信模板\n3. 客户手机号是否填写',
+            showCancel: false,
+            confirmText: '知道了',
           });
-          // 记录日志
-          await uni.request({
-            url: "/api/project-logs",
-            method: "POST",
-            header: { Authorization: token },
-            data: {
-              project_id: projectId.value,
-              stage_id: node.id,
-              action_type: 'node_completed',
-              description: `节点「${node.node_name || node.stage_name}」完工上报`,
-            },
-          });
-          uni.showToast({ title: '已完工上报', icon: 'success' });
-          await fetchDetail();
-        } catch (e) {
-          uni.showToast({ title: '操作失败', icon: 'none' });
         }
+      } catch (smsErr) {
+        uni.showToast({ title: '短信发送失败', icon: 'none' });
       }
-    },
-  });
+    } else {
+      uni.showToast({ title: '状态已更新', icon: 'success' });
+    }
+
+    // 写项目日志
+    try {
+      await uni.request({
+        url: '/api/project-logs',
+        method: 'POST',
+        header: { Authorization: token },
+        data: {
+          project_id: projectId.value,
+          stage_id: node.id,
+          action_type: status === 'completed' ? 'node_completed' : 'node_updated',
+          description: `节点「${node.node_name || node.stage_name}」状态变更为「${getNodeStatusText(status)}」${sendSms ? '（已发短信）' : ''}`,
+        },
+      });
+    } catch (logErr) {}
+
+    await fetchDetail();
+  } catch (e) {
+    uni.showToast({ title: '操作失败', icon: 'none' });
+  }
 };
 
 const loadFinanceData = async () => {
@@ -2106,6 +2162,19 @@ const goBack = () => {
 .node-status-pill.n-pending { background: #F3F4F6; color: #9CA3AF; }
 .node-status-pill.n-progress { background: #DBEAFE; color: #1E40AF; }
 .node-status-pill.n-done { background: #D1FAE5; color: #065F46; }
+.node-status-pill.n-skipped { background: #F3F4F6; color: #9CA3AF; }
+
+/* 状态可点：点击弹滚轮直接改 */
+.node-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 9px;
+}
+.pill-caret {
+  font-size: 10px;
+  opacity: 0.65;
+}
 
 .node-card-body {
   margin-bottom: 8px;
