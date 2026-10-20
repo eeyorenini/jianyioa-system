@@ -8617,7 +8617,49 @@ app.get('/api/sms-send-logs', async (req, res) => {
 });
 
 // ==================== 系统设置 API ====================
-app.get('/api/system-settings', async (req, res) => {
+// 敏感字段：读取时一律打码，只回末 4 位；前端留空 = 不修改（保留库中原值）
+const SETTINGS_SECRET_KEYS = ['access_key_secret', 'app_secret', 'smtp_password', 'aes_key', 'token', 'secret'];
+
+function maskSecretValue(v) {
+  if (typeof v !== 'string' || v === '') return v;
+  if (v.length <= 4) return '****';
+  return '****' + v.slice(-4);
+}
+
+function maskSettingsSecrets(input) {
+  if (Array.isArray(input)) return input.map(maskSettingsSecrets);
+  if (!input || typeof input !== 'object') return input;
+  const out = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (typeof v === 'string' && SETTINGS_SECRET_KEYS.includes(k)) {
+      out[k] = maskSecretValue(v);
+    } else if (v && typeof v === 'object') {
+      out[k] = maskSettingsSecrets(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// 空值或仍是打码串 → 视为「不修改」
+function isMaskedOrEmpty(v) {
+  return v === undefined || v === null || v === '' ||
+    (typeof v === 'string' && v.startsWith('****'));
+}
+
+async function getSettingsCategory(category) {
+  const row = await db.prepare('SELECT setting_value FROM system_settings WHERE category = ?').get(category);
+  if (!row) return {};
+  try {
+    const parsed = JSON.parse(row.setting_value);
+    return parsed.setting_value || parsed || {};
+  } catch {
+    return {};
+  }
+}
+
+app.get('/api/system-settings', checkPermission('settings:read'), async (req, res) => {
   try {
     const rows = await db.prepare('SELECT * FROM system_settings').all();
     const settings = {};
@@ -8630,7 +8672,7 @@ app.get('/api/system-settings', async (req, res) => {
         settings[row.category] = row.setting_value;
       }
     });
-    res.json(settings);
+    res.json(maskSettingsSecrets(settings));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -8639,7 +8681,13 @@ app.get('/api/system-settings', async (req, res) => {
 app.put('/api/system-settings/sms', checkPermission('settings:write'), async (req, res) => {
   try {
     // 前端提交的是扁平对象 {provider, access_key_id, ...}，需要包裹成双重JSON格式
-    const value = JSON.stringify({ category: 'sms', setting_value: req.body });
+    const body = { ...req.body };
+    // 密钥留空/仍是打码串 → 沿用库中原值（防止把 ****abcd 这种打码串写进库）
+    if (isMaskedOrEmpty(body.access_key_secret)) {
+      const old = await getSettingsCategory('sms');
+      body.access_key_secret = old.access_key_secret || '';
+    }
+    const value = JSON.stringify({ category: 'sms', setting_value: body });
     const existing = await db.prepare('SELECT id FROM system_settings WHERE category = ?').get('sms');
     if (existing) {
       await db.prepare('UPDATE system_settings SET setting_value = ?, updated_at = ? WHERE category = ?')
@@ -8673,7 +8721,13 @@ app.put('/api/system-settings/wechat', checkPermission('settings:write'), async 
 
 app.put('/api/system-settings/email', checkPermission('settings:write'), async (req, res) => {
   try {
-    const value = JSON.stringify(req.body);
+    const body = { ...req.body };
+    // 邮箱密码留空/仍是打码串 → 沿用库中原值
+    if (isMaskedOrEmpty(body.smtp_password)) {
+      const old = await getSettingsCategory('email');
+      body.smtp_password = old.smtp_password || '';
+    }
+    const value = JSON.stringify(body);
     const existing = await db.prepare('SELECT id FROM system_settings WHERE category = ?').get('email');
     if (existing) {
       await db.prepare('UPDATE system_settings SET setting_value = ?, updated_at = ? WHERE category = ?')

@@ -22,7 +22,12 @@
               <el-input v-model="smsForm.access_key_id" placeholder="请输入 AccessKey ID" show-password />
             </el-form-item>
             <el-form-item label="AccessKey Secret">
-              <el-input v-model="smsForm.access_key_secret" placeholder="请输入 AccessKey Secret" show-password />
+              <el-input
+                v-model="smsForm.access_key_secret"
+                :placeholder="smsSecretSet ? '已配置，留空则不修改' : '请输入 AccessKey Secret'"
+                show-password
+              />
+              <div class="secret-hint" v-if="smsSecretSet">出于安全考虑不回显密钥，如需更换请重新输入</div>
             </el-form-item>
             <el-form-item label="签名名称">
               <el-select v-model="smsForm.sign_name" placeholder="请选择签名" style="width:100%">
@@ -123,7 +128,12 @@
               <el-input v-model="emailForm.smtp_user" placeholder="请输入邮箱账号" />
             </el-form-item>
             <el-form-item label="邮箱密码">
-              <el-input v-model="emailForm.smtp_password" placeholder="请输入授权码或密码" show-password />
+              <el-input
+                v-model="emailForm.smtp_password"
+                :placeholder="emailSecretSet ? '已配置，留空则不修改' : '请输入授权码或密码'"
+                show-password
+              />
+              <div class="secret-hint" v-if="emailSecretSet">出于安全考虑不回显密码，如需更换请重新输入</div>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveEmailSettings" :loading="saving">保存设置</el-button>
@@ -179,6 +189,11 @@ import axios from 'axios'
 const activeTab = ref('sms')
 const wechatSubTab = ref('mp')
 const saving = ref(false)
+// 密钥是否已在服务端配置（服务端只回打码值，前端不展示、留空即不修改）
+const smsSecretSet = ref(false)
+const emailSecretSet = ref(false)
+
+const isMasked = (v) => typeof v === 'string' && v.startsWith('****')
 
 const smsForm = reactive({
   provider: 'aliyun',
@@ -234,10 +249,16 @@ const loadSettings = async () => {
   try {
     const { data } = await axios.get('/api/system-settings')
     if (data.sms) {
-      Object.assign(smsForm, data.sms)
+      const sms = { ...data.sms }
+      smsSecretSet.value = isMasked(sms.access_key_secret)
+      if (isMasked(sms.access_key_secret)) sms.access_key_secret = ''
+      Object.assign(smsForm, sms)
     }
     if (data.email) {
-      Object.assign(emailForm, data.email)
+      const email = { ...data.email }
+      emailSecretSet.value = isMasked(email.smtp_password)
+      if (isMasked(email.smtp_password)) email.smtp_password = ''
+      Object.assign(emailForm, email)
     }
     // 加载通知规则
     try {
@@ -271,6 +292,7 @@ const saveSmsSettings = async () => {
   saving.value = true
   try {
     await axios.put('/api/system-settings/sms', smsForm)
+    if (smsForm.access_key_secret) smsSecretSet.value = true
     ElMessage.success('短信设置保存成功')
   } catch (error) {
     ElMessage.error('保存失败')
@@ -299,6 +321,7 @@ const saveEmailSettings = async () => {
   saving.value = true
   try {
     await axios.put('/api/system-settings/email', emailForm)
+    if (emailForm.smtp_password) emailSecretSet.value = true
     ElMessage.success('邮件设置保存成功')
   } catch (error) {
     ElMessage.error('保存失败')
@@ -336,5 +359,11 @@ onMounted(() => {
 .notif-rule-item {
   margin-bottom: 10px;
   padding: 10px 0;
+}
+.secret-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  margin-top: 4px;
 }
 </style>
