@@ -23,6 +23,7 @@ web/.vite/
 *.broken_backup
 *.swp
 web_backup_20260902/
+backup-20261020/
 server/check_*.js
 jianyioa-app/mobile/src/pages/**/*.vue.swp
 jianyioa-app/mobile/src/pages/**/.index.vue.swp

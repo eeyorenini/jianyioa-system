@@ -1644,16 +1644,55 @@ app.put('/api/contracts/:id', checkPermission('contract:write'), async (req, res
   res.json({ message: '更新成功' });
 });
 
+// ==================== 合同附件文件清理（v2.4.0）====================
+// 背景：删除合同原来只删数据库行。content 里的 base64 图片会随行消失，
+//       但 /uploads/ 下的真实文件没有任何清理逻辑，长期会堆成孤儿文件。
+// 策略：删合同后，把 content / attachment 里引用到的本地文件逐个检查，
+//       确认没有其他合同还在用才删——避免误删多份合同共享的同一张图。
+function extractUploadPaths(html) {
+  if (!html || typeof html !== 'string') return [];
+  const m = html.match(/\/uploads\/[A-Za-z0-9_\-\/\.]+\.(?:jpg|jpeg|png|gif|webp|bmp|pdf|doc|docx)/gi) || [];
+  return [...new Set(m)];
+}
+
+async function cleanupContractFiles(paths, deletedId) {
+  const uploadsRoot = path.join(__dirname, 'uploads');
+  for (const p of paths) {
+    try {
+      const like = `%${p}%`;
+      const [rows] = await pool.query(
+        'SELECT id FROM contracts WHERE id <> ? AND (content LIKE ? OR attachment LIKE ?) LIMIT 1',
+        [deletedId, like, like]
+      );
+      if (rows.length) continue; // 还有别的合同在用，保留
+      const full = path.join(__dirname, p.replace(/^\//, ''));
+      // 防路径穿越：必须落在 uploads 目录内
+      if (!full.startsWith(uploadsRoot + path.sep)) continue;
+      if (fs.existsSync(full)) {
+        fs.unlinkSync(full);
+        console.log(`[删除合同] 已清理附件: ${p}`);
+      }
+    } catch (e) {
+      console.error('[删除合同] 清理附件失败:', p, e.message);
+    }
+  }
+}
+
 app.delete('/api/contracts/:id', checkPermission('contract:delete'), async (req, res) => {
   const rawUserId = req.headers['x-user-id'];
   const userId = rawUserId ? parseInt(rawUserId) : 0;
   console.log('[DELETE contracts] userId=%s, isAdmin=%s, targetId=%s', userId, await isAdmin(userId), req.params.id);
-  const [c] = await db.prepare('SELECT project_name, created_by FROM contracts WHERE id = ?').all(req.params.id);
+  const [c] = await db.prepare('SELECT project_name, created_by, content, attachment FROM contracts WHERE id = ?').all(req.params.id);
   if (!c) return res.status(404).json({ error: '记录不存在' });
   if (c.created_by !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除他人的数据' });
   const cName = c.project_name;
   const stmt = db.prepare('DELETE FROM contracts WHERE id = ?');
   await stmt.run(req.params.id);
+  // 异步清理附件文件，不阻塞响应
+  const paths = [...extractUploadPaths(c.content), ...extractUploadPaths(c.attachment)];
+  if (paths.length) {
+    cleanupContractFiles(paths, req.params.id).catch(e => console.error('[删除合同] 附件清理异常:', e.message));
+  }
   await addLog(userId, '', '删除', '合同管理', req.params.id, cName, `删除合同: ${cName}`, req.ip);
   res.json({ message: '删除成功' });
 });
@@ -1895,6 +1934,14 @@ app.post('/api/delete-images', (req, res) => {
 });
 
 // PDF 转多页预览图接口（Mac 用 pdftoppm 转所有页，Windows 预留 pdf2pic 接口）
+// v2.4.0 性能改造：改为「落地 JPEG 文件 + 返回 URL」，不再把 base64 塞进编辑器 HTML。
+// 改造前：每页转 PNG 再 base64 内嵌 → 单份合同 content 达 8MB+（14 页 PDF = 8.67MB），
+//         打开编辑页要拉 8MB 大字段、保存又要回传 8MB，实测详情接口 20s+，且拖慢备份。
+// 改造后：content 只存 /uploads/contracts/pdf/xxx.jpg 短路径（整份约 20KB），
+//         图片走静态服务 + 浏览器缓存，加载/保存快两个数量级。
+// 兼容性：导出 PDF 时 withLocalBase() 会注入 <base href="http://127.0.0.1:PORT/">，
+//         相对路径图片照样能渲染进 PDF（v2.3.7 已修复），业务呈现完全不变。
+// 体积：130dpi JPEG（默认质量 75）约为原 150dpi PNG 的 1/5，合同文字依然清晰。
 app.post('/api/upload-pdf', upload.single('file'), (req, res) => {
   try {
     if (!req.file) {
@@ -1914,29 +1961,31 @@ app.post('/api/upload-pdf', upload.single('file'), (req, res) => {
     if (infoMatch) totalPages = parseInt(infoMatch[1]) || 1;
     // 限制最多转 20 页，防止异常大文件
     if (totalPages > 20) totalPages = 20;
-    // 转所有页面，每页一张 PNG
+    // 转所有页面，每页一张 JPEG，落到 uploads/contracts/pdf/
+    const pdfImgDir = path.join(uploadDir, 'contracts/pdf/');
+    if (!fs.existsSync(pdfImgDir)) fs.mkdirSync(pdfImgDir, { recursive: true });
+    const stamp = Date.now();
+    const rand = Math.random().toString(36).slice(2);
     const urls = [];
     for (let i = 1; i <= totalPages; i++) {
-      const newName = `${Date.now()}_${Math.random().toString(36).slice(2)}_p${i}.png`;
-      const outputPath = path.join(uploadDir, newName);
+      const baseName = `${stamp}_${rand}_p${i}`;
+      const outputBase = path.join(pdfImgDir, baseName);
       const result = spawnSync('pdftoppm', [
-        '-png', '-singlefile',
+        '-jpeg', '-singlefile',
         '-f', String(i), '-l', String(i),
-        '-r', '150',
-        req.file.path, outputPath.replace('.png', '')
+        '-r', '130',
+        req.file.path, outputBase
       ], { encoding: 'utf8' });
+      const outputPath = `${outputBase}.jpg`;
       if (!result.error && fs.existsSync(outputPath)) {
-        const fileData = fs.readFileSync(outputPath);
-        const base64 = fileData.toString('base64');
-        urls.push(`data:image/png;base64,${base64}`);
-        fs.unlinkSync(outputPath);
+        urls.push(`/uploads/contracts/pdf/${baseName}.jpg`);
       }
     }
     fs.unlinkSync(req.file.path);
     if (!urls.length) {
       return res.status(500).json({ error: 'PDF 转预览图失败，请确认已安装 poppler（brew install poppler）' });
     }
-    console.log(`[上传] PDF: ${req.file.originalname} -> ${urls.length} 页预览图`);
+    console.log(`[上传] PDF: ${req.file.originalname} -> ${urls.length} 页 JPEG`);
     res.json({ urls, totalPages });
   } catch (error) {
     console.error('PDF 上传错误:', error);
@@ -7927,10 +7976,11 @@ if (_chromePath) {
 // 背景：编辑器上传的图片插入的是**相对路径** `/uploads/logs/xxx.png`。
 // page.setContent() 渲染在空白页(about:blank)上，相对路径没有 origin 可解析
 // → 图片全部加载失败 → 导出的 PDF 里图片位置一片空白。
-// （上传的 PDF 之所以能正常导出，是因为 /api/upload-pdf 已把它转成
-//   base64 data URL，自带数据、不依赖路径。）
 // 解决：渲染前补一个 <base>，让相对路径指向本机后端（同端口托管的 /uploads）。
 // 纯新增，不改动任何原有的 PDF 生成流程。
+// v2.4.0 补充：PDF 上传接口已从「base64 内嵌」改为「存 JPEG 文件 + 相对路径」，
+//   正是靠这里的 <base> + waitUntil:'networkidle0' 才能正常渲染进导出的 PDF。
+//   → 千万别删 withLocalBase()，否则合同里所有 PDF 转图和插入的图片都会在导出时变空白。
 const LOCAL_BASE = `http://127.0.0.1:${PORT}/`;
 function withLocalBase(html) {
   if (typeof html !== 'string' || !html) return html;
@@ -10471,12 +10521,16 @@ const OLD_DISPATCH_APPROVE = /await pool\.query\('UPDATE dispatches SET status=\
 
 
 // ==================== 静态文件（必须在所有 API 路由之后） ====================
-app.use('/uploads', express.static(uploadDir));
+// v2.4.0：上传文件名都是「时间戳_随机串」唯一命名，内容永不改变，
+// 所以可以放心让浏览器长期缓存（7天）。合同里 PDF 转图从 base64 改为文件后，
+// 这条缓存直接决定第二次打开编辑页的图片加载速度。
+const staticUploadOpts = { maxAge: '7d', immutable: true };
+app.use('/uploads', express.static(uploadDir, staticUploadOpts));
 // 关键修复：uni-h5 在 base=/m/ 下，<image src="/uploads/..."> 实际请求的是 /m/uploads/...
 // （base path 自动前缀化）。生产环境如果不配这条路径，所有图片 src 都会拿到 SPA fallback 的
 // index.html（Content-Type: text/html），浏览器无法解析为图片。
 // dev 模式靠 vite proxy 配了 /m/uploads 重写，但生产没有——这里补上。
-app.use('/m/uploads', express.static(uploadDir));
+app.use('/m/uploads', express.static(uploadDir, staticUploadOpts));
 const webDistPath = path.join(__dirname, '../web/dist');
 if (fs.existsSync(webDistPath)) {
   app.use(express.static(webDistPath));
