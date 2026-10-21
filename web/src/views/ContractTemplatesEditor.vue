@@ -15,7 +15,9 @@
 
       <el-table :data="filteredTemplates" style="width:100%">
         <el-table-column prop="name" label="名称" />
-        <el-table-column prop="category" label="分类" />
+        <el-table-column prop="category" label="分类">
+          <template #default="{ row }">{{ dictLabel(CONTRACT_TEMPLATE_CATEGORY_LABELS, row.category) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="150">
           <template #default="{row}">
             <el-button size="small" type="primary" @click="openEditor(row)">编辑</el-button>
@@ -252,6 +254,7 @@ import Link from '@tiptap/extension-link'
 import ImageExtension from '@tiptap/extension-image'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { CONTRACT_TEMPLATE_CATEGORY_LABELS, dictLabel } from '@/utils/dicts'
 
 const editorRef = ref(null)
 const showAddVar = ref(false)

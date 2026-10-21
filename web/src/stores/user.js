@@ -39,7 +39,13 @@ export const useUserStore = defineStore('user', {
     user: null,
     token: null,
     isLoggedIn: false,
-    permissions: []
+    permissions: [],
+    // 借权（仅 admin 发起；与移动端同一套：借权期间 user/permissions 完全换成目标员工）
+    impersonating: false,
+    impersonator: null,      // 原管理员快照（含 permissions，用于一键恢复）
+    impersonatorName: '',
+    targetName: '',
+    targetRole: ''
   }),
 
   getters: {
@@ -99,6 +105,8 @@ export const useUserStore = defineStore('user', {
           }
           // 异步向后端拉取最新权限（不阻塞启动）
           this.loadPermissions()
+          // 恢复借权状态（刷新/重开浏览器后横幅和身份都要还在）
+          this.restoreImpersonate()
         } catch (e) {
           this.logout()
         }
@@ -156,6 +164,7 @@ export const useUserStore = defineStore('user', {
       this.token = null
       this.isLoggedIn = false
       this.permissions = []
+      this.clearImpersonateStorage()
 
       localStorage.removeItem('user')
       localStorage.removeItem('token')
@@ -166,6 +175,106 @@ export const useUserStore = defineStore('user', {
     updateUser(userData) {
       this.user = { ...this.user, ...userData }
       localStorage.setItem('user', JSON.stringify(this.user))
+    },
+
+    // ==================== 借权（身份借用） ====================
+    // 与移动端 stores/user.ts 的 startImpersonate / stopImpersonate 逻辑一致：
+    // 借权 = 把当前身份整体换成目标员工，权限按目标员工算（admin 特权也一并失去）。
+
+    /** 清除借权的 localStorage 标记 */
+    clearImpersonateStorage() {
+      localStorage.removeItem('impersonator')
+      localStorage.removeItem('impersonating')
+      this.impersonating = false
+      this.impersonator = null
+      this.impersonatorName = ''
+      this.targetName = ''
+      this.targetRole = ''
+    },
+
+    /** 启动时恢复借权态（刷新页面后横幅要还在） */
+    restoreImpersonate() {
+      try {
+        const flag = localStorage.getItem('impersonating')
+        const raw = localStorage.getItem('impersonator')
+        if (flag !== '1' || !raw) return
+        const admin = JSON.parse(raw)
+        this.impersonating = true
+        this.impersonator = admin
+        this.impersonatorName = admin.name || admin.username || '管理员'
+        this.targetName = this.user?.name || ''
+        this.targetRole = this.user?.role_name || this.user?.position || ''
+      } catch (e) {
+        this.clearImpersonateStorage()
+      }
+    },
+
+    /**
+     * 开始借权
+     * @param {object} targetUser 后端 /api/admin/impersonate 返回的 user
+     */
+    startImpersonate(targetUser) {
+      // 1) 先把当前管理员身份完整存一份快照
+      const adminSnapshot = {
+        id: this.user?.id,
+        username: this.user?.username,
+        name: this.user?.name,
+        role_code: this.user?.role_code,
+        role_name: this.user?.role_name,
+        position: this.user?.position,
+        phone: this.user?.phone,
+        permissions: [...(this.permissions || [])]
+      }
+      localStorage.setItem('impersonator', JSON.stringify(adminSnapshot))
+      localStorage.setItem('impersonating', '1')
+
+      // 2) 整体切换到目标员工（字段口径与登录返回保持一致）
+      const nextUser = {
+        id: targetUser.id,
+        username: targetUser.username,
+        name: targetUser.name,
+        role_code: targetUser.role_code || '',
+        role_name: targetUser.role_name || '',
+        position: targetUser.position || '',
+        phone: targetUser.phone || ''
+      }
+      this.user = nextUser
+      this.isLoggedIn = true
+      this.token = 'logged_in'
+      localStorage.setItem('user', JSON.stringify(nextUser))
+      localStorage.setItem('token', this.token)
+
+      // 3) 权限先按角色配置落地，再向服务端要一份权威的
+      const perms = parsePerms(targetUser.permissions ?? targetUser.role_permissions)
+      this.permissions = perms
+      localStorage.setItem('permissions', JSON.stringify(perms))
+
+      this.impersonating = true
+      this.impersonator = adminSnapshot
+      this.impersonatorName = adminSnapshot.name || adminSnapshot.username || '管理员'
+      this.targetName = nextUser.name || ''
+      this.targetRole = nextUser.role_name || nextUser.position || ''
+
+      this.loadPermissions()
+    },
+
+    /** 结束借权，恢复原管理员身份 */
+    stopImpersonate() {
+      let admin = this.impersonator
+      if (!admin) {
+        try { admin = JSON.parse(localStorage.getItem('impersonator') || 'null') } catch { admin = null }
+      }
+      this.clearImpersonateStorage()
+
+      if (admin && admin.id) {
+        this.user = admin
+        this.isLoggedIn = true
+        this.token = this.token || 'logged_in'
+        this.permissions = parsePerms(admin.permissions)
+        localStorage.setItem('user', JSON.stringify(admin))
+        localStorage.setItem('permissions', JSON.stringify(this.permissions))
+        this.loadPermissions()
+      }
     }
   }
 })

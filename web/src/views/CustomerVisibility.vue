@@ -3,7 +3,7 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>客户端可见配置（业主 App）</span>
+          <span>业主端可见配置</span>
           <el-button type="primary" @click="handleSave">
             <el-icon><Check /></el-icon>保存
           </el-button>
@@ -12,9 +12,9 @@
 
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 14px;">
         <div style="line-height: 1.7; font-size: 13px;">
-          业主（<code>customers</code> 表）从 <code>/api/customers/login</code> 登录，
-          <b>不在「角色」表中</b>，其可见的 8 项内容是 <b>全局一份</b>，存 <code>system_settings.category='customer_visibility'</code>。
-          <br/>⚠️ <b>总前提</b>：业主必须与项目相关联才谈得上"开不开"；不相关项目一律不可见，开关不生效。
+          这一页控制<b>业主在自己手机 App 里能看到哪些内容</b>。<br/>
+          业主不是员工、不在角色表里，所以这 8 项是<b>全局开关</b>：改一次，所有业主统一生效。<br/>
+          ⚠️ <b>前提</b>：业主必须先关联了项目，否则这里开不开都一样看不到。
         </div>
       </el-alert>
 
@@ -84,10 +84,12 @@ const form = reactive({
 const loadConfig = async () => {
   loading.value = true
   try {
-    const { data } = await request.get('/api/system-settings/customer_visibility')
+    // 注意：request 实例的 baseURL 已经是 '/api'，这里不能再写 '/api/...'，
+    // 否则会拼成 /api/api/... → 404（v2.3.13 修正）
+    const data = await request.get('/system-settings/customer_visibility')
     if (data && typeof data === 'object') Object.assign(form, data)
   } catch (e) {
-    // 路由不存在等异常，按现有默认继续（不强失败）
+    // 接口异常时按默认值继续展示（不强失败），避免整页打不开
     console.warn('load customer_visibility failed:', e?.message)
   } finally {
     loading.value = false
@@ -97,7 +99,7 @@ const loadConfig = async () => {
 const handleSave = async () => {
   loading.value = true
   try {
-    await request.post('/api/system-settings/customer_visibility', { setting_value: form })
+    await request.post('/system-settings/customer_visibility', { setting_value: form })
     ElMessage.success('已保存')
   } catch (e) {
     ElMessage.error('保存失败：' + (e?.message || ''))

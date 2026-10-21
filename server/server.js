@@ -1688,6 +1688,18 @@ app.delete('/api/contracts/:id', checkPermission('contract:delete'), async (req,
   const cName = c.project_name;
   const stmt = db.prepare('DELETE FROM contracts WHERE id = ?');
   await stmt.run(req.params.id);
+  // v2.3.12 修：删合同必须连带清掉它产生的「合同」收入记录，
+  // 否则 payment_records 里会留下一条找不到来源合同的孤儿收入
+  // （柏林山水 12 万那条就是删了合同 #76 之后残留下来的）。
+  try {
+    const [orphan] = await pool.query(
+      "DELETE FROM payment_records WHERE source_id = ? AND category = 'contract'",
+      [req.params.id]
+    );
+    if (orphan.affectedRows) console.log('[删除合同] 连带清理收支记录 %d 条, contractId=%s', orphan.affectedRows, req.params.id);
+  } catch (e) {
+    console.error('[删除合同] 清理收支记录失败:', e.message);
+  }
   // 异步清理附件文件，不阻塞响应
   const paths = [...extractUploadPaths(c.content), ...extractUploadPaths(c.attachment)];
   if (paths.length) {
@@ -2189,6 +2201,34 @@ function checkPermission(permission) {
       next();
     } catch (err) {
       console.error('[checkPermission] 捕获到异常:', err.message, err.stack);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: '权限检查异常: ' + err.message });
+      }
+    }
+  };
+}
+
+/**
+ * 任一权限码命中即放行。
+ * 用途：模块归属迁移期的兼容口径（例如「主材」从 warehouse 拆出 material 后，
+ * 老角色可能只有 warehouse:*，新角色只有 material:*，两边都要认）。
+ */
+function checkAnyPermission(permissions) {
+  const list = Array.isArray(permissions) ? permissions : [permissions];
+  return async (req, res, next) => {
+    try {
+      const userId = getUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: '未登录' });
+      }
+      if (await isAdmin(userId)) return next();
+      const perms = await getUserPermissions(userId);
+      if (!Array.isArray(perms) || !list.some((p) => perms.includes(p))) {
+        return res.status(403).json({ error: '无此操作权限', need: list });
+      }
+      next();
+    } catch (err) {
+      console.error('[checkAnyPermission] 捕获到异常:', err.message);
       if (!res.headersSent) {
         return res.status(500).json({ error: '权限检查异常: ' + err.message });
       }
@@ -3142,7 +3182,11 @@ app.get('/api/materials', async (req, res) => {
   const userId = getUserId(req);
   const userRole = req.headers['x-user-role'] || '';
   const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
-  const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'warehouse');
+  // v2.3.12：主材模块（material）正式生效。原判定只看 warehouse，
+  //   导致角色管理里勾「主材管理」毫无作用。现在两个模块都认（迁移期兼容）。
+  const hasAll = userIsAdmin
+    || await hasReadAllPermission(userId, 'material')
+    || await hasReadAllPermission(userId, 'warehouse');
   if (hasAll) {
     const stmt = db.prepare('SELECT * FROM materials ORDER BY created_at DESC');
     return res.json(await stmt.all());
@@ -3151,7 +3195,7 @@ app.get('/api/materials', async (req, res) => {
   res.json(await stmt.all(userId));
 });
 
-app.post('/api/materials', checkPermission('warehouse:write'), async (req, res) => {
+app.post('/api/materials', checkAnyPermission(['material:write', 'warehouse:write']), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -3162,7 +3206,7 @@ app.post('/api/materials', checkPermission('warehouse:write'), async (req, res) 
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
-app.put('/api/materials/:id', checkPermission('warehouse:write'), async (req, res) => {
+app.put('/api/materials/:id', checkAnyPermission(['material:write', 'warehouse:write']), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -3177,7 +3221,7 @@ app.put('/api/materials/:id', checkPermission('warehouse:write'), async (req, re
   res.json({ message: '更新成功' });
 });
 
-app.delete('/api/materials/:id', checkPermission('warehouse:delete'), async (req, res) => {
+app.delete('/api/materials/:id', checkAnyPermission(['material:delete', 'warehouse:delete']), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -3191,7 +3235,7 @@ app.delete('/api/materials/:id', checkPermission('warehouse:delete'), async (req
   res.json({ message: '删除成功' });
 });
 
-app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, res) => {
+app.post('/api/materials/in', checkAnyPermission(['material:write', 'warehouse:write']), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
     
   const userId = getUserId(req);
@@ -3240,7 +3284,7 @@ app.post('/api/materials/in', checkPermission('warehouse:write'), async (req, re
   res.json({ message: '入库成功' });
 });
 
-app.post('/api/materials/out', checkPermission('warehouse:write'), async (req, res) => {
+app.post('/api/materials/out', checkAnyPermission(['material:write', 'warehouse:write']), async (req, res) => {
   const _rawUid = req.headers['x-user-id'];
   const userId = getUserId(req);
   const { material_id, quantity, project_id, operator, note, date } = req.body;
@@ -4745,25 +4789,59 @@ app.put('/api/notifications/read-all', async (req, res) => {
   }
 });
 
+// ============================================================
+// 消息/通知的"当前身份"解析（2026-10-21 修复）
+//
+// 背景：原代码一律用 `SELECT phone FROM customers WHERE id = ?` 判断"是不是客户"，
+// 但 x-user-id 传的其实是**员工 id**（getCurrentUser 也是查 employees）。
+// employees.id 和 customers.id 是两套独立自增序列，撞号时（如员工 6 田翔 / 客户 6 郑大）
+// 员工会被当成客户 → 消息列表查到别人的数据、未读角标永远清不掉、全部已读清错人。
+//
+// 判定顺序：
+//   1) x-user-id 命中 employees → 员工（主路径）
+//   2) 显式 ?phone= / body.phone → 客户（客户 H5 走这个）
+//   3) x-user-id 命中 customers → 客户（兼容旧调用）
+// ============================================================
+async function resolveMessageActor(req) {
+  const rawId = req.headers['x-user-id'] || req.query.user_id || req.body?.user_id;
+  const userId = rawId ? parseInt(rawId) : 0;
+
+  if (userId > 0) {
+    try {
+      const [emp] = await pool.query('SELECT id, phone FROM employees WHERE id = ?', [userId]);
+      if (emp.length) return { type: 'employee', userId, phone: emp[0].phone || null };
+    } catch (e) { /* 忽略，继续往下判 */ }
+  }
+
+  const phoneParam = req.query.phone || req.body?.phone;
+  if (phoneParam) return { type: 'customer', userId: userId || null, phone: String(phoneParam) };
+
+  if (userId > 0) {
+    try {
+      const [cust] = await pool.query('SELECT id, phone FROM customers WHERE id = ?', [userId]);
+      if (cust.length) return { type: 'customer', userId, phone: cust[0].phone || null };
+    } catch (e) { /* 忽略 */ }
+  }
+
+  return { type: 'unknown', userId: userId || null, phone: null };
+}
+
 // 获取消息列表（统一查 notifications 表，兼容员工和客户）
 app.get('/api/messages', async (req, res) => {
   try {
-    const { userId } = await getCurrentUser(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
     const { type, is_read, keyword, page = 1, pageSize = 20 } = req.query;
-    
+
     // 客户用 phone 查 notifications，员工用 user_id 查 messages
     let list = [];
     let total = 0;
-    
-    // 先查客户表，通过 userId 找 phone
-    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
-    
-    if (customer) {
+
+    if (actor.type === 'customer') {
       // 客户：查 notifications 表（按 receiver_phone 匹配）
       let sql = 'SELECT * FROM notifications WHERE receiver_phone = ?';
-      const params = [customer.phone];
+      const params = [actor.phone];
       
       if (type) { sql += ' AND type = ?'; params.push(type); }
       if (is_read !== undefined && is_read !== '') { sql += ' AND is_read = ?'; params.push(parseInt(is_read)); }
@@ -4780,9 +4858,9 @@ app.get('/api/messages', async (req, res) => {
     } else {
       // 员工：合并查 messages + notifications 两表（修复：notifyProject 等同时写两表，
       // 列表只查 messages 导致 notifications 表 70+ 条永远不可见；unread-count 端点又算两表所以红点一直在）
-      // 1) 取员工 phone（用于 notifications 表 receiver_phone 匹配）
-      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
-      const empPhone = empRows[0]?.phone || null;
+      // 1) 员工 phone 由 resolveMessageActor 一并取回（用于 notifications 表 receiver_phone 匹配）
+      const userId = actor.userId;
+      const empPhone = actor.phone;
 
       // 2) messages WHERE user_id=?；related_id alias 成 source_id 让前端 getTargetPath 兼容
       let msgSql = `SELECT id, user_id, user_name, title, content, type, related_id AS source_id, related_type AS source_type, is_read, push_status, created_at, 'messages' AS src FROM messages WHERE user_id = ?`;
@@ -4837,30 +4915,25 @@ app.get('/api/messages', async (req, res) => {
 // 获取未读消息数量（统一查 notifications 表，兼容员工和客户）
 app.get('/api/messages/unread-count', async (req, res) => {
   try {
-    const { userId } = await getCurrentUser(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    
-    // 先查客户表，通过 userId 找 phone
-    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
-    
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
     let count = 0;
-    if (customer) {
+    if (actor.type === 'customer') {
       // 客户：查 notifications 表
-      const [row] = await db.prepare('SELECT COUNT(*) as count FROM notifications WHERE receiver_phone = ? AND is_read = 0').all(customer.phone);
-      count = row.count;
+      const [row] = await pool.query('SELECT COUNT(*) as count FROM notifications WHERE receiver_phone = ? AND is_read = 0', [actor.phone]);
+      count = Number(row[0].count || 0);
     } else {
       // 员工：合并查 messages + notifications 两表（与 /api/notifications/unread-count 端点口径一致）
-      const [empRow] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
-      const empPhone = empRow[0]?.phone || null;
-      const [mRow] = await pool.query('SELECT COUNT(*) AS cnt FROM messages WHERE user_id = ? AND is_read = 0', [userId]);
+      const [mRow] = await pool.query('SELECT COUNT(*) AS cnt FROM messages WHERE user_id = ? AND is_read = 0', [actor.userId]);
       let total = Number(mRow[0].cnt || 0);
-      if (empPhone) {
-        const [nRow] = await pool.query('SELECT COUNT(*) AS cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [empPhone]);
+      if (actor.phone) {
+        const [nRow] = await pool.query('SELECT COUNT(*) AS cnt FROM notifications WHERE receiver_phone = ? AND is_read = 0', [actor.phone]);
         total += Number(nRow[0].cnt || 0);
       }
       count = total;
     }
-    
+
     res.json({ count });
   } catch (err) {
     console.error('unread-count error:', err);
@@ -4871,20 +4944,17 @@ app.get('/api/messages/unread-count', async (req, res) => {
 // 标记消息已读（统一处理 notifications 和 messages）
 app.put('/api/messages/:id/read', async (req, res) => {
   try {
-    const { userId } = await getCurrentUser(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    
-    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
-    
-    if (customer) {
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
+    if (actor.type === 'customer') {
       // 客户：更新 notifications 表
-      await db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?').run(req.params.id, customer.phone);
+      await pool.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?', [req.params.id, actor.phone]);
     } else {
       // 员工：两表都尝试 UPDATE（哪张表有改哪张；前端不需要知道）
-      await pool.query('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, userId]);
-      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
-      if (empRows[0]?.phone) {
-        await pool.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?', [req.params.id, empRows[0].phone]);
+      await pool.query('UPDATE messages SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, actor.userId]);
+      if (actor.phone) {
+        await pool.query('UPDATE notifications SET is_read = 1 WHERE id = ? AND receiver_phone = ?', [req.params.id, actor.phone]);
       }
     }
     res.json({ message: '已标记已读' });
@@ -4897,21 +4967,18 @@ app.put('/api/messages/:id/read', async (req, res) => {
 // 标记全部已读（统一处理 notifications 和 messages）
 app.put('/api/messages/read-all', async (req, res) => {
   try {
-    const { userId } = await getCurrentUser(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    
-    const [customer] = await db.prepare('SELECT phone FROM customers WHERE id = ?').all(userId);
-    
-    if (customer) {
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
+    if (actor.type === 'customer') {
       // 客户：更新 notifications 表
-      await db.prepare('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?').run(customer.phone);
+      await pool.query('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?', [actor.phone]);
     } else {
       // 员工：同时更新 messages + notifications 两表（修复：原来只改 messages，notifications 表的 is_read 永远不变，
       // 导致首页 unread-count 红点永远显示，因为 unread-count 端点合并查两表）
-      await pool.query('UPDATE messages SET is_read = 1 WHERE user_id = ?', [userId]);
-      const [empRows] = await pool.query('SELECT phone FROM employees WHERE id = ?', [userId]);
-      if (empRows[0]?.phone) {
-        await pool.query('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?', [empRows[0].phone]);
+      await pool.query('UPDATE messages SET is_read = 1 WHERE user_id = ?', [actor.userId]);
+      if (actor.phone) {
+        await pool.query('UPDATE notifications SET is_read = 1 WHERE receiver_phone = ?', [actor.phone]);
       }
     }
     res.json({ message: '已全部标记已读' });
@@ -5262,7 +5329,9 @@ app.get('/api/purchase-requests', async (req, res) => {
 
     const perms = await getUserPermissions(userId);
     const isAdminUser = await isAdmin(userId);
-    const canViewAll = isAdminUser || perms.includes('purchase:view');
+    // v2.3.12：purchase:view 在角色管理里没有对应勾选列，永远授不出去；
+    //   统一并入 purchase:read_all（「全部数据」），老数据里的 purchase:view 继续兼容。
+    const canViewAll = isAdminUser || perms.includes('purchase:read_all') || perms.includes('purchase:view');
     const canApprove = perms.includes('purchase:approve');
     const canFinance = perms.includes('purchase:finance');
 
@@ -5524,27 +5593,42 @@ app.get('/api/purchase-requests/to-reimburse', checkPermission('purchase:write')
   }
 });
 
-// GET /api/purchase-requests/finance — 财务确认列表（finance_confirmed + reimbursed）
+// GET /api/purchase-requests/finance — 财务确认列表
+// v2.3.12 改：支持 status 筛选，并单独返回 pending_count 供角标使用
+//   status=pending（默认）→ finance_confirmed 待上传回执（真正的待办）
+//   status=done          → reimbursed 已报销（终态，历史）
+//   status=all           → 两者都要
+// 角标 pending_count 只算 finance_confirmed。此前前端拿 total（含 reimbursed）当角标，
+// 导致已报销完成的记录永远挂在角标上，数字消不掉。
 app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), async (req, res) => {
-  const { page, page_size } = req.query;
+  const { page, page_size, status } = req.query;
   const p = parseInt(page) || 1;
   const l = parseInt(page_size) || 50;
   const offset = (p - 1) * l;
+
+  let statuses;
+  if (status === 'done') statuses = ['reimbursed'];
+  else if (status === 'all') statuses = ['finance_confirmed', 'reimbursed'];
+  else statuses = ['finance_confirmed'];
+  const placeholders = statuses.map(() => '?').join(',');
 
   try {
     const [rows] = await pool.query(
       `SELECT pr.*, pri.quantity, pri.unit, pri.material_name
        FROM purchase_requests pr
        LEFT JOIN purchase_request_items pri ON pri.request_id = pr.id
-       WHERE pr.status IN ('finance_confirmed', 'reimbursed')
+       WHERE pr.status IN (${placeholders})
        ORDER BY pr.created_at DESC LIMIT ? OFFSET ?`,
-      [l, offset]
+      [...statuses, l, offset]
     );
-    const [countResult] = await pool.query(
-      'SELECT COUNT(*) as total FROM purchase_requests WHERE status IN (?, ?)',
-      ['finance_confirmed', 'reimbursed']
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) as total FROM purchase_requests WHERE status IN (${placeholders})`,
+      statuses
     );
-    res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
+    const [[{ pending_count }]] = await pool.query(
+      "SELECT COUNT(*) as pending_count FROM purchase_requests WHERE status = 'finance_confirmed'"
+    );
+    res.json({ list: rows, total, pending_count, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests finance error:', err);
     res.status(500).json({ error: '查询失败' });
@@ -6469,12 +6553,20 @@ app.put('/api/dispatches/:id/approve', async (req, res) => {
     await pool.query('UPDATE dispatches SET status=?, updated_at=NOW() WHERE id=?', [newStatus, req.params.id]);
 
     // 审核通过 → 自动在 payment_records 插入待确认支出记录
+    // v2.3.12 修：加幂等保护。此前同一派工单被重复点「审核通过」（前端连点/重试）会插多条
+    // 收支记录，柏林山水派工 #7 就因此重复入账 2 条 200 元。改为先查是否已有记录再插。
     if (action === 'approve' && record.fee && parseFloat(record.fee) > 0) {
-      await pool.query(
-        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
-         VALUES (?, 'expense', 'dispatch', ?, ?, 'pending', ?, NOW())`,
-        [record.project_id, record.fee, req.params.id, userId]
+      const [[exist]] = await pool.query(
+        "SELECT id FROM payment_records WHERE source_id = ? AND category = 'dispatch' LIMIT 1",
+        [req.params.id]
       );
+      if (!exist) {
+        await pool.query(
+          `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+           VALUES (?, 'expense', 'dispatch', ?, ?, 'pending', ?, NOW())`,
+          [record.project_id, record.fee, req.params.id, userId]
+        );
+      }
     }
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '派工管理', req.params.id, record.content || '', `派工审核${action === 'approve' ? '通过' : '拒绝'}${reason ? '，原因：' + reason : ''}`, req.ip);
@@ -6531,7 +6623,13 @@ app.post('/api/dispatches/:id/revert', async (req, res) => {
       return res.status(400).json({ error: '已经是待审核状态' });
     }
     await pool.query("UPDATE dispatches SET status='pending', updated_at=NOW() WHERE id=?", [req.params.id]);
-    await addLog(userId, '', '反审核', '派工管理', req.params.id, record.content || '', `反审核：派工单从 ${record.status} 改回待审核`, req.ip);
+    // v2.3.12 修：反审核要把该派工产生的「待确认」收支记录一并撤销，
+    // 否则重新审核通过时又会插一条，导致重复入账。已确认的记录保留（财务凭证不动）。
+    const [revoked] = await pool.query(
+      "DELETE FROM payment_records WHERE source_id = ? AND category = 'dispatch' AND status = 'pending'",
+      [req.params.id]
+    );
+    await addLog(userId, '', '反审核', '派工管理', req.params.id, record.content || '', `反审核：派工单从 ${record.status} 改回待审核${revoked.affectedRows ? `，撤销待确认收支 ${revoked.affectedRows} 条` : ''}`, req.ip);
     res.json({ message: '已反审核' });
   } catch (err) {
     console.error('dispatches revert error:', err);
@@ -6569,7 +6667,13 @@ app.delete('/api/dispatches/:id', checkPermission('dispatch:delete'), async (req
     const [[d]] = await pool.query('SELECT content FROM dispatches WHERE id = ?', [req.params.id]);
     const dName = d ? d.content : req.params.id;
     await pool.query('DELETE FROM dispatches WHERE id = ?', [req.params.id]);
-    await addLog(userId, '', '删除', '派工管理', req.params.id, dName, `删除派工: ${dName}`, req.ip);
+    // v2.3.12 修：删除派工单时清掉它产生的收支记录，避免留下找不到来源单据的孤儿记录。
+    // 柏林山水派工 #6 被删后，payment_records 里那条 2000 元「派工」支出就一直悬着。
+    const [orphan] = await pool.query(
+      "DELETE FROM payment_records WHERE source_id = ? AND category = 'dispatch'",
+      [req.params.id]
+    );
+    await addLog(userId, '', '删除', '派工管理', req.params.id, dName, `删除派工: ${dName}${orphan.affectedRows ? `，连带清理收支记录 ${orphan.affectedRows} 条` : ''}`, req.ip);
     res.json({ message: '删除成功' });
   } catch (err) {
     console.error('dispatches delete error:', err);
@@ -9794,12 +9898,19 @@ app.put('/api/contracts/:id/review', async (req, res) => {
     );
 
     // 审核通过 → 自动在 payment_records 插入收入记录
+    // v2.3.12 修：加幂等保护，同一份合同只产生一条收入记录
     if (action === 'approve' && contract.contract_amount) {
-      await pool.query(
-        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
-         VALUES (?, 'income', 'contract', ?, ?, 'confirmed', ?, NOW())`,
-        [contract.project_id, contract.contract_amount, req.params.id, userId]
+      const [[existCt]] = await pool.query(
+        "SELECT id FROM payment_records WHERE source_id = ? AND category = 'contract' LIMIT 1",
+        [req.params.id]
       );
+      if (!existCt) {
+        await pool.query(
+          `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+           VALUES (?, 'income', 'contract', ?, ?, 'confirmed', ?, NOW())`,
+          [contract.project_id, contract.contract_amount, req.params.id, userId]
+        );
+      }
     }
 
     const [[proj]] = await pool.query('SELECT name FROM projects WHERE id = ?', [contract.project_id]);
@@ -10049,7 +10160,12 @@ app.delete('/api/contract-changes/:id', async (req, res) => {
       return res.status(403).json({ error: '无权删除此记录' });
     }
     await pool.query('DELETE FROM contract_changes WHERE id = ?', [req.params.id]);
-    await addLog(userId, '', '删除', '增减项', req.params.id, '', `删除增减项: ${record.title}`, req.ip);
+    // v2.3.12 修：删增减项要连带清掉它产生的收支占位记录，否则留下孤儿
+    const [ccOrphan] = await pool.query(
+      "DELETE FROM payment_records WHERE source_id = ? AND category = 'contract_change'",
+      [req.params.id]
+    );
+    await addLog(userId, '', '删除', '增减项', req.params.id, '', `删除增减项: ${record.title}${ccOrphan.affectedRows ? `，连带清理收支记录 ${ccOrphan.affectedRows} 条` : ''}`, req.ip);
     res.json({ message: '删除成功' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -10076,13 +10192,20 @@ app.put('/api/contract-changes/:id/review', async (req, res) => {
     );
 
     // 审核通过 → 自动更新 payment_records
+    // v2.3.12 修：加幂等保护，同一增减项只产生一条收支占位记录
     if (action === 'approve' && record.amount) {
-      const pType = record.change_type === 'increase' ? 'income' : 'expense';
-      await pool.query(
-        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
-         VALUES (?, ?, 'contract_change', ?, ?, 'confirmed', ?, NOW())`,
-        [record.project_id, pType, record.amount, req.params.id, userId]
+      const [[existCc]] = await pool.query(
+        "SELECT id FROM payment_records WHERE source_id = ? AND category = 'contract_change' LIMIT 1",
+        [req.params.id]
       );
+      if (!existCc) {
+        const pType = record.change_type === 'increase' ? 'income' : 'expense';
+        await pool.query(
+          `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+           VALUES (?, ?, 'contract_change', ?, ?, 'confirmed', ?, NOW())`,
+          [record.project_id, pType, record.amount, req.params.id, userId]
+        );
+      }
     }
 
     await addLog(userId, '', action === 'approve' ? '审核通过' : '审核拒绝', '增减项', req.params.id, record.title, `增减项审核${action === 'approve' ? '通过' : '拒绝'}${remark ? '：' + remark : ''}`, req.ip);
@@ -10180,11 +10303,18 @@ app.put('/api/collection-records/:id/confirm', async (req, res) => {
     );
 
     // 确认收款 → 自动在 payment_records 插入收入记录
-    await pool.query(
-      `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
-       VALUES (?, 'income', 'collection', ?, ?, 'confirmed', ?, NOW())`,
-      [record.project_id, confAmt, req.params.id, userId]
+    // v2.3.12 修：加幂等保护，同一条催收记录只入账一次
+    const [[existCol]] = await pool.query(
+      "SELECT id FROM payment_records WHERE source_id = ? AND category = 'collection' LIMIT 1",
+      [req.params.id]
     );
+    if (!existCol) {
+      await pool.query(
+        `INSERT INTO payment_records (project_id, type, category, amount, source_id, status, created_by, created_at)
+         VALUES (?, 'income', 'collection', ?, ?, 'confirmed', ?, NOW())`,
+        [record.project_id, confAmt, req.params.id, userId]
+      );
+    }
 
     const [[proj]] = await pool.query('SELECT name FROM projects WHERE id = ?', [record.project_id]);
     const project_name = proj?.name || `项目#${record.project_id}`;
@@ -10234,13 +10364,43 @@ app.post('/api/payment-records', async (req, res) => {
     if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: '金额必须大于0' });
 
     const [result] = await pool.query(
-      `INSERT INTO payment_records (project_id, type, category, amount, status, remark, created_by, created_at)
+      `INSERT INTO payment_records (project_id, type, category, amount, status, description, created_by, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
       [project_id, type, category || 'manual', amount, status || 'pending', remark || '', userId]
     );
     await addLog(userId, '', '新增', '收支记录', result.insertId, `项目#${project_id}`, `${type === 'income' ? '收入' : '支出'}：${amount}元`, req.ip);
     res.json({ id: result.insertId, message: '记录已添加' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/payment-records/:id/confirm — 确认收支记录（待确认 → 已确认）
+// v2.3.12 新增：此前 payment_records 只有「插入」没有「确认」入口，
+// 派工审核通过产生的支出永远是「待确认」，财务在 PC 端和移动端都点不到确认按钮。
+app.put('/api/payment-records/:id/confirm', checkPermission('finance:write'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+
+    const [[record]] = await pool.query('SELECT * FROM payment_records WHERE id = ?', [req.params.id]);
+    if (!record) return res.status(404).json({ error: '记录不存在' });
+    if (record.status === 'confirmed') return res.status(400).json({ error: '该记录已确认，无需重复操作' });
+    if (record.status === 'cancelled') return res.status(400).json({ error: '该记录已取消，不能确认' });
+
+    // 带 status='pending' 条件，防止并发重复确认
+    const [result] = await pool.query(
+      "UPDATE payment_records SET status='confirmed', confirmed_by=?, confirmed_at=NOW() WHERE id=? AND status='pending'",
+      [userId, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(409).json({ error: '状态已变化，请刷新后重试' });
+
+    const label = record.type === 'income' ? '收入' : '支出';
+    await addLog(userId, '', '确认', '财务管理', req.params.id, `项目#${record.project_id}`,
+      `确认收支：${label} ${record.amount} 元`, req.ip);
+    res.json({ message: '已确认', id: record.id, status: 'confirmed' });
+  } catch (err) {
+    console.error('payment-records confirm error:', err);
+    res.status(500).json({ error: '确认失败' });
+  }
 });
 
 // ==================== 财务汇总 ====================
@@ -11373,9 +11533,23 @@ app.get('/api/todo/center', async (req, res) => {
 });
 
 app.get('*', (req, res) => {
+  // 构建产物（/assets/xxx.js|css）必须严格 404，绝不能回退到 index.html。
+  // 原因：前端每次重新构建，chunk 文件名 hash 都会变；旧标签页里跑的还是上一版 index-*.js，
+  // 点开某个懒加载页面就会去请求已经不存在的旧 chunk。若这里回退 index.html，
+  // 浏览器会报 "'text/html' is not a valid JavaScript MIME type"，
+  // 把"文件已不存在"这个真实原因完全掩盖掉，看起来像是代码坏了。
+  if (req.path.startsWith('/assets/') || req.path.startsWith('/m/assets/')) {
+    return res
+      .status(404)
+      .type('text/plain')
+      .send('Asset not found — front-end was rebuilt, please hard refresh (Cmd/Ctrl+Shift+R).')
+  }
   if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads') && !req.path.startsWith('/auth')) {
     // 移动端 SPA：/m/* 命中时返回移动端 index.html
-    if (req.path.startsWith('/m')) {
+    // ⚠️ 2026-10-21 修复：原来写 startsWith('/m')，把 PC 的 /message-center、/main-materials、
+    // /material-orders 全误判成移动端路径 → 直接访问/刷新这几个页面会加载移动端 H5（URL 变成 #/pages/home/index）。
+    // 必须按「/m 或 /m/ 开头」判定。
+    if (req.path === '/m' || req.path.startsWith('/m/')) {
       const mobileIndex = path.join(mobileDistPath, 'index.html');
       if (fs.existsSync(mobileIndex)) return res.sendFile(mobileIndex);
     }

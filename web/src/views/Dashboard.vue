@@ -65,6 +65,53 @@
       </el-col>
     </el-row>
 
+    <!-- 待办事项（按权限聚合，与移动端待办中心同一数据源） -->
+    <div class="todo-block">
+      <div class="todo-head">
+        <div class="todo-head-left">
+          <span class="todo-title">🔔 待办事项</span>
+          <el-tag v-if="todoTotal > 0" type="danger" effect="dark" size="small" round>
+            {{ todoTotal }} 项待处理
+          </el-tag>
+          <span v-else class="todo-none-tag">暂无待办</span>
+        </div>
+        <el-button type="primary" link size="small" @click="$router.push('/todo')">
+          查看全部 →
+        </el-button>
+      </div>
+
+      <div v-if="todoGroups.length" class="todo-chips">
+        <div
+          v-for="g in todoGroups"
+          :key="g.key"
+          class="todo-chip"
+          @click="$router.push('/todo')"
+        >
+          <span class="todo-chip-icon">{{ g.icon }}</span>
+          <span class="todo-chip-label">{{ g.label }}</span>
+          <span class="todo-chip-count">{{ g.count }}</span>
+        </div>
+      </div>
+
+      <div v-if="todoItems.length" class="todo-items">
+        <div
+          v-for="item in todoItems"
+          :key="item.type + '-' + item.id"
+          class="todo-item"
+          @click="goTodoItem(item)"
+        >
+          <span class="todo-item-dot"></span>
+          <span class="todo-item-title">{{ item.title }}</span>
+          <span class="todo-item-sub">{{ item.subtitle }}</span>
+          <span class="todo-item-time">{{ item.time }}</span>
+          <span class="todo-item-arrow">›</span>
+        </div>
+      </div>
+      <div v-else-if="todoTotal === 0" class="todo-empty">
+        🎉 没有待处理事项，喝杯茶吧
+      </div>
+    </div>
+
     <!-- 财务概览（核心区） + 月度趋势 mini chart -->
     <el-row :gutter="16" class="row-finance">
       <!-- 左侧：财务 8 项关键指标 -->
@@ -302,6 +349,38 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
+import { useRouter } from 'vue-router'
+import { resolvePcTarget } from '@/utils/message-link'
+
+const router = useRouter()
+
+// 待办事项（与移动端待办中心共用 /api/todo/center）
+const todoGroups = ref([])
+const todoItems = ref([])
+const todoTotal = ref(0)
+
+const loadTodo = async () => {
+  try {
+    const res = await axios.get('/api/todo/center')
+    if (res.data && res.data.code === 0) {
+      const gs = (res.data.groups || []).filter(g => g.count > 0)
+      todoGroups.value = gs
+      todoTotal.value = res.data.total || 0
+      const flat = []
+      for (const g of gs) {
+        for (const it of (g.items || [])) flat.push(it)
+      }
+      todoItems.value = flat.slice(0, 5)
+    }
+  } catch (e) {
+    console.error('加载待办失败:', e)
+  }
+}
+
+const goTodoItem = (item) => {
+  const target = resolvePcTarget(item)
+  router.push(target || '/todo')
+}
 
 const stats = ref({
   customerCount: 0, customerThisMonth: 0,
@@ -438,6 +517,7 @@ const loadData = async () => {
 
 onMounted(() => {
   loadData()
+  loadTodo()
 })
 </script>
 
@@ -447,6 +527,58 @@ onMounted(() => {
   background: linear-gradient(180deg, #f5f7fa 0%, #fafbfc 100%);
   min-height: 100vh;
 }
+
+/* ===== 待办事项 ===== */
+.todo-block {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .05);
+  border-left: 3px solid #F56C6C;
+}
+.todo-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.todo-head-left { display: flex; align-items: center; gap: 10px; }
+.todo-title { font-size: 15px; font-weight: 600; color: #1E3A5F; }
+.todo-none-tag { font-size: 12px; color: #909399; }
+.todo-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.todo-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 14px;
+  background: #fef0f0; color: #A32D2D;
+  font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.todo-chip:hover { background: #fde2e2; }
+.todo-chip-icon { font-size: 12px; }
+.todo-chip-count {
+  background: #F56C6C; color: #fff; border-radius: 9px;
+  font-size: 11px; padding: 0 6px; line-height: 15px;
+}
+.todo-items { display: flex; flex-direction: column; }
+.todo-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 4px; border-top: 1px solid #f5f6f7;
+  cursor: pointer; transition: background .15s;
+}
+.todo-item:hover { background: #fafbfc; }
+.todo-item-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #F56C6C; flex-shrink: 0;
+}
+.todo-item-title {
+  font-size: 13px; color: #303133; font-weight: 500;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.todo-item-sub {
+  font-size: 12px; color: #909399; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.todo-item-time { font-size: 12px; color: #c0c4cc; flex-shrink: 0; }
+.todo-item-arrow { font-size: 15px; color: #c0c4cc; flex-shrink: 0; }
+.todo-empty { font-size: 13px; color: #909399; padding: 8px 0; }
 
 /* ===== Hero 顶部条 ===== */
 .hero-bar {

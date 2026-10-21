@@ -493,7 +493,7 @@
     <!-- 项目详情弹窗 -->
     <el-dialog v-model="showProjectDetail" :title="`项目详情：${detailProject?.name || ''}`" width="900px">
       <el-tabs v-model="detailTab">
-        <el-tab-pane label="日志" name="logs">
+        <el-tab-pane label="日志" name="logs" v-if="userStore.can('project_log')">
           <!-- 施工日志列表（只展示当前项目） -->
           <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
             <span style="font-size:12px;color:#909399">
@@ -517,7 +517,7 @@
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="巡检" name="inspections">
+        <el-tab-pane label="巡检" name="inspections" v-if="userStore.can('inspection')">
           <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
             <span style="font-size:12px;color:#909399">共 {{ detailInspections.length }} 条</span>
           </div>
@@ -536,19 +536,19 @@
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="验收" name="acceptance">
+        <el-tab-pane label="验收" name="acceptance" v-if="userStore.can('acceptance')">
           <div style="text-align:center;color:#909399;padding:40px">
             验收功能开发中
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="主材" name="materials">
+        <el-tab-pane label="主材" name="materials" v-if="userStore.can('material')">
           <div style="text-align:center;color:#909399;padding:40px">
             主材功能开发中
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="增减项" name="changes">
+        <el-tab-pane label="增减项" name="changes" v-if="userStore.can('contract_change') || userStore.can('contract')">
           <div style="margin-bottom:12px;display:flex;justify-content:flex-end">
             <span style="font-size:12px;color:#909399">共 {{ detailChanges.length }} 条</span>
           </div>
@@ -590,7 +590,7 @@
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="采购" name="purchases">
+        <el-tab-pane label="采购" name="purchases" v-if="userStore.can('purchase')">
           <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:12px;color:#909399">共 {{ detailPurchases.length }} 条</span>
             <el-button type="primary" size="small" @click="goToPurchaseRequest">发起采购申请</el-button>
@@ -616,7 +616,7 @@
         </el-tab-pane>
 
         <!-- 文件（v2.3.11 新增）：本项目的合同/设计图/施工图/报价单等，含上传 -->
-        <el-tab-pane label="文件" name="files" lazy>
+        <el-tab-pane label="文件" name="files" lazy v-if="userStore.can('project_file')">
           <ProjectFilesPanel :project-id="detailProject?.id || 0" :project-name="detailProject?.name || ''" />
         </el-tab-pane>
       </el-tabs>
@@ -651,10 +651,16 @@
 
 <script setup>
 import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Minus, More, Setting, InfoFilled, Close, Edit, Plus, Rank, Histogram } from '@element-plus/icons-vue'
 import ProjectFilesPanel from '../components/ProjectFilesPanel.vue'
+import { useUserStore } from '@/stores/user'
+
+// 项目详情弹窗内的 tab 要跟权限位对齐：没有 project_file 权限的角色
+// 不应在项目详情里看到「文件」tab（首页菜单已按权限隐藏，详情页曾是后门）
+const userStore = useUserStore()
 
 const projectList = ref([])
 const loading = ref(false)
@@ -697,11 +703,27 @@ const detailChanges = ref([])
 
 const openProjectDetail = async (project) => {
   detailProject.value = project
-  detailTab.value = 'logs'
+  // 默认落到第一个有权限的 tab，避免停在被权限隐藏的 tab 上出现空白面板
+  detailTab.value = firstDetailTab()
   detailLogs.value = []
   detailInspections.value = []
   showProjectDetail.value = true
-  await loadDetailLogs()
+  if (userStore.can('project_log')) await loadDetailLogs()
+}
+
+// 项目详情 tab 顺序 → 对应权限模块（与模板里的 v-if 保持一致）
+const DETAIL_TAB_ORDER = [
+  ['logs', 'project_log'],
+  ['inspections', 'inspection'],
+  ['acceptance', 'acceptance'],
+  ['materials', 'material'],
+  ['changes', 'contract_change'],
+  ['purchases', 'purchase'],
+  ['files', 'project_file'],
+]
+const firstDetailTab = () => {
+  const hit = DETAIL_TAB_ORDER.find(([, mod]) => userStore.can(mod))
+  return hit ? hit[0] : 'logs'
 }
 
 const loadDetailLogs = async () => {
@@ -1860,9 +1882,24 @@ const closeDialog = () => {
   resetForm()
 }
 
-onMounted(() => {
-  loadData()
+onMounted(async () => {
+  await loadData()
+  await openFromQuery()
 })
+
+// 2026-10-21：支持从消息中心/待办中心直接跳过来（/projects?id=123）自动打开该项目详情。
+// 消息里 source_id 存的是项目 id，之前 PC 端没有任何页面读 query.id，点了只能落到列表。
+const route = useRoute()
+const router = useRouter()
+const openFromQuery = async () => {
+  const id = route.query.id
+  if (!id) return
+  const target = projectList.value.find((p) => String(p.id) === String(id))
+  if (!target) return
+  await openProjectDetail(target)
+  // 清掉 query，避免关掉弹窗后刷新又弹一次
+  router.replace({ path: route.path })
+}
 </script>
 
 <style scoped>

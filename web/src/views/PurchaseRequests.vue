@@ -24,7 +24,18 @@
 
       <!-- 筛选栏 -->
       <div class="filter-bar">
-        <el-select v-model="filterStatus" placeholder="状态" clearable style="width:140px;margin-right:10px;" @change="loadData">
+        <!-- 「财务确认」tab 用自己的视图切换：默认只看待办，已完成的收进「已报销」 -->
+        <el-radio-group
+          v-if="activeTab === 'finance'"
+          v-model="financeFilter"
+          style="margin-right:10px;"
+          @change="onFinanceFilterChange"
+        >
+          <el-radio-button label="pending" value="pending">待上传回执</el-radio-button>
+          <el-radio-button label="done" value="done">已报销</el-radio-button>
+          <el-radio-button label="all" value="all">全部</el-radio-button>
+        </el-radio-group>
+        <el-select v-else v-model="filterStatus" placeholder="状态" clearable style="width:140px;margin-right:10px;" @change="loadData">
           <el-option label="待审核" value="pending" />
           <el-option label="已通过" value="approved" />
           <el-option label="已拒绝" value="rejected" />
@@ -350,6 +361,9 @@ const pendingCount = ref(0)
 const reimburseCount = ref(0)
 const financeCount = ref(0)
 
+// 「财务确认」tab 的视图切换：pending=待上传回执（默认）/ done=已报销 / all=全部
+const financeFilter = ref('pending')
+
 // 创建表单
 const createVisible = ref(false)
 const formRef = ref()
@@ -432,7 +446,7 @@ async function loadData() {
       list.value = res.list || []
       total.value = res.total || 0
     } else if (activeTab.value === 'finance') {
-      res = await request.get('/purchase-requests/finance?page=' + page.value + '&limit=' + limit.value)
+      res = await request.get('/purchase-requests/finance?page=' + page.value + '&limit=' + limit.value + '&status=' + financeFilter.value)
       list.value = res.list || []
       total.value = res.total || 0
     } else {
@@ -462,7 +476,9 @@ async function loadCounts() {
         request.get('/purchase-requests/finance?limit=1')
       ])
       reimburseCount.value = r1.total || 0
-      financeCount.value = r2.total || 0
+      // v2.3.12：角标只取「待上传回执」的数量（pending_count），
+      // 不能用 total —— 那是含已报销终态的总数，处理完也不会归零
+      financeCount.value = r2.pending_count ?? 0
     }
   } catch {}
 }
@@ -471,6 +487,13 @@ function switchTab(key) {
   activeTab.value = key
   page.value = 1
   filterStatus.value = ''
+  financeFilter.value = 'pending'
+  loadData()
+}
+
+// 「财务确认」tab 切换视图（待上传回执 / 已报销 / 全部）
+function onFinanceFilterChange() {
+  page.value = 1
   loadData()
 }
 

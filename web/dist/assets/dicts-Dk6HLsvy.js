@@ -1,0 +1,1 @@
+const o={contract:"合同",contract_change:"增减项",dispatch:"派工",collection:"催收",manual:"手动录入"},e={pending:"待确认",confirmed:"已确认",cancelled:"已取消"},a={decoration:"装修合同",design:"设计合同",other:"其他"};function d(c,n,t="-"){return n==null||n===""?t:c[n]??n}export{a as C,o as P,e as a,d};

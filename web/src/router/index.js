@@ -35,6 +35,7 @@ const SmsTemplates = () => import('../views/SmsTemplates.vue')
 const ProgressNodeTemplates = () => import('../views/ProgressNodeTemplates.vue')
 const Login = () => import('../views/Login.vue')
 const MessageCenter = () => import('../views/MessageCenter.vue')
+const TodoCenter = () => import('../views/TodoCenter.vue')
 const ProjectLogs = () => import('../views/ProjectLogs.vue')
 const InspectionLogs = () => import('../views/InspectionLogs.vue')
 // const Suppliers = () => import('../views/Suppliers.vue')  // v2.3.1 已合并到外部联系人
@@ -52,6 +53,7 @@ const routes = [
   { path: '/dashboard', name: 'Dashboard', component: Dashboard },
   { path: '/personal-center', name: 'PersonalCenter', component: PersonalCenter },
   { path: '/message-center', name: 'MessageCenter', component: MessageCenter },
+  { path: '/todo', name: 'TodoCenter', component: TodoCenter },
 
   { path: '/customers', name: 'Customers', component: Customers, meta: { perm: 'customer' } },
   { path: '/wechat-users', name: 'WechatUsers', component: WechatUsers, meta: { perm: 'customer' } },
@@ -64,14 +66,14 @@ const routes = [
 
   { path: '/projects', name: 'Projects', component: Projects, meta: { perm: 'project' } },
   { path: '/change-orders', name: 'ChangeOrders', component: ChangeOrders, meta: { perm: 'contract_change' } },
-  { path: '/project-logs', name: 'ProjectLogs', component: ProjectLogs, meta: { perm: 'project' } },
+  { path: '/project-logs', name: 'ProjectLogs', component: ProjectLogs, meta: { perm: 'project_log' } },
   { path: '/project-files', name: 'ProjectFiles', component: ProjectFiles, meta: { perm: 'project_file' } },
   { path: '/inspection-logs', name: 'InspectionLogs', component: InspectionLogs, meta: { perm: 'inspection' } },
   { path: '/quotes', name: 'Quotes', component: Quotes, meta: { perm: 'quote' } },
   { path: '/acceptance', name: 'Acceptance', component: Acceptance, meta: { perm: 'acceptance' } },
   { path: '/progress-node-templates', name: 'ProgressNodeTemplates', component: ProgressNodeTemplates, meta: { perm: 'project' } },
 
-  { path: '/main-materials', name: 'MainMaterials', component: MainMaterials, meta: { perm: 'warehouse' } },
+  { path: '/main-materials', name: 'MainMaterials', component: MainMaterials, meta: { perm: 'material' } },
   // { path: '/suppliers', name: 'Suppliers', component: Suppliers, meta: { perm: 'supplier' } }, // v2.3.1 已合并到外部联系人
   { path: '/warehouse', name: 'Warehouse', component: Warehouse, meta: { perm: 'warehouse' } },
   { path: '/material-orders', name: 'MaterialOrders', component: MaterialOrders, meta: { perm: 'purchase' } },
@@ -141,8 +143,27 @@ router.beforeEach((to, from, next) => {
 })
 
 // 路由错误处理
-router.onError(error => {
-  console.error('路由错误:', error)
+// v2.3.13：前端重新构建后，旧标签页仍在用上一版 index-*.js，其懒加载 chunk 文件名已不存在，
+// 请求会拿到 index.html → 浏览器报 "'text/html' is not a valid JavaScript MIME type"。
+// 这类错误不是代码问题，静默重载一次拿新产物即可（30 秒内只自动重载一次，防死循环）。
+const CHUNK_ERROR_RE = /dynamically imported module|MIME type|Importing a module script failed|Failed to fetch/i
+
+router.onError((error, to) => {
+  const msg = String(error?.message || error || '')
+  if (!CHUNK_ERROR_RE.test(msg)) {
+    console.error('路由错误:', error)
+    return
+  }
+  const KEY = 'chunk_reload_at'
+  const last = Number(sessionStorage.getItem(KEY) || 0)
+  if (Date.now() - last < 30 * 1000) {
+    console.error('路由错误（资源加载失败，短时间内已重载过，不再自动重试）:', error)
+    return
+  }
+  sessionStorage.setItem(KEY, String(Date.now()))
+  console.warn('检测到前端资源版本不一致，正在重载页面…')
+  const target = to?.fullPath || window.location.pathname + window.location.search
+  window.location.replace(target)
 })
 
 export default router

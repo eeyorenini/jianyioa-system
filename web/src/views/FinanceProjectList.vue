@@ -101,7 +101,11 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="category" label="类别" width="120" />
+            <el-table-column prop="category" label="类别" width="120">
+              <template #default="{ row }">
+                {{ dictLabel(PAYMENT_CATEGORY_LABELS, row.category) }}
+              </template>
+            </el-table-column>
             <el-table-column prop="amount" label="金额" width="120" align="right">
               <template #default="{ row }">
                 <span :style="{ color: row.type === 'income' ? '#67C23A' : '#F56C6C', fontWeight: 600 }">
@@ -119,6 +123,20 @@
                 <el-tag :type="getStatusType(row.status)" size="small">
                   {{ getStatusLabel(row.status) }}
                 </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" align="center">
+              <template #default="{ row }">
+                <el-button
+                  v-if="canConfirm && row.status === 'pending'"
+                  type="success"
+                  size="small"
+                  :loading="confirmingId === row.id"
+                  @click="confirmRecord(row)"
+                >
+                  确认
+                </el-button>
+                <span v-else style="color:#c0c4cc">—</span>
               </template>
             </el-table-column>
           </el-table>
@@ -281,6 +299,13 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Close } from '@element-plus/icons-vue'
+import { PAYMENT_CATEGORY_LABELS, PAYMENT_STATUS_LABELS, dictLabel } from '@/utils/dicts'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+// 确认收支需要 finance:write（管理员自动放行）
+const canConfirm = computed(() => userStore.canAction('finance', 'write'))
+const confirmingId = ref(null)
 
 const loading = ref(false)
 const projects = ref([])
@@ -317,10 +342,30 @@ const getStatusType = (status) => {
   return 'info'
 }
 
-const getStatusLabel = (status) => {
-  if (status === 'confirmed') return '已确认'
-  if (status === 'pending') return '待确认'
-  return status
+const getStatusLabel = (status) => dictLabel(PAYMENT_STATUS_LABELS, status)
+
+// 确认一笔待确认的收支记录（派工审核通过后自动生成的支出等）
+const confirmRecord = async (row) => {
+  const label = row.type === 'income' ? '收入' : '支出'
+  try {
+    await ElMessageBox.confirm(
+      `确认这笔${label} ¥${formatNumber(row.amount)}？确认后状态变为「已确认」，不可撤销。`,
+      '确认收支',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  confirmingId.value = row.id
+  try {
+    await axios.put(`/api/payment-records/${row.id}/confirm`)
+    ElMessage.success('已确认')
+    await Promise.all([loadPaymentRecords(), loadProjectSummary()])
+  } catch (e) {
+    ElMessage.error(e.response?.data?.error || '确认失败')
+  } finally {
+    confirmingId.value = null
+  }
 }
 
 const formatNumber = (num) => {
