@@ -98,7 +98,7 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
-import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
+import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 
 const userStore = useUserStore();
 // 版本号来自 package.json（vite define 注入），不再手写
@@ -110,13 +110,11 @@ const avatarText = computed(() => (userName.value || 'U').substring(0, 1).toUppe
 const unreadCount = ref(0);
 
 const loadUnread = () => {
-  const userId = uni.getStorageSync('userInfo')?.id;
-  if (!userId) return;
   uni.request({
     url: '/api/messages/unread-count',
-    header: { 'x-user-id': String(userId) },
+    header: authHeader(),
     success: (res) => {
-      const count = res.data?.count || 0;
+      const count = Number(res.data?.count || 0);
       unreadCount.value = count;
       // 设置 TabBar「我的」tab 的 badge —— tabBar 共5项：
       // 首页0 项目1 巡检2 采购3 我的4（派工已移出 tabBar）
@@ -126,7 +124,11 @@ const loadUnread = () => {
         uni.removeTabBarBadge({ index: 4 });
       }
     },
-    fail: () => {}
+    fail: () => {
+      // 请求失败（未登录/断网）也把徽标清掉，宁可不显示也不显示错数字
+      unreadCount.value = 0;
+      uni.removeTabBarBadge({ index: 4 });
+    }
   });
 };
 

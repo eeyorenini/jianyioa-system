@@ -184,7 +184,7 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
-import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar } from "@/utils/permission";
+import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -253,9 +253,12 @@ const goMessage = () => {
 
 const loadUnread = async () => {
   try {
-    const res = await uni.request({ url: '/api/notifications/unread-count' });
+    // 2026-10-21 修复：原来这里请求 /api/notifications/unread-count 且【不带 x-user-id】，
+    // 后端 getUserId 拿不到身份 → 永远返回 {count:0}；而它读的口径也和消息页/C 端不一致。
+    // 统一改成 /api/messages/unread-count + authHeader()，与「我的」页、消息页、PC 端完全同口径，
+    // 并且后端该端点已按 resolveMessageActor 区分员工/客户（避免员工 id 与客户 id 撞号）。
+    const res = await uni.request({ url: '/api/messages/unread-count', header: authHeader() });
     // uni.request 返回完整 envelope { data, statusCode }，res.data 才是后端业务 body
-    // 后端直接 res.json({count})，所以是 {count} —— 注意这里不要再 .data
     const body = (res && res.data) || {}
     unreadCount.value = Number(body.count || 0)
   } catch (e) {

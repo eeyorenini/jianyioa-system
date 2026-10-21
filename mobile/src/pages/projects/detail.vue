@@ -731,7 +731,7 @@
               <text class="files-hero-count">{{ projectFiles.length }}<text class="files-hero-unit"> 个</text></text>
               <text class="files-hero-sub">{{ fileCatStats.filter(c => c.count > 0).length }} 个分类 · 最近上传 {{ recentFiles.length ? formatRecentTime(recentFiles[0].uploaded_at) : '暂无' }}</text>
             </view>
-            <view class="files-hero-btn" @click="goFilesUpload">
+            <view class="files-hero-btn" @click="goFilesUpload" v-if="canUploadFile">
               <text class="files-hero-btn-text">+ 上传文件</text>
             </view>
           </view>
@@ -811,19 +811,63 @@ const userStore = useUserStore();
 const curTab = ref('nodes');
 const financeSubTab = ref('records');
 
-const tabs = computed(() => [
-  { key: 'nodes', label: '进度节点' },
-  { key: 'logs', label: '施工日志', badge: logs.value.length || null },
-  { key: 'inspect', label: '巡检', badge: issues.value.length || null },
-  { key: 'accept', label: '验收', badge: acceptances.value.length || null },
-  { key: 'dispatch', label: '派工', badge: dispatches.value.length || null },
-  { key: 'material', label: '材料' },
-  { key: 'purchase', label: '采购' },
-  { key: 'contract', label: '合同' },
-  { key: 'finance', label: '财务', badge: collectionRecords.value.filter(r => r.status !== 'confirmed').length || null },
-  { key: 'gallery', label: '图库' },
-  { key: 'files', label: '文件' },
-]);
+/**
+ * 项目详情内的 tab 定义。
+ * v2.3.13 修：原先 11 个 tab 全部硬编码显示，项目详情成了权限的「后门」——
+ *   项目经理（manager）没有 project_file 任何权限位，首页入口看不到「项目文件」，
+ *   但进项目详情照样能看到「文件」tab，点进去接口 403、列表空白。
+ *   现在每个 tab 绑定后端同名权限位，canSee 不通过就不渲染（与首页快捷入口同口径）。
+ *   perms 是数组：命中任意一个即可见（合同 tab 同时承载增减项）。
+ *   空数组 = 进得来项目详情就能看（项目管理本身已由 project:read 把守）。
+ */
+const TAB_DEFS = [
+  { key: 'nodes', label: '进度节点', perms: [] },
+  { key: 'logs', label: '施工日志', perms: ['project_log:read'] },
+  { key: 'inspect', label: '巡检', perms: ['inspection:read'] },
+  { key: 'accept', label: '验收', perms: ['acceptance:read'] },
+  { key: 'dispatch', label: '派工', perms: ['dispatch:read'] },
+  { key: 'material', label: '材料', perms: ['material:read'] },
+  { key: 'purchase', label: '采购', perms: ['purchase:read'] },
+  { key: 'contract', label: '合同', perms: ['contract:read', 'contract_change:read'] },
+  { key: 'finance', label: '财务', perms: ['finance:read', 'collection:read'] },
+  { key: 'gallery', label: '图库', perms: ['project_log:read'] },
+  { key: 'files', label: '文件', perms: ['project_file:read'] },
+];
+
+const canSeeTab = (def) => !def.perms.length || def.perms.some((p) => userStore.canSee(p));
+
+// 文件 tab 内「+ 上传文件」按钮：只有写权限才显示（后端上传接口要求 project_file:write）
+const canUploadFile = computed(() => userStore.canSee('project_file:write'));
+
+const tabs = computed(() =>
+  TAB_DEFS.filter(canSeeTab).map((def) => ({
+    key: def.key,
+    label: def.label,
+    badge:
+      def.key === 'logs' ? logs.value.length || null
+      : def.key === 'inspect' ? issues.value.length || null
+      : def.key === 'accept' ? acceptances.value.length || null
+      : def.key === 'dispatch' ? dispatches.value.length || null
+      : def.key === 'finance' ? collectionRecords.value.filter((r) => r.status !== 'confirmed').length || null
+      : null,
+  }))
+);
+
+// 权限变更 / 数据异步到位后，若当前 tab 已不可见，自动回落到第一个可见 tab
+// ⚠️ 必须在 onMounted 里注册：watch 注册时会立即求值一次 source（拿到 tabs），
+//    而 tabs 里引用的 logs / issues / acceptances / dispatches / collectionRecords
+//    都在本文件下方才声明。在 setup 顶层注册会直接抛
+//    TypeError: Cannot read properties of undefined (reading 'value')。
+onMounted(() => {
+  watch(
+    tabs,
+    (list) => {
+      if (!list.length) return;
+      if (!list.some((t) => t.key === curTab.value)) curTab.value = list[0].key;
+    },
+    { immediate: true }
+  );
+});
 
 // 日志列表（从API加载）
 const logs = ref([]);
@@ -906,6 +950,8 @@ const galleryStats = ref({});
 const galleryPhotos = ref([]);
 const loadGalleryStats = async () => {
   if (!projectId.value) return;
+  // 无 project_log:read 时不要发请求（图库 tab 已隐藏，没必要拉数据）
+  if (!userStore.canSee('project_log:read')) return;
   try {
     const res = await uni.request({ url: `/api/project-gallery?project_id=${projectId.value}` });
     if (res.data?.list) {
@@ -949,6 +995,8 @@ const fileCatMap = FILE_CATS.reduce((m, c) => { m[c.key] = c; return m; }, {});
 
 const loadProjectFiles = async () => {
   if (!projectId.value) return;
+  // 无 project_file:read 时后端 /api/project-files 会 403，直接跳过以免控制台报错
+  if (!userStore.canSee('project_file:read')) return;
   try {
     const res = await uni.request({ url: `/api/project-files?project_id=${projectId.value}` });
     if (res.data && Array.isArray(res.data.list)) {
