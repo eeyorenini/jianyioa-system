@@ -301,14 +301,15 @@ const loadHomeStats = async () => {
     }
     // 项目相关（节点到期/待整改/我的派工）
     for (const s of d.home?.sections || []) {
-      merged.push({ key: 'home_' + s.key, label: s.label, icon: s.icon, count: s.items.length, items: s.items });
+      merged.push({ key: 'home_' + s.key, label: s.label, icon: s.icon, count: s.count != null ? Number(s.count) : s.items.length, items: s.items });
     }
     todos.value = merged;
     todosLoaded.value = true;
     // 角标 = 审批流待办 + 项目事项的总和（与下方待办列表完全同口径）
     // 2026-10-12：逾期预警不再计入 —— 预警单独展示在预警区块，列表里看不到
     // 会导致"角标 6、列表只有 4"的错觉
-    const projItems = (d.home?.sections || []).reduce((s, x) => s + (x.items?.length || 0), 0)
+    // 2026-10-21：项目事项用后端给的 count（真实总数），items 受 LIMIT 10 截断
+    const projItems = (d.home?.sections || []).reduce((s, x) => s + (x.count != null ? Number(x.count) : (x.items?.length || 0)), 0)
     todoTotal.value = (d.total || 0) + projItems
   } catch (e) {
     console.error('加载首页统计失败', e);

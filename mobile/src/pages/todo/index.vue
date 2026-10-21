@@ -13,7 +13,7 @@
         <text class="summary-num">{{ total }}</text>
         <text class="summary-label">项待处理</text>
       </view>
-      <view class="summary-sub">按你的权限聚合：合同 · 增减项 · 采购审核 · 报销 · 审批 · 派工</view>
+      <view class="summary-sub">按你的权限聚合：合同 · 增减项 · 采购审核 · 报销 · 审批 · 派工 · 节点到期 · 待整改</view>
     </view>
 
     <!-- 分类筛选 -->
@@ -120,8 +120,24 @@ const loadData = () => {
     header: { 'x-user-id': String(userInfo.id || '') },
     success: (res) => {
       if (res.data && res.data.code === 0) {
-        groups.value = res.data.groups || []
-        total.value = res.data.total || 0
+        // 审批流待办（采购/报销/合同/增减项/审批/派工审核）
+        const gs = res.data.groups || []
+        // 项目相关事项（节点即将到期 / 待整改 / 我的派工）——后端在 home.sections 里。
+        // 2026-10-21：原来只渲染 groups，从首页点「全部 ›」进来这些事项会凭空消失，
+        // 与首页待办列表（groups + home.sections 合并）口径不一致。
+        const sections = (res.data.home?.sections || [])
+          .filter(s => (s.items || []).length)
+          .map(s => ({
+            key: 'home_' + s.key,
+            label: s.label,
+            icon: s.icon,
+            // count 是真实总数（items 受后端 LIMIT 10 限制），与角标口径一致
+            count: s.count != null ? Number(s.count) : s.items.length,
+            items: s.items
+          }))
+        groups.value = [...gs, ...sections]
+        const projItems = sections.reduce((n, s) => n + s.count, 0)
+        total.value = (res.data.total || 0) + projItems
       } else {
         groups.value = []
         total.value = 0
