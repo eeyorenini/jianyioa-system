@@ -6,11 +6,13 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <!-- 所属项目 -->
+    <!-- 所属项目：从项目详情/文件列表进来时已绑定，锁定不可改；无入口参数时才允许手动选 -->
     <view class="section">
-      <view class="section-label">所属项目</view>
-      <view class="project-card">
-        <text class="project-name">📁 {{ projectName || '未选择' }}</text>
+      <view class="section-label">所属项目 <text class="required">*</text></view>
+      <view class="project-card" :class="{ locked: projectLocked }" @click="chooseProject">
+        <text class="project-name">📁 {{ projectName || '点击选择项目' }}</text>
+        <text v-if="projectLocked" class="project-lock">已绑定</text>
+        <text v-else class="project-arrow">›</text>
       </view>
     </view>
 
@@ -80,14 +82,47 @@
     <view class="tip">
       <text>📌 提交后文件进入「待审核」状态，由有审核权限的同事（项目经理/财务）审核通过后才正式归档。</text>
     </view>
+
+    <!-- 项目选择弹层：自己实现，不用 uni.showActionSheet（微信上限 6 项，项目多了选不全） -->
+    <view v-if="pickerVisible" class="picker-mask" @click="pickerVisible = false">
+      <view class="picker-panel" @click.stop>
+        <view class="picker-head">
+          <text class="picker-title">选择所属项目</text>
+          <text class="picker-close" @click="pickerVisible = false">✕</text>
+        </view>
+        <scroll-view scroll-y class="picker-list">
+          <view
+            v-for="p in projectList"
+            :key="p.id"
+            class="picker-item"
+            :class="{ active: projectId === p.id }"
+            @click="selectProject(p)"
+          >
+            <view class="picker-item-main">
+              <text class="picker-item-name">{{ p.name || ('项目#' + p.id) }}</text>
+              <text v-if="p.customer_name" class="picker-item-sub">{{ p.customer_name }}</text>
+            </view>
+            <text v-if="projectId === p.id" class="picker-item-check">✓</text>
+          </view>
+          <view v-if="!projectList.length" class="picker-empty">
+            <text>{{ pickerLoading ? '加载中…' : '没有可选项目（可能没有项目查看权限）' }}</text>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup>
 import { ref, computed } from "vue";
+import { onLoad } from "@dcloudio/uni-app";
 import {
   FILE_CATEGORIES, fileThumbIcon, fileSizeText as sizeText,
 } from "@/utils/permission";
+import { absUrl } from "@/utils/api";
+import { useUserStore } from "@/stores/user";
+
+const userStore = useUserStore();
 
 // 用临时 path 存文件（H5 用 blob URL，小程序用 tempFilePath）
 const projectId = ref(0);
@@ -97,6 +132,13 @@ const description = ref("");
 const fileInfo = ref(null); // { path, name, size, ext }
 const uploading = ref(false);
 const progress = ref(0);
+
+// 项目选择弹层
+const pickerVisible = ref(false);
+const pickerLoading = ref(false);
+const projectList = ref([]);
+// 项目是否已绑定（从项目详情 / 项目文件列表进入时锁定，与施工日志等其他模块保持一致）
+const projectLocked = ref(false);
 
 const categories = FILE_CATEGORIES;
 const canSubmit = computed(() => projectId.value && curCategory.value && fileInfo.value);
@@ -164,13 +206,23 @@ const removeFile = () => {
   fileInfo.value = null;
 };
 
+/**
+ * 提交上传。
+ * v2.3.12 修：原实现只有 H5 那一条路（XMLHttpRequest + FormData + fetch），
+ * 而小程序 / App 里这三个 API 都不存在，点「提交上传」直接 ReferenceError，
+ * 上传永远走不通。这里按平台分流：
+ *   H5   → 原 XHR（为了拿 upload.onprogress 进度）
+ *   小程序/App → uni.uploadFile + task.onProgressUpdate
+ */
 const submit = () => {
   if (!canSubmit.value) return;
   uploading.value = true;
   progress.value = 0;
 
-  // H5 端：先用 uni.request 拿临时上传 URL 走 form-data（H5 没有原生 uni.uploadFile 进度）
-  // 这里简单用 fetch + XMLHttpRequest 监听进度
+  const userId = String((uni.getStorageSync('userInfo') || {}).id || '');
+  const uploadUrl = absUrl('/api/project-files');
+
+  // #ifdef H5
   const xhr = new XMLHttpRequest();
   const formData = new FormData();
   // H5 file path 是 blob URL，需要先 fetch 转 Blob
@@ -180,8 +232,8 @@ const submit = () => {
     formData.append('category', curCategory.value);
     if (description.value) formData.append('description', description.value);
 
-    xhr.open('POST', '/api/project-files');
-    xhr.setRequestHeader('x-user-id', String(uni.getStorageSync('userInfo')?.id || ''));
+    xhr.open('POST', uploadUrl);
+    xhr.setRequestHeader('x-user-id', userId);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
         progress.value = Math.round((e.loaded / e.total) * 100);
@@ -193,7 +245,7 @@ const submit = () => {
         const resp = JSON.parse(xhr.responseText);
         if (xhr.status === 200 && resp.id) {
           uni.showToast({ title: '上传成功，待审核', icon: 'success' });
-          setTimeout(() => uni.navigateBack(), 800);
+          setTimeout(() => safeBack(), 800);
         } else {
           uni.showToast({ title: resp.error || '上传失败', icon: 'none' });
         }
@@ -210,18 +262,144 @@ const submit = () => {
     uploading.value = false;
     uni.showToast({ title: '文件读取失败', icon: 'none' });
   });
+  // #endif
+
+  // #ifndef H5
+  const formData = {
+    project_id: String(projectId.value),
+    category: curCategory.value,
+  };
+  if (description.value) formData.description = description.value;
+
+  const task = uni.uploadFile({
+    url: uploadUrl,
+    filePath: fileInfo.value.path,
+    name: 'file',
+    formData,
+    header: { 'x-user-id': userId },
+    success: (res) => {
+      uploading.value = false;
+      let resp = {};
+      try {
+        resp = typeof res.data === 'string' ? JSON.parse(res.data) : (res.data || {});
+      } catch (_) { resp = {}; }
+      if (res.statusCode === 200 && resp.id) {
+        uni.showToast({ title: '上传成功，待审核', icon: 'success' });
+        setTimeout(() => safeBack(), 800);
+      } else {
+        uni.showToast({ title: resp.error || `上传失败(${res.statusCode})`, icon: 'none' });
+      }
+    },
+    fail: (e) => {
+      uploading.value = false;
+      const msg = (e && e.errMsg) || '';
+      uni.showToast({ title: /timeout/i.test(msg) ? '上传超时，请重试' : '网络错误，上传失败', icon: 'none' });
+    },
+  });
+  // 上传进度（小程序 Task 形态，不支持时静默跳过）
+  if (task && typeof task.onProgressUpdate === 'function') {
+    task.onProgressUpdate((e) => { progress.value = e.progress || 0; });
+  }
+  // #endif
 };
 
-const goBack = () => {
-  uni.navigateBack();
+/**
+ * 返回：栈深 > 1 才 navigateBack，否则回首页。
+ * （页面被设成启动页 / 扫码直达时页面栈只有 1 层，裸调 navigateBack 会抛
+ *   "navigateBack:fail cannot navigate back at first page"）
+ */
+const safeBack = () => {
+  let depth = 0;
+  try {
+    const fn = typeof getCurrentPages === 'function' ? getCurrentPages : globalThis.getCurrentPages;
+    depth = typeof fn === 'function' ? (fn() || []).length : 0;
+  } catch (_) { depth = 0; }
+  if (depth > 1) uni.navigateBack();
+  else uni.switchTab({ url: '/pages/home/index' });
 };
 
-// onLoad
-const pages = getCurrentPages();
-const cur = pages[pages.length - 1];
-const opts = (cur && cur.options) || {};
-projectId.value = parseInt(opts.projectId || 0);
-projectName.value = opts.projectName || '';
+const goBack = () => safeBack();
+
+/** 拉项目列表（受后端权限过滤：设计师只能看到自己关联的项目） */
+const loadProjects = () => new Promise((resolve) => {
+  pickerLoading.value = true;
+  uni.request({
+    url: '/api/projects',
+    header: {
+      Authorization: uni.getStorageSync('token') || '',
+      // 与项目详情等页面保持一致的三个请求头，后端按 x-user-id / Authorization 解析身份
+      'x-user-role': userStore.state.role_name,
+      'x-user-id': String(userStore.state.id),
+    },
+    success: (res) => {
+      const raw = res && res.data;
+      const list = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.data) ? raw.data : []);
+      projectList.value = list;
+      pickerLoading.value = false;
+      resolve(list);
+    },
+    fail: () => {
+      pickerLoading.value = false;
+      resolve([]);
+    },
+  });
+});
+
+const chooseProject = async () => {
+  // 已绑定项目（从项目详情进来）不允许改选，和其他模块口径一致
+  if (projectLocked.value) return;
+  pickerVisible.value = true;
+  if (!projectList.value.length) await loadProjects();
+};
+
+const selectProject = (p) => {
+  projectId.value = Number(p.id) || 0;
+  projectName.value = p.name || ('项目#' + p.id);
+  pickerVisible.value = false;
+};
+
+/** 安全解码：URL 参数里的中文是 percent-encoded，直接显示会变成一串 %E6%9F%8F… 的乱码 */
+const safeDecode = (v) => {
+  const s = String(v || '');
+  if (!s || s.indexOf('%') < 0) return s;
+  try { return decodeURIComponent(s); } catch (_) { return s; }
+};
+
+/**
+ * v2.3.12 修：入口参数必须在 onLoad(options) 里读。
+ * 原先在 setup 顶层用 getCurrentPages() 取「当前页」的 options —— 小程序端 setup 执行时
+ * 当前页还没进页面栈，拿到的其实是上一页（项目详情，options 是 {id:15}），
+ * 所以 projectId 恒为 0、项目名恒为空，页面永远显示「未选择」，上传按钮也永远 disabled。
+ *
+ * v2.3.13 修：
+ *  1. 带 projectId 进来 = 项目已绑定，锁定不可改选（和施工日志等模块一致）；
+ *  2. 项目名以 /api/projects 返回为准，URL 里的名字只做首屏占位，且必须 decode，否则显示乱码。
+ */
+onLoad((options) => {
+  // 页面级守卫：后端 /api/project-files 上传要求 project_file:write，前端同口径拦一道
+  if (!userStore.canSee('project_file:write')) {
+    uni.showToast({ title: '无文件上传权限', icon: 'none' });
+    setTimeout(() => safeBack(), 600);
+    return;
+  }
+  const opt = options || {};
+  const pid = parseInt(opt.projectId || opt.project_id || 0);
+  projectId.value = pid || 0;
+  projectLocked.value = pid > 0;
+  // 先放 URL 里解出来的名字占位（避免首屏闪「点击选择项目」）
+  projectName.value = safeDecode(opt.projectName || opt.project_name || '');
+  // 支持从列表页带分类进来（预选）
+  if (opt.category) curCategory.value = opt.category;
+
+  // 名字以接口为准：既纠正 URL 编码问题，也能覆盖「只传 id 不传名字」的入口
+  if (projectId.value) {
+    loadProjects().then((list) => {
+      const hit = (list || []).find((p) => Number(p.id) === projectId.value);
+      if (hit && hit.name) projectName.value = hit.name;
+      else if (!projectName.value) projectName.value = '项目#' + projectId.value;
+    });
+  }
+});
 </script>
 
 <style scoped>
@@ -266,8 +444,65 @@ projectName.value = opts.projectName || '';
   background: #F5F7FA;
   padding: 12px;
   border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
-.project-name { font-size: 14px; color: #1E3A5F; }
+.project-name { font-size: 14px; color: #1E3A5F; flex: 1; }
+.project-arrow { font-size: 20px; color: #9CA3AF; margin-left: 8px; }
+/* 已绑定项目：视觉上不可点，避免用户误以为还能改 */
+.project-card.locked { background: #F3F4F6; }
+.project-card.locked .project-name { color: #374151; }
+.project-lock {
+  font-size: 12px;
+  color: #6B7280;
+  background: #E5E7EB;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+}
+
+/* ==================== 项目选择弹层 ==================== */
+.picker-mask {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 900;
+  display: flex;
+  align-items: flex-end;
+}
+.picker-panel {
+  width: 100%;
+  max-height: 70vh;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: column;
+}
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid #E5E7EB;
+}
+.picker-title { font-size: 16px; font-weight: 600; color: #1A1F36; }
+.picker-close { font-size: 18px; color: #9CA3AF; padding: 0 4px; }
+.picker-list { max-height: 55vh; }
+.picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #F3F4F6;
+}
+.picker-item.active { background: #E8EEF6; }
+.picker-item-main { display: flex; flex-direction: column; flex: 1; }
+.picker-item-name { font-size: 15px; color: #1A1F36; }
+.picker-item-sub { font-size: 12px; color: #9CA3AF; margin-top: 3px; }
+.picker-item-check { font-size: 16px; color: #1E3A5F; font-weight: 700; }
+.picker-empty { padding: 40px 16px; text-align: center; font-size: 13px; color: #9CA3AF; }
 
 .cat-grid {
   display: grid;

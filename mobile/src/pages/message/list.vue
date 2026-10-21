@@ -221,7 +221,13 @@ function handleClick(msg) {
   // 标记已读
   if (!msg.is_read) {
     msg.is_read = true
-    uni.request({ url: `/api/messages/${msg.id}/read`, method: 'PUT' })
+    // 2026-10-21 修复：原来这条请求没带 x-user-id，服务端拿不到身份直接 401，
+    // 界面看着已读、实际没落库 → 下次进来又变成未读
+    uni.request({
+      url: `/api/messages/${msg.id}/read`,
+      method: 'PUT',
+      header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') }
+    })
     setTimeout(() => refreshUnreadBadge(), 100)
   }
   
@@ -299,6 +305,7 @@ function markAllRead() {
         header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
         success: () => {
           messages.value = messages.value.map(m => ({ ...m, is_read: 1 }))
+          refreshUnreadBadge()
           uni.showToast({ title: '已全部标为已读', icon: 'success' })
         },
         fail: () => uni.showToast({ title: '操作失败', icon: 'none' })
@@ -308,8 +315,20 @@ function markAllRead() {
 }
 
 const refreshUnreadBadge = () => {
-  // 注意：message/list 不是 TabBar 页面，不能调用 setTabBarBadge
-  // TabBar badge 由 mine/index.vue 的 onShow 统一设置
+  // 2026-10-21 修复：原来这里是个空函数（注释说"不是 TabBar 页面不能调 setTabBarBadge"——
+  // 这个理解是错的，只要 index 在 tabBar 配置范围内，任何页面都能调）。
+  // 后果：用户从首页进消息页点"全部已读"，底部「我的」tab 上的原生徽标还留着旧数字；
+  // uni.setTabBarBadge 是原生持久化徽标，页面刷新、小程序重启都不会自动消失，
+  // 只有打开过「我的」页才会被 removeTabBarBadge 清掉 → 用户看到"刷新还是 48"。
+  // 现在已读后在这里立即同步一次。
+  // #ifdef MP-WEIXIN
+  const left = messages.value.filter(m => !m.is_read).length;
+  if (left > 0) {
+    uni.setTabBarBadge({ index: 4, text: left > 99 ? '99+' : String(left) });
+  } else {
+    uni.removeTabBarBadge({ index: 4 });
+  }
+  // #endif
 };
 </script>
 

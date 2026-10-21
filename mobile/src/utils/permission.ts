@@ -109,16 +109,17 @@ export interface EntryItem {
 export const HOME_QUICK_ENTRIES: EntryItem[] = [
   { label: "项目管理", icon: "📁", bg: "#DBEAFE", action: "projectList", perm: "" },
   { label: "新建项目", icon: "📋", bg: "#D1FAE5", action: "newProject", perm: "project:write" },
-  { label: "施工日志", icon: "📝", bg: "#D1FAE5", action: "newLog", perm: "project:write" },
+  { label: "施工日志", icon: "📝", bg: "#D1FAE5", action: "newLog", perm: "project_log:write" },
   { label: "质量巡检", icon: "🔍", bg: "#FEE2E2", action: "newInspect", perm: "inspection:write" },
   { label: "派工管理", icon: "👷", bg: "#FEF3C7", action: "newDispatch", perm: "dispatch:write" },
-  { label: "主材管理", icon: "🧱", bg: "#EDE9FE", action: "newMaterial", perm: "purchase:read" },
+  // v2.3.12：主材入口原挂 purchase:read（与"采购"混用），改挂主材自己的 material 模块
+  { label: "主材管理", icon: "🧱", bg: "#EDE9FE", action: "newMaterial", perm: "material:read" },
   { label: "验收管理", icon: "✅", bg: "#D1FAE5", action: "newAccept", perm: "acceptance:read" },
   { label: "增减项", icon: "📄", bg: "#FEF3C7", action: "newChange", perm: "contract_change:write" },
   // v2.3.6: 首页快捷入口的"收支记录"原本 action=newFinance → 跳新建收支页（add.vue，写入老 finance 表），
   // 是命名和逻辑双重错位。改成 url 直跳全公司财务大盘（基于 payment_records 活数据）。
   { label: "公司财务", icon: "💰", bg: "#DBEAFE", url: "/pages/finance/dashboard", perm: "finance:read" },
-  { label: "催收记录", icon: "💰", bg: "#DBEAFE", action: "newCollection", perm: "finance:write" },
+  { label: "催收记录", icon: "💰", bg: "#DBEAFE", action: "newCollection", perm: "collection:write" },
   { label: "通讯录", icon: "📒", bg: "#EDE9FE", action: "addressbook", perm: "employee:read" },
   { label: "甘特图", icon: "📊", bg: "#FEE2E2", action: "gantt", perm: "" },
   { label: "客户", icon: "👤", bg: "#DBEAFE", action: "customer", perm: "customer:read" },

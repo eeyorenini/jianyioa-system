@@ -90,6 +90,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { useUserStore } from "@/stores/user";
+import { guardTab } from "@/utils/permission";
 
 const userStore = useUserStore();
 const projectId = ref('');
@@ -146,6 +147,8 @@ const goBack = () => {
 };
 
 onMounted(() => {
+  // v2.3.12：主材页归属 material 模块（原先入口挂 purchase:read，页面无守卫）
+  if (!guardTab('material:read')) return;
   const pages = getCurrentPages();
   const current = pages[pages.length - 1];
   const options = (current).options || {};

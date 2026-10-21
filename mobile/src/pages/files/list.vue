@@ -294,13 +294,27 @@ const goBack = () => {
   }
 };
 
+/** 安全解码：URL 里的中文是 percent-encoded，不 decode 会显示成一串 %E6%9F%8F… 的乱码 */
+const safeDecode = (v) => {
+  const s = String(v || '');
+  if (!s || s.indexOf('%') < 0) return s;
+  try { return decodeURIComponent(s); } catch (_) { return s; }
+};
+
 onMounted(() => {
+  // 页面级守卫：没有 project_file:read 的人不应看到文件列表
+  // （项目详情 tab 已按权限隐藏，这里防的是消息中心/分享链接直达）
+  if (!userStore.canSee('project_file:read')) {
+    uni.showToast({ title: '无项目文件查看权限', icon: 'none' });
+    setTimeout(() => goBack(), 600);
+    return;
+  }
   // 读 URL 参数
   const pages = getCurrentPages();
   const cur = pages[pages.length - 1];
   const opts = (cur && cur.options) || {};
   projectId.value = parseInt(opts.projectId || opts.project_id || 0);
-  projectName.value = opts.projectName || opts.project_name || '';
+  projectName.value = safeDecode(opts.projectName || opts.project_name || '');
   // 支持从项目详情"项目文件"tab 点分类进来：预选该分类
   if (opts.category && FILE_CATEGORY_MAP[opts.category]) {
     curCategory.value = opts.category;
