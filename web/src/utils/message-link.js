@@ -75,6 +75,7 @@ const TYPE_ROUTE = {
   dispatch: '/projects',
   dispatch_created: '/projects',
   dispatch_status_changed: '/projects',
+  dispatch_mine: '/projects',
   // 合同
   contract_approve: '/contracts',
   contract_created: '/contracts',
@@ -97,6 +98,7 @@ const TYPE_ROUTE = {
   stage_due: '/projects',
   // 巡检 / 验收
   inspection_submit: '/inspection-logs',
+  inspect_rectify: '/inspection-logs',
   acceptance_submit: '/acceptance',
   // 项目文件
   project_file: '/project-files',

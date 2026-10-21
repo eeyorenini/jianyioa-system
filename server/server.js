@@ -10757,14 +10757,23 @@ app.use('/uploads', express.static(uploadDir, staticUploadOpts));
 // dev 模式靠 vite proxy 配了 /m/uploads 重写，但生产没有——这里补上。
 app.use('/m/uploads', express.static(uploadDir, staticUploadOpts));
 const webDistPath = path.join(__dirname, '../web/dist');
+// ⚠️ 2026-10-21：index.html 一律 no-store。
+// 重新构建后 chunk hash 会变，index.html 若被缓存/304，页面会继续加载**旧的** index-*.js，
+// 表现就是"后端已经返回新字段，页面看起来没生效"。带 hash 的 assets 仍走默认缓存，不受影响。
+const noStoreHtmlHeaders = (res, filePath) => {
+  if (filePath && filePath.endsWith('index.html')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+  }
+};
 if (fs.existsSync(webDistPath)) {
-  app.use(express.static(webDistPath));
+  app.use(express.static(webDistPath, { setHeaders: noStoreHtmlHeaders }));
 }
 // 移动端 H5 生产产物（build:h5 产物；index.html + assets + static）
 // 路径前缀 /m：与 PC 前端（/）、API（/api）完全互不干扰；SPA fallback 见下方 app.get('*')。
 const mobileDistPath = path.join(__dirname, 'public-mobile-h5');
 if (fs.existsSync(mobileDistPath)) {
-  app.use('/m', express.static(mobileDistPath));
+  app.use('/m', express.static(mobileDistPath, { setHeaders: noStoreHtmlHeaders }));
   // 兜底：uni-h5 tabBar 图标是 pages.json 里写的相对路径 'static/tab-home.png'，
   // getRealPath() 计算时会拼成 '/static/...'（不带 /m 前缀），导致 404 或拉到 PC 同名 png。
   // 这里在 3002 后端直接把 /static/* 指向 mobile/static，让 tabBar 图标总能正确命中。
@@ -11120,6 +11129,57 @@ async function __todoCounts(userId, perms, admin) {
   return out;
 }
 
+// ============================================================
+// 项目相关待办计数（节点即将到期 / 待整改 / 我的派工）
+// 2026-10-21 新增：/api/todo/center 的 home.sections 一直有这三类事项，
+//   但 /api/todo/count 只统计审批流（采购/报销/合同/增减项/审批/派工审核），
+//   导致 PC 侧边栏「待办中心」角标为 0、而首页待办却有条目。
+//   这里把 home.sections 的口径单独抽出来，供 count 与 center 共用，保证
+//   「角标数字 = 列表条数」。
+//   ⚠️ 与 center 里 sections 的查询条件必须保持一字不差（含 LIMIT 之外的 WHERE）。
+// ============================================================
+async function __todoProjectCounts(userId, perms, admin, relatedIds) {
+  const projectAllScope = (admin || perms.includes('project:read_all'))
+    && !perms.includes('finance:read_all');
+  // ⚠️ 必须与 /api/todo/center 里的 hasRelated/homePh/homeProjectParams 一字不差：
+  //    无关联项目时 homePh 用字面量 -1（无占位符），参数列表返回空数组，
+  //    否则占位符与参数个数对不上（曾报 `near '?)'`）。
+  const hasRelated = !!(relatedIds && relatedIds.length);
+  const homePh = hasRelated ? relatedIds.map(() => '?').join(',') : '-1';
+  const projectFilter = (col = 'p.id') => projectAllScope ? '' : ` AND ${col} IN (${homePh})`;
+  const projectParams = () => (projectAllScope ? [] : (hasRelated ? [...relatedIds] : []));
+  const today = new Date().toISOString().split('T')[0];
+  const todayPlus3 = new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0];
+
+  // 1) 节点提前 3 天到期
+  const [[stageDue]] = await pool.query(
+    `SELECT COUNT(*) AS c FROM project_stages ps
+     JOIN projects p ON p.id = ps.project_id
+     WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
+       AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
+       AND ps.plan_end_date BETWEEN ? AND ?${projectFilter('p.id')}`,
+    [today, todayPlus3, ...projectParams()]
+  );
+  // 2) 待整改巡检（作用域与列表完全一致）
+  const sc = __todoScope(userId, perms, admin, relatedIds).buildScope('inspection');
+  const [[rectify]] = await pool.query(
+    `SELECT COUNT(*) AS c FROM rectification_issues ri
+     WHERE ri.status IN ('待处理','待整改','整改中')${sc.sql}`,
+    sc.params
+  );
+  // 3) 我的派工（与 center 同条件）
+  const [[myDispatch]] = await pool.query(
+    `SELECT COUNT(*) AS c FROM dispatches d
+     WHERE (d.applicant_id = ? OR d.worker LIKE ?) AND d.status IN ('pending', 'in_progress', '已派工')`,
+    [userId, '%' + userId + '%']
+  );
+  return {
+    stage_due: Number(stageDue.c) || 0,
+    inspect_rectify: Number(rectify.c) || 0,
+    dispatch_mine: Number(myDispatch.c) || 0,
+  };
+}
+
 const __fmtTodoTime = (t) => {
   if (!t) return '';
   try { return String(t).replace('T', ' ').substring(0, 16); } catch { return String(t); }
@@ -11133,8 +11193,13 @@ app.get('/api/todo/count', async (req, res) => {
     const perms = await getUserPermissions(userId);
     const admin = await isAdmin(userId);
     const map = await __todoCounts(userId, perms, admin);
-    const total = Object.values(map).reduce((s, g) => s + (g.count || 0), 0);
-    res.json({ code: 0, total, groups: map });
+    // 2026-10-21：补项目相关事项（节点到期/待整改/我的派工），与 /api/todo/center
+    // 的 home.sections 同口径 —— 否则 PC 侧边栏角标 0、首页待办却有内容。
+    const relatedIds = admin ? null : Array.from(await permCore.relatedProjectIds(userId));
+    const project = await __todoProjectCounts(userId, perms, admin, relatedIds);
+    const total = Object.values(map).reduce((s, g) => s + (g.count || 0), 0)
+      + Object.values(project).reduce((s, n) => s + (Number(n) || 0), 0);
+    res.json({ code: 0, total, groups: map, project });
   } catch (e) {
     console.error('[todo/count] error:', e.message);
     res.status(500).json({ error: e.message });
@@ -11323,14 +11388,18 @@ app.get('/api/todo/center', async (req, res) => {
     // 2026-10-12 修复：原 `|| perms.includes('finance:read_all')` 把财务误豁免 → 财务首页出现与金额业务无关的节点/巡检提醒；现改为反向排除。
     const projectAllScope = (admin || perms.includes('project:read_all'))
       && !perms.includes('finance:read_all');
+    // 2026-10-21 修复：原来 homePh 由 homeProjectIds=[-1] 算出 '?'（占位符），
+    // 而下面 pendingInspect 那条查询在 relatedIds 为空时只传 1 个参数，
+    // 第 2 个 ? 没被替换 → MySQL 报 `near '?)'`，整个 /api/todo/center 500
+    // （非 admin、无 project:read_all、且无任何关联项目的员工：待办中心和首页全白）。
+    // 与 __todoProjectCounts 对齐：无关联项目时 homePh 用字面量 -1（无占位符），参数列表也 return []。
+    const hasRelated = !!(relatedIds && relatedIds.length);
     const homeProjectIds = projectAllScope
       ? null  // null = 不加项目过滤
-      : (relatedIds && relatedIds.length ? relatedIds : [-1]);
-    const homePh = (homeProjectIds && homeProjectIds.length)
-      ? homeProjectIds.map(() => '?').join(',')
-      : '-1';
+      : (hasRelated ? relatedIds : [-1]);
+    const homePh = hasRelated ? relatedIds.map(() => '?').join(',') : '-1';
     const homeProjectFilter = (col = 'p.id') => projectAllScope ? '' : ` AND ${col} IN (${homePh})`;
-    const homeProjectParams = () => (projectAllScope ? [] : (relatedIds && relatedIds.length ? relatedIds : [-1]));
+    const homeProjectParams = () => (projectAllScope ? [] : (hasRelated ? [...relatedIds] : []));
 
     // 1) 节点提前 3 天提醒 —— 仅展示我能看到的项目下的节点
     let stage_alerts = [];
@@ -11463,12 +11532,12 @@ app.get('/api/todo/center', async (req, res) => {
       [today, ...homeProjectParams()]
     ))[0][0].c;
     //    待整改：整改问题（关联项目要在可见集内，或我是创建人）
-    // 注意：relatedIds=[] 时 homeProjectIds=[-1] 且 homePh='-1'（字面量，无占位）；
+    // 注意：relatedIds=[] 时 homePh='-1'（字面量，无占位），参数只有 userId 1 个；
     //       relatedIds=[15] 时 homePh='?'（占位）+ userId 1 个占位 = 2 个参数。
     const pendingInspect = (await pool.query(
       `SELECT COUNT(*) c FROM rectification_issues ri
        ${projectAllScope ? '' : ' WHERE (ri.project_id IN (' + homePh + ') OR ri.creator_id = ?)'}`,
-      projectAllScope ? [] : (relatedIds && relatedIds.length ? [...relatedIds, userId] : [userId])
+      projectAllScope ? [] : [...homeProjectParams(), userId]
     ))[0][0].c;
 
     // 6) 待收款金额 —— 仅财务（finance:read_all）或 admin 才显示
@@ -11505,6 +11574,8 @@ app.get('/api/todo/center', async (req, res) => {
       pendingPayAmount = Number(r.s) || 0;
     }
 
+    const projCounts = await __todoProjectCounts(userId, perms, admin, relatedIds);
+
     const home = {
       stats: {
         inProgress: Number(inProgress) || 0,
@@ -11517,10 +11588,12 @@ app.get('/api/todo/center', async (req, res) => {
         pendingPayAmount,
       },
       // 按角色排序：经理/设计师/监理/工长 先看预警+整改；财务看采购；admin 全见
+      // count 为真实总数（items 受 LIMIT 10 限制），前端「角标/汇总」用 count，
+      // 列表显示 items.length / count —— 避免"角标 13 列表只有 10"的错觉。
       sections: [
-        { key: 'stage_due', label: '节点即将到期（3天内）', icon: '⏰', items: stage_alerts },
-        { key: 'inspect_rectify', label: '待整改', icon: '🔧', items: rectify_alerts },
-        { key: 'dispatch_mine', label: '我的派工', icon: '👷', items: my_dispatch },
+        { key: 'stage_due', label: '节点即将到期（3天内）', icon: '⏰', items: stage_alerts, count: projCounts.stage_due },
+        { key: 'inspect_rectify', label: '待整改', icon: '🔧', items: rectify_alerts, count: projCounts.inspect_rectify },
+        { key: 'dispatch_mine', label: '我的派工', icon: '👷', items: my_dispatch, count: projCounts.dispatch_mine },
       ].filter(s => s.items.length > 0),
       warnings,
     };
@@ -11545,15 +11618,21 @@ app.get('*', (req, res) => {
       .send('Asset not found — front-end was rebuilt, please hard refresh (Cmd/Ctrl+Shift+R).')
   }
   if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads') && !req.path.startsWith('/auth')) {
+    // ⚠️ 2026-10-21：index.html 必须 no-store。
+    // 背景：每次重新构建后 chunk 名 hash 都会变，而 index.html 若被浏览器缓存（或返回 304），
+    // 页面就会继续引用**旧的** index-*.js / Dashboard-*.js，跑的是上一版代码。
+    // 表现极具欺骗性：后端接口已返回新字段，页面却"看起来没生效"，用户以为白改了。
+    // 这里显式禁用缓存，保证「刷新即拿到最新前端」。
+    const noStore = { 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', Pragma: 'no-cache' };
     // 移动端 SPA：/m/* 命中时返回移动端 index.html
     // ⚠️ 2026-10-21 修复：原来写 startsWith('/m')，把 PC 的 /message-center、/main-materials、
     // /material-orders 全误判成移动端路径 → 直接访问/刷新这几个页面会加载移动端 H5（URL 变成 #/pages/home/index）。
     // 必须按「/m 或 /m/ 开头」判定。
     if (req.path === '/m' || req.path.startsWith('/m/')) {
       const mobileIndex = path.join(mobileDistPath, 'index.html');
-      if (fs.existsSync(mobileIndex)) return res.sendFile(mobileIndex);
+      if (fs.existsSync(mobileIndex)) return res.sendFile(mobileIndex, { headers: noStore });
     }
-    res.sendFile(path.join(webDistPath, 'index.html'));
+    res.sendFile(path.join(webDistPath, 'index.html'), { headers: noStore });
   } else {
     res.status(404).json({ error: 'Not Found' });
   }

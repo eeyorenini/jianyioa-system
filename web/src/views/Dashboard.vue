@@ -363,11 +363,30 @@ const loadTodo = async () => {
   try {
     const res = await axios.get('/api/todo/center')
     if (res.data && res.data.code === 0) {
+      // 审批流待办（采购/报销/合同/增减项/审批/派工审核）
       const gs = (res.data.groups || []).filter(g => g.count > 0)
-      todoGroups.value = gs
-      todoTotal.value = res.data.total || 0
+      // 项目相关事项（节点即将到期 / 待整改 / 我的派工）——后端放在 home.sections 里。
+      // ⚠️ 2026-10-21 修复：这里原来只取 groups，把 home.sections 整个丢了。
+      //    移动端首页是「groups + home.sections」合并展示，于是出现
+      //    "移动端待办有 3 项、PC 首页显示暂无待办"（实测待整改类事项全被吞）。
+      const sections = (res.data.home?.sections || [])
+        .filter(s => (s.items || []).length)
+        .map(s => ({
+          key: 'home_' + s.key,
+          label: s.label,
+          icon: s.icon,
+          // count 是真实总数（items 受后端 LIMIT 10 限制），与角标口径一致
+          count: s.count != null ? Number(s.count) : s.items.length,
+          items: s.items
+        }))
+      const all = [...gs, ...sections]
+      todoGroups.value = all
+      // 角标口径与移动端首页完全一致：审批流 total + 项目事项条数
+      // （逾期预警不计入，它在预警区块单独展示）
+      const projItems = sections.reduce((n, s) => n + s.count, 0)
+      todoTotal.value = (res.data.total || 0) + projItems
       const flat = []
-      for (const g of gs) {
+      for (const g of all) {
         for (const it of (g.items || [])) flat.push(it)
       }
       todoItems.value = flat.slice(0, 5)
