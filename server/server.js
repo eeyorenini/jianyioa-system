@@ -6196,6 +6196,31 @@ app.get('/api/inspections', async (req, res) => {
   const userId = getUserId(req);
   if (!userId) return res.status(401).json({ error: '未登录' });
   const { project_id } = req.query;
+
+  // 业主端：x-user-id 是 customers.id / family_members.id，不在 employees 表，
+  // 走下面员工 RBAC 必然 403。业主只看自己名下项目的巡检记录。
+  const customer = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+  if (customer) {
+    const myIds = await permCore.customerProjectIds(customer);
+    if (project_id) {
+      if (!myIds.has(Number(project_id))) {
+        return res.status(403).json({ error: '该项目不在您的名下' });
+      }
+      const [rows] = await pool.query(
+        `SELECT * FROM inspections WHERE project_id = ? ORDER BY created_at DESC`,
+        [project_id]
+      );
+      return res.json(rows);
+    }
+    const ids = Array.from(myIds);
+    if (!ids.length) return res.json([]);
+    const [rows] = await pool.query(
+      `SELECT * FROM inspections WHERE project_id IN (?) ORDER BY created_at DESC`,
+      [ids]
+    );
+    return res.json(rows);
+  }
+
   const scope = await buildProjectScopeClause(userId, 'inspection', '', 'project_id');
   // 即使传了 project_id，仍校验它在可见集内
   if (project_id) {
@@ -6314,12 +6339,29 @@ app.get('/api/acceptance', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
-    const scope = await permCore.visibleScope(userId, 'acceptance');
-    if (scope === 'none') return res.status(403).json({ error: '无权限查看验收' });
+    // 业主端：x-user-id 是 customers.id / family_members.id，不在 employees 表，
+    // 走员工 RBAC 会得到 visibleScope='none' 直接 403。业主只看自己名下项目的验收。
+    const customer = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    let scope;
+    if (customer) {
+      scope = 'customer';
+    } else {
+      scope = await permCore.visibleScope(userId, 'acceptance');
+      if (scope === 'none') return res.status(403).json({ error: '无权限查看验收' });
+    }
     const { project_id, status, mine } = req.query;
     const where = [];
     const params = [];
-    if (project_id) { where.push('a.project_id = ?'); params.push(project_id); }
+    if (project_id) {
+      if (scope === 'customer') {
+        const myIds = await permCore.customerProjectIds(customer);
+        if (!myIds.has(Number(project_id))) {
+          return res.status(403).json({ error: '该项目不在您的名下' });
+        }
+      }
+      where.push('a.project_id = ?');
+      params.push(project_id);
+    }
     if (status) { where.push('a.accept_status = ?'); params.push(status); }
     if (String(mine) === '1') { where.push('a.creator_id = ?'); params.push(userId); }
     if (scope === 'related') {
@@ -6333,6 +6375,12 @@ app.get('/api/acceptance', async (req, res) => {
         where.push('(a.project_id IN (?) OR a.creator_id = ?)');
         params.push(Array.from(rel), userId);
       }
+    } else if (scope === 'customer') {
+      // 业主：只看自己名下项目
+      const ids = Array.from(await permCore.customerProjectIds(customer));
+      if (!ids.length) return res.json([]);
+      where.push('a.project_id IN (?)');
+      params.push(ids);
     }
     const sql = `SELECT a.*, e.name AS creator_name
                  FROM acceptance a
@@ -9240,6 +9288,99 @@ async function getGlobalAccessToken(config) {
   });
 }
 
+// ==================== 员工微信绑定：小程序码生成 ====================
+// access_token 缓存：微信限 2000 次/天，不缓存的话管理员多点几次生成码就会耗尽额度。
+// 单进程部署（node server.js）下内存缓存足够；若将来上 pm2 cluster 需换 Redis。
+const wxTokenCache = new Map(); // appid → { token, expiresAt }
+
+async function getCachedAccessToken(cfg) {
+  const key = cfg.app_id;
+  const hit = wxTokenCache.get(key);
+  // 提前 5 分钟刷新，避免临界点用到刚过期的 token
+  if (hit && hit.expiresAt > Date.now() + 5 * 60 * 1000) return hit.token;
+  const r = await getGlobalAccessToken(cfg);
+  if (!r || !r.access_token) {
+    throw new Error((r && r.errmsg) || '获取 access_token 失败');
+  }
+  wxTokenCache.set(key, {
+    token: r.access_token,
+    expiresAt: Date.now() + (Number(r.expires_in) || 7200) * 1000,
+  });
+  return r.access_token;
+}
+
+/**
+ * 生成员工绑定用的小程序码（返回 Buffer，失败抛错）
+ *
+ * ⚠️ check_path 必须 false：实测线上版本未索引页面时传 true 会对所有 page 报
+ *    41030 invalid page（连 pages/home/index 都失败）。
+ *    代价是微信不校验页面是否存在 —— 所以 pages/bind/scan 必须先随新版发布上线。
+ *
+ * @param {string} ticket 一次性票据，放 scene（微信限制 32 字符）
+ * @param {object} cfg    { app_id, app_secret }
+ */
+function generateMiniCode(ticket, cfg) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const token = await getCachedAccessToken(cfg);
+      const bodyStr = JSON.stringify({
+        scene: String(ticket).slice(0, 32),
+        page: 'pages/bind/scan',
+        width: 430,
+        check_path: false,
+      });
+      const req = https.request(
+        `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${token}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(bodyStr),
+          },
+        },
+        (resp) => {
+          const chunks = [];
+          resp.on('data', (c) => chunks.push(c));
+          resp.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            const ct = String(resp.headers['content-type'] || '');
+            // 成功返回二进制图片；失败返回 JSON
+            if (ct.includes('json') || ct.includes('text')) {
+              let msg = buf.toString().slice(0, 200);
+              try { msg = JSON.parse(buf.toString()).errmsg || msg; } catch (_) { /* 保留原文 */ }
+              return reject(new Error('小程序码生成失败：' + msg));
+            }
+            resolve(buf);
+          });
+        }
+      );
+      req.on('error', reject);
+      req.write(bodyStr);
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/** 库里的 DATETIME 是 UTC 字符串（dateStrings:true），转时间戳要补 Z */
+function utcStrToTs(s) {
+  if (!s) return 0;
+  const str = String(s);
+  return new Date(str.includes('T') ? str : str.replace(' ', 'T') + 'Z').getTime();
+}
+
+// jscode2session 的 errmsg 是英文 + rid（"invalid code, rid: 6ad9..."），
+// 直接甩给用户看不懂。统一翻译成人话，原始信息只进日志。
+function friendlyWxErr(errmsg) {
+  const m = String(errmsg || '');
+  if (/invalid code|code been used|40029|40163/i.test(m)) return '微信登录凭证已失效，请重新进入小程序';
+  if (/45011|frequen/i.test(m)) return '操作太频繁，请稍后再试';
+  if (/40125|invalid appsecret/i.test(m)) return '小程序密钥配置有误，请联系管理员';
+  if (/40013|invalid appid/i.test(m)) return '小程序 AppID 配置有误，请联系管理员';
+  return '微信登录失败，请重试';
+}
+
 // 微信 API 内部函数：发送模板消息
 async function sendWechatTemplateMsg(openid, templateId, data, accessToken) {
   const url = `https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=${accessToken}`;
@@ -9675,7 +9816,10 @@ async function resolveCustomerByPhone(phone) {
   return { ok: false, message: '该手机号未登记' };
 }
 
-// POST /api/wechat/mini-login — 静默登录：code 换 openid，返回是否已绑定
+// POST /api/wechat/mini-login — 静默登录：code 换 openid，返回可用身份列表
+// v2.5.0：从「只认客户」扩展为「同时认员工 + 业主」，返回 identities 数组。
+//         ⚠️ 旧字段（customer / isFamilyMember / masterCustomerId）必须保留，
+//            移动端 saveCustomerIdentity() 依赖它们，删了业主登录会挂。
 app.post('/api/wechat/mini-login', async (req, res) => {
   try {
     const { code } = req.body || {};
@@ -9686,7 +9830,8 @@ app.post('/api/wechat/mini-login', async (req, res) => {
 
     const session = await getWechatSession(code, 'mini', cfg);
     if (!session || session.errcode) {
-      return res.json({ success: false, message: (session && session.errmsg) || '微信登录失败' });
+      console.warn('[wechat] jscode2session:', session && session.errmsg);
+      return res.json({ success: false, message: friendlyWxErr(session && session.errmsg) });
     }
     const openid = session.openid;
     if (!openid) return res.json({ success: false, message: '未获取到 openid' });
@@ -9697,49 +9842,332 @@ app.post('/api/wechat/mini-login', async (req, res) => {
     const wxUser = rows[0];
     const unionid = (wxUser && wxUser.unionid) || session.unionid || null;
 
-    // 还没填过资料：返回空资料，前端展示头像昵称填写页
+    // 完全没有记录：新微信，前端展示绑定引导
     if (!wxUser) {
       return res.json({
         success: true, bound: false, openid, unionid,
         nickname: '', avatar: '', hasProfile: false,
+        identities: [], preferred: null,
       });
     }
 
-    // 有资料但没绑手机号：可以进小程序，只是看不到自己名下的工地
-    if (!wxUser.phone) {
-      return res.json({
-        success: true, bound: false, openid, unionid,
-        nickname: wxUser.nickname || '', avatar: wxUser.avatar || '',
-        hasProfile: !!(wxUser.nickname || wxUser.avatar),
-      });
-    }
+    const identities = [];
+    let customerIdent = null;
 
-    const ident = await resolveCustomerByPhone(wxUser.phone);
-    if (!ident.ok) {
-      // 绑定的手机号在客户表里已不存在 → 当作未绑定，让用户重新绑
-      return res.json({
-        success: true, bound: false, openid, unionid: session.unionid || null,
-        message: '原绑定手机号已失效，请重新绑定',
-      });
-    }
+    // ---------- 员工身份 ----------
+    if (wxUser.employee_id) {
+      const emp = await db.prepare(`
+        SELECT e.id, e.username, e.name, e.phone, e.position, e.status,
+               r.name AS role_name, r.code AS role_code
+        FROM employees e LEFT JOIN roles r ON e.role_id = r.id
+        WHERE e.id = ?
+      `).get(wxUser.employee_id);
 
-    // 兼容历史数据：早期绑定没写 customer_id，这里顺手补上（PC 端「微信客户」才能显示关联客户）
-    if (!wxUser.customer_id) {
-      const cid = ident.isFamilyMember ? (ident.masterCustomerId || null) : ((ident.customer && ident.customer.id) || null);
-      if (cid) {
-        await pool.query('UPDATE wechat_users SET customer_id=?, update_time=? WHERE id=?',
-          [cid, new Date().toISOString(), wxUser.id]);
+      // 离职 / 员工记录被删 → 绑定自动失效，顺手清库（下次要重新扫码绑定）
+      if (!emp || emp.status !== '在职') {
+        await pool.query(
+          'UPDATE wechat_users SET employee_id = NULL, last_identity = NULL, update_time = ? WHERE id = ?',
+          [new Date().toISOString(), wxUser.id]
+        );
+        wxUser.employee_id = null;
+      } else {
+        identities.push({
+          type: 'employee',
+          employee_id: emp.id,
+          name: emp.name || '',
+          username: emp.username || '',
+          phone: emp.phone || '',
+          position: emp.position || '',
+          role_code: emp.role_code || '',
+          role_name: emp.role_name || '',
+          permissions: await getUserPermissions(emp.id),
+          is_admin: await isAdmin(emp.id),
+        });
       }
     }
 
+    // ---------- 业主身份 ----------
+    if (wxUser.phone) {
+      const ident = await resolveCustomerByPhone(wxUser.phone);
+      if (ident.ok) {
+        customerIdent = ident;
+        identities.push({
+          type: 'customer',
+          customer_id: ident.isFamilyMember
+            ? (ident.masterCustomerId || null)
+            : ((ident.customer && ident.customer.id) || null),
+          name: (ident.customer && ident.customer.name) || '',
+          phone: wxUser.phone,
+          isFamilyMember: !!ident.isFamilyMember,
+        });
+
+        // 兼容历史数据：早期绑定没写 customer_id，这里顺手补上（PC「微信客户」才能显示关联客户）
+        if (!wxUser.customer_id) {
+          const cid = ident.isFamilyMember ? (ident.masterCustomerId || null) : ((ident.customer && ident.customer.id) || null);
+          if (cid) {
+            await pool.query('UPDATE wechat_users SET customer_id=?, update_time=? WHERE id=?',
+              [cid, new Date().toISOString(), wxUser.id]);
+          }
+        }
+      }
+    }
+
+    // 上次选择的身份仍有效就用它；只有一个身份就直接用；否则让前端选
+    const validTypes = identities.map((i) => i.type);
+    const preferred = (wxUser.last_identity && validTypes.includes(wxUser.last_identity))
+      ? wxUser.last_identity
+      : (identities.length === 1 ? identities[0].type : null);
+
     return res.json({
-      success: true, bound: true, openid,
-      unionid: wxUser.unionid || session.unionid || null,
-      nickname: wxUser.nickname || '', avatar: wxUser.avatar || '', phone: wxUser.phone,
-      ...ident,
+      success: true,
+      bound: identities.length > 0,
+      openid,
+      unionid,
+      nickname: wxUser.nickname || '',
+      avatar: wxUser.avatar || '',
+      phone: wxUser.phone || '',
+      hasProfile: !!(wxUser.nickname || wxUser.avatar),
+      identities,
+      preferred,
+      // ↓ 兼容旧逻辑：业主字段原样展开（无业主身份时不带 customer，前端不会误存）
+      ...(customerIdent || {}),
     });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
+
+// POST /api/wechat/mini-bind-by-ticket — 员工扫码绑定（管理员发码版）
+// 入参传 code 不传 openid：openid 一律由服务端用 code 换，不信任前端。
+app.post('/api/wechat/mini-bind-by-ticket', async (req, res) => {
+  try {
+    const { code, ticket } = req.body || {};
+    if (!code) return res.status(400).json({ success: false, message: '缺少 code' });
+    const tk = String(ticket || '').trim();
+    if (!tk) return res.status(400).json({ success: false, message: '缺少绑定码' });
+
+    const cfg = await getMiniConfig();
+    if (!cfg) return res.status(500).json({ success: false, message: '微信小程序配置未完成' });
+
+    const session = await getWechatSession(code, 'mini', cfg);
+    if (!session || session.errcode) {
+      console.warn('[wechat] jscode2session:', session && session.errmsg);
+      return res.json({ success: false, message: friendlyWxErr(session && session.errmsg) });
+    }
+    const openid = session.openid;
+    if (!openid) return res.json({ success: false, message: '未获取到 openid' });
+
+    const nowIso = new Date().toISOString();
+
+    // 1. 票据校验
+    const t = await db.prepare('SELECT * FROM employee_bind_tickets WHERE ticket = ? LIMIT 1').get(tk);
+    if (!t) return res.json({ success: false, message: '绑定码无效，请让管理员重新生成' });
+    if (t.used_at) return res.json({ success: false, message: '该绑定码已被使用，请让管理员重新生成' });
+    if (utcStrToTs(t.expires_at) <= Date.now()) {
+      return res.json({ success: false, message: '绑定码已过期，请让管理员重新生成' });
+    }
+
+    // 2. 员工校验
+    const emp = await db.prepare(`
+      SELECT e.id, e.username, e.name, e.phone, e.position, e.status,
+             r.name AS role_name, r.code AS role_code
+      FROM employees e LEFT JOIN roles r ON e.role_id = r.id
+      WHERE e.id = ?
+    `).get(t.employee_id);
+    if (!emp) return res.json({ success: false, message: '该员工不存在，请联系管理员' });
+    if (emp.status !== '在职') return res.json({ success: false, message: '该账号已停用，请联系管理员' });
+
+    // 3. 该员工是否已被别的微信占用
+    const occupied = await db.prepare(
+      'SELECT id FROM wechat_users WHERE employee_id = ? AND mini_openid <> ? LIMIT 1'
+    ).get(emp.id, openid);
+    if (occupied) {
+      return res.json({ success: false, message: '该账号已绑定其他微信，请先在后台解绑' });
+    }
+
+    // 4. 当前微信是否已绑了别的员工
+    const self = await db.prepare('SELECT * FROM wechat_users WHERE mini_openid = ? LIMIT 1').get(openid);
+    if (self && self.employee_id && Number(self.employee_id) !== Number(emp.id)) {
+      return res.json({ success: false, message: '当前微信已绑定其他员工账号，请先在后台解绑' });
+    }
+
+    // 5. 事务写入：绑定关系 + 票据标记
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      if (self) {
+        await conn.query(
+          `UPDATE wechat_users
+             SET employee_id = ?, phone = COALESCE(?, phone), bind_time = ?,
+                 last_identity = 'employee', status = 1, update_time = ?
+           WHERE id = ?`,
+          [emp.id, emp.phone || null, nowIso, nowIso, self.id]
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO wechat_users
+             (mini_openid, unionid, employee_id, phone, bind_time, last_identity, status, create_time, update_time)
+           VALUES (?, ?, ?, ?, ?, 'employee', 1, ?, ?)`,
+          [openid, session.unionid || null, emp.id, emp.phone || null, nowIso, nowIso, nowIso]
+        );
+      }
+      await conn.query(
+        'UPDATE employee_bind_tickets SET used_at = ?, used_openid = ? WHERE id = ? AND used_at IS NULL',
+        [nowIso, openid, t.id]
+      );
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+
+    return res.json({
+      success: true,
+      message: '绑定成功',
+      employee: {
+        id: emp.id,
+        name: emp.name || '',
+        username: emp.username || '',
+        phone: emp.phone || '',
+        position: emp.position || '',
+        role_code: emp.role_code || '',
+        role_name: emp.role_name || '',
+        permissions: await getUserPermissions(emp.id),
+        is_admin: await isAdmin(emp.id),
+      },
+    });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// POST /api/admin/employees/:id/bind-qrcode — 管理员生成员工微信绑定码
+app.post('/api/admin/employees/:id/bind-qrcode', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ success: false, message: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canWrite = (await isAdmin(userId)) || perms.includes('employee:write') || perms.includes('*');
+    if (!canWrite) return res.status(403).json({ success: false, message: '仅管理员可生成绑定码' });
+
+    const employeeId = parseInt(req.params.id, 10);
+    if (!employeeId) return res.status(400).json({ success: false, message: '员工 id 无效' });
+
+    const emp = await db.prepare('SELECT id, name, status FROM employees WHERE id = ?').get(employeeId);
+    if (!emp) return res.status(404).json({ success: false, message: '员工不存在' });
+    if (emp.status !== '在职') return res.json({ success: false, message: '该员工不是在职状态，无法绑定' });
+
+    const bound = await db.prepare('SELECT id FROM wechat_users WHERE employee_id = ? LIMIT 1').get(employeeId);
+    if (bound) return res.json({ success: false, message: '该员工已绑定微信，请先解绑' });
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const expiresIso = new Date(now + 10 * 60 * 1000).toISOString();
+
+    // 作废该员工此前所有未使用的票据，避免同时存在多个有效码
+    await pool.query(
+      'UPDATE employee_bind_tickets SET expires_at = ? WHERE employee_id = ? AND used_at IS NULL AND expires_at > ?',
+      [nowIso, employeeId, nowIso]
+    );
+
+    const ticket = crypto.randomBytes(8).toString('hex'); // 16 位十六进制
+    await pool.query(
+      `INSERT INTO employee_bind_tickets (ticket, employee_id, created_by, expires_at, create_time)
+       VALUES (?, ?, ?, ?, ?)`,
+      [ticket, employeeId, userId, expiresIso, nowIso]
+    );
+
+    // 生成小程序码；失败不阻断，返回 ticket 让 PC 前端降级画普通二维码
+    let qrcode = null;
+    let warn = '';
+    const cfg = await getMiniConfig();
+    if (!cfg) {
+      warn = '小程序配置缺失';
+    } else {
+      try {
+        const buf = await generateMiniCode(ticket, cfg);
+        qrcode = 'data:image/jpeg;base64,' + buf.toString('base64');
+      } catch (e) {
+        warn = e.message;
+        console.warn('[bind-qrcode]', e.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      ticket,
+      expires_at: expiresIso,
+      qrcode,                       // null → 前端降级
+      fallback: !qrcode,
+      warn: warn || undefined,
+      employee: { id: emp.id, name: emp.name },
+    });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// POST /api/admin/wechat/unbind-employee — 管理员解除员工微信绑定
+app.post('/api/admin/wechat/unbind-employee', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ success: false, message: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canWrite = (await isAdmin(userId)) || perms.includes('employee:write') || perms.includes('*');
+    if (!canWrite) return res.status(403).json({ success: false, message: '仅管理员可解绑' });
+
+    const employeeId = parseInt((req.body || {}).employee_id, 10);
+    if (!employeeId) return res.status(400).json({ success: false, message: '缺少 employee_id' });
+
+    const row = await db.prepare('SELECT id, customer_id FROM wechat_users WHERE employee_id = ? LIMIT 1').get(employeeId);
+    if (!row) return res.json({ success: true, message: '该员工未绑定微信' });
+
+    const nowIso = new Date().toISOString();
+    // 没有业主身份 → 整行删掉，不留空壳；否则只清员工字段
+    if (!row.customer_id) {
+      await pool.query('DELETE FROM wechat_users WHERE id = ?', [row.id]);
+    } else {
+      await pool.query(
+        'UPDATE wechat_users SET employee_id = NULL, last_identity = NULL, update_time = ? WHERE id = ?',
+        [nowIso, row.id]
+      );
+    }
+    // 顺手作废该员工未使用的票据
+    await pool.query(
+      'UPDATE employee_bind_tickets SET expires_at = ? WHERE employee_id = ? AND used_at IS NULL',
+      [nowIso, employeeId]
+    );
+
+    res.json({ success: true, message: '已解除绑定' });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// GET /api/admin/employees/bind-status — 员工微信绑定状态（PC 列表用）
+// ⚠️ 必须注册在 /api/admin/employees/:id 之前，否则 bind-status 会被当成 id
+app.get('/api/admin/employees/bind-status', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ success: false, message: '未登录' });
+    const perms = await getUserPermissions(userId);
+    const canRead = (await isAdmin(userId)) || perms.includes('employee:read') || perms.includes('*');
+    if (!canRead) return res.status(403).json({ success: false, message: '无权限' });
+
+    const rows = await db.prepare(
+      'SELECT employee_id, mini_openid, bind_time, nickname, avatar FROM wechat_users WHERE employee_id IS NOT NULL'
+    ).all();
+
+    const data = {};
+    rows.forEach((r) => {
+      const oid = r.mini_openid || '';
+      data[r.employee_id] = {
+        employee_id: r.employee_id,
+        bound: true,
+        openid_mask: oid ? oid.slice(0, 6) + '***' + oid.slice(-4) : '',
+        bind_time: r.bind_time,
+        nickname: r.nickname || '',
+        avatar: r.avatar || '',
+      };
+    });
+    res.json({ success: true, data });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 
 // POST /api/wechat/mini-bind — 绑定手机号（手机号是唯一认证标识）
 app.post('/api/wechat/mini-bind', async (req, res) => {

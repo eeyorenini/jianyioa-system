@@ -110,6 +110,72 @@ async function relatedProjectIds(userId) {
   }
 }
 
+/**
+ * 解析「业主（客户）身份」—— 业主端 x-user-id 存的不是 employees.id，
+ * 而是 customers.id（主账户）或 family_members.id（家庭成员），两套编号互不相干。
+ *
+ * 判定顺序：
+ *   1) 显式声明 x-user-type === 'customer' → 直接按客户查（优先；employees/customers 存在 id 撞号，
+ *      实测 id 6/11/13/14 同时命中两表，不能只靠 id 推断）
+ *   2) 未声明时先排除员工：employees 表有此 id → 视为员工，返回 null（保持原 RBAC 路径不变）
+ *   3) customers 表有此 id → 主账户
+ *   4) family_members 表有此 id → 家庭成员，返回其主账户 customer_id
+ *
+ * @returns {null | {customerId:number, isFamilyMember:boolean, familyMemberId:number|null, name:string, phone:string}}
+ */
+async function resolveCustomerIdentity(userId, userType = '') {
+  if (!userId) return null;
+  try {
+    const declaredCustomer = String(userType || '').toLowerCase() === 'customer';
+    if (!declaredCustomer) {
+      const [emp] = await pool.query('SELECT id FROM employees WHERE id = ? LIMIT 1', [userId]);
+      if (emp && emp.length) return null; // 是员工，走原有权限体系
+    }
+    const [cus] = await pool.query(
+      'SELECT id, name, phone FROM customers WHERE id = ? LIMIT 1', [userId]
+    );
+    if (cus && cus.length) {
+      return {
+        customerId: cus[0].id,
+        isFamilyMember: false,
+        familyMemberId: null,
+        name: cus[0].name || '',
+        phone: cus[0].phone || '',
+      };
+    }
+    const [fm] = await pool.query(
+      'SELECT id, customer_id, name, phone FROM family_members WHERE id = ? LIMIT 1', [userId]
+    );
+    if (fm && fm.length) {
+      return {
+        customerId: fm[0].customer_id,
+        isFamilyMember: true,
+        familyMemberId: fm[0].id,
+        name: fm[0].name || '',
+        phone: fm[0].phone || '',
+      };
+    }
+    return null;
+  } catch (e) {
+    console.error('[perm] resolveCustomerIdentity failed:', e.message);
+    return null;
+  }
+}
+
+/** 该客户名下的项目 ID 集合（业主端可见范围） */
+async function customerProjectIds(identity) {
+  if (!identity || !identity.customerId) return new Set();
+  try {
+    const [rows] = await pool.query(
+      'SELECT id FROM projects WHERE customer_id = ?', [identity.customerId]
+    );
+    return new Set((rows || []).map((r) => r.id));
+  } catch (e) {
+    console.error('[perm] customerProjectIds failed:', e.message);
+    return new Set();
+  }
+}
+
 /** "我能看到的项目"集合 = related ∪ read_all → 全部 */
 async function visibleProjectIds(userId, moduleKey) {
   if (!userId) return new Set();
@@ -193,6 +259,8 @@ module.exports = {
   canReadAll,
   visibleScope,
   relatedProjectIds,
+  resolveCustomerIdentity,
+  customerProjectIds,
   visibleProjectIds,
   requireAuth,
   requirePerm,

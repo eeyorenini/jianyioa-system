@@ -1,0 +1,1 @@
+function t(t){return t}function s(t){return t&&"string"==typeof t?/^https?:\/\//i.test(s=t)||/^(wxfile|blob|data|file|ftp):/i.test(s)||s.startsWith("//")?t:t.startsWith("/")?""+t:t:"";var s}export{s as a,t as b};
