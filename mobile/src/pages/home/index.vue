@@ -190,6 +190,9 @@ import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
+// 2026-10-22：首页是 tabBar 页，原生未读徽标在这里补同步
+// （消息页在分包里不是 tabBar 页，它调 setTabBarBadge 会报 not TabBar page）
+import { syncMessageBadge } from "@/utils/tabbar";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -266,6 +269,8 @@ const loadUnread = async () => {
     // uni.request 返回完整 envelope { data, statusCode }，res.data 才是后端业务 body
     const body = (res && res.data) || {}
     unreadCount.value = Number(body.count || 0)
+    // 同步底部「我的」tab 的原生徽标（本页是 tabBar 页，可以调）
+    syncMessageBadge(unreadCount.value)
   } catch (e) {
     // 忽略
   }
