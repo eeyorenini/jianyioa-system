@@ -158,13 +158,10 @@ const loadData = async () => {
     }
     notBound.value = false;
 
-    // 获取项目列表 - 添加管理员权限头以获取完整数据（包括nodes）
+    // 获取项目列表。身份头由 App.vue 拦截器统一注入（x-user-id / x-user-type），
+    // 不要在这里写死 'x-user-id: 1' —— 后端已按 x-user-id 重算真实角色，写死既无效又是越权隐患。
     const res = await uni.request({
       url: `/api/projects?customer_id=${customerId}`,
-      header: {
-        'x-user-role': 'admin',
-        'x-user-id': '1'
-      }
     });
     
     const data = res.data;

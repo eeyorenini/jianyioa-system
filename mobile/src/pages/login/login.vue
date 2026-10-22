@@ -53,6 +53,13 @@
             <text v-if="!loading">登 录</text>
             <text v-else>登录中...</text>
           </view>
+          <!-- #ifdef MP-WEIXIN -->
+          <!-- 员工微信绑定入口：管理员在 PC 员工列表生成小程序码，扫码直达；
+               扫不了时从这里手动输入绑定码。绑过之后就不用再输账号密码。 -->
+          <view class="bind-entry" @click="goEmployeeBind">
+            <text class="bind-entry-text">已绑定微信？直接进入 · 手动输入绑定码</text>
+          </view>
+          <!-- #endif -->
         </template>
 
         <!-- 客户登录 -->
@@ -170,6 +177,11 @@ const handleEmployeeLogin = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+// 员工微信绑定：进扫码落地页，没有扫码参数时该页会显示手动输入框
+const goEmployeeBind = () => {
+  uni.navigateTo({ url: '/pages/bind/scan' });
 };
 
 // 客户登录
@@ -421,6 +433,19 @@ const goBack = () => {
 .btn-block {
   width: 100%;
   margin-top: 8px;
+}
+
+/* 员工微信绑定入口 */
+.bind-entry {
+  text-align: center;
+  padding: 14px 0 4px;
+}
+
+.bind-entry-text {
+  font-size: 12px;
+  color: #3B82F6;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .roles-demo {

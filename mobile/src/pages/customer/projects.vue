@@ -100,7 +100,6 @@ const fetchList = async () => {
     // 客户通过 customer_id 参数查询项目
     const res = await uni.request({
       url: `/api/projects${customerId ? '?customer_id=' + customerId : ''}`,
-      header: { 'x-user-role': 'admin', 'x-user-id': '1' }
     });
     const data = res.data;
     if (Array.isArray(data)) {

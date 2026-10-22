@@ -28,6 +28,11 @@ onLaunch(() => {
     if (userInfo?.role_code || userInfo?.role_name) {
       headers['x-user-role'] = userInfo.role_code || userInfo.role_name || '';
     }
+    // 业主端（customers / family_members 表）和员工端（employees 表）共用 x-user-id，
+    // 但两套编号互不相干、还会撞号（实测 id 6/11/13/14 在两张表里同时存在）。
+    // 后端靠这个头区分「员工」与「业主」，缺了它撞号的客户会被当成员工处理。
+    const userType = uni.getStorageSync('userType');
+    if (userType) headers['x-user-type'] = userType;
     const method = String(options.method || 'GET').toUpperCase();
     const d = options.data;
     const isBinary = typeof ArrayBuffer !== 'undefined' && d instanceof ArrayBuffer;

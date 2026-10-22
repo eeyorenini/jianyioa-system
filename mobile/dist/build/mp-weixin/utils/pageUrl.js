@@ -1,0 +1,1 @@
+"use strict";const r=require("./pageMap.js");exports.isTabBarPage=function(e){if(!e)return!1;const t=String(e).split("?")[0];return-1!==r.TAB_BAR_PAGES.indexOf(t)},exports.resolvePageUrl=function(e){if(!e)return"";const t=String(e),n=r.mapToSubPackage(t);return n||t};

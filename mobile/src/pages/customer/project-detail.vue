@@ -424,10 +424,6 @@ const loadProject = async () => {
       if (customerId) {
         const res = await uni.request({
           url: `/api/projects?customer_id=${customerId}`,
-          header: {
-            'x-user-role': 'admin',
-            'x-user-id': '1'
-          }
         });
         
         if (Array.isArray(res.data)) {

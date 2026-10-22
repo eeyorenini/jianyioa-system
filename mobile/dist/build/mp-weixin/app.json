@@ -1,11 +1,12 @@
 {
   "pages": [
     "pages/landing/index",
+    "pages/showcase/index",
     "pages/login/login",
     "pages/bind/index",
     "pages/bind/phone",
+    "pages/bind/scan",
     "pages/home/index",
-    "pages/todo/index",
     "pages/customer/home",
     "pages/customer/projects",
     "pages/customer/messages",
@@ -14,65 +15,93 @@
     "pages/customer/project-detail",
     "pages/customer/family",
     "pages/projects/list",
-    "pages/projects/add",
-    "pages/projects/detail",
-    "pages/projects/nodeManage",
-    "pages/projects/gantt",
-    "pages/projects/node",
-    "pages/projects/logs",
-    "pages/projects/log-add",
-    "pages/projects/log-detail",
     "pages/inspection/list",
-    "pages/inspection/add",
-    "pages/inspection/detail",
-    "pages/dispatch/list",
-    "pages/dispatch/add",
-    "pages/dispatch/detail",
-    "pages/material/list",
-    "pages/material/purchase",
-    "pages/material/inbound",
     "pages/purchase/list",
-    "pages/purchase/add",
-    "pages/purchase/detail",
-    "pages/purchase/finance-accept",
-    "pages/purchase/finance-confirm",
-    "pages/contract/list",
-    "pages/contract/detail",
-    "pages/finance/list",
-    "pages/finance/dashboard",
-    "pages/finance/add",
-    "pages/finance/finance-records",
-    "pages/finance/finance-receivable",
-    "pages/finance/finance-collected",
-    "pages/contracts/contract-upload",
-    "pages/contracts/contract-change-add",
-    "pages/contracts/approval",
-    "pages/contracts/collection-add",
-    "pages/gallery/index",
-    "pages/report/index",
-    "pages/approval/list",
-    "pages/approval/apply",
-    "pages/approval/detail",
-    "pages/message/list",
-    "pages/message/detail",
-    "pages/mine/index",
-    "pages/mine/my-logs",
-    "pages/mine/my-inspections",
-    "pages/notices/notices",
-    "pages/addressbook/addressbook",
-    "pages/contracts/contracts",
-    "pages/acceptance/list",
-    "pages/acceptance/add",
-    "pages/acceptance/detail",
-    "pages/change/list",
-    "pages/change/add",
-    "pages/customers/customers",
-    "pages/customers/add",
-    "pages/settings/settings",
-    "pages/files/list",
-    "pages/files/upload",
-    "pages/files/detail",
-    "pages/files/review"
+    "pages/mine/index"
+  ],
+  "subPackages": [
+    {
+      "root": "pkg-project",
+      "pages": [
+        "projects/add",
+        "projects/detail",
+        "projects/nodeManage",
+        "projects/gantt",
+        "projects/node",
+        "projects/logs",
+        "projects/log-add",
+        "projects/log-detail"
+      ]
+    },
+    {
+      "root": "pkg-inspect",
+      "pages": [
+        "inspection/add",
+        "inspection/detail",
+        "dispatch/list",
+        "dispatch/add",
+        "dispatch/detail",
+        "acceptance/list",
+        "acceptance/add",
+        "acceptance/detail",
+        "change/list",
+        "change/add"
+      ]
+    },
+    {
+      "root": "pkg-purchase",
+      "pages": [
+        "material/list",
+        "material/purchase",
+        "material/inbound",
+        "purchase/add",
+        "purchase/detail",
+        "purchase/finance-accept",
+        "purchase/finance-confirm"
+      ]
+    },
+    {
+      "root": "pkg-finance",
+      "pages": [
+        "contract/list",
+        "contract/detail",
+        "finance/list",
+        "finance/dashboard",
+        "finance/add",
+        "finance/finance-records",
+        "finance/finance-receivable",
+        "finance/finance-collected",
+        "contracts/contract-upload",
+        "contracts/contract-change-add",
+        "contracts/approval",
+        "contracts/collection-add",
+        "report/index",
+        "contracts/contracts"
+      ]
+    },
+    {
+      "root": "pkg-misc",
+      "pages": [
+        "todo/index",
+        "gallery/index",
+        "approval/list",
+        "approval/apply",
+        "approval/detail",
+        "message/list",
+        "message/detail",
+        "mine/my-logs",
+        "mine/my-inspections",
+        "notices/notices",
+        "addressbook/addressbook",
+        "customers/customers",
+        "customers/add",
+        "settings/settings",
+        "files/list",
+        "files/upload",
+        "files/detail",
+        "files/review"
+      ]
+    }
   ],
   "window": {
     "navigationBarTextStyle": "white",
@@ -117,6 +146,33 @@
         "selectedIconPath": "static/tab-mine-active.png"
       }
     ]
+  },
+  "preloadRule": {
+    "pages/home/index": {
+      "network": "all",
+      "packages": [
+        "pkg-project",
+        "pkg-inspect"
+      ]
+    },
+    "pages/projects/list": {
+      "network": "all",
+      "packages": [
+        "pkg-project"
+      ]
+    },
+    "pages/purchase/list": {
+      "network": "all",
+      "packages": [
+        "pkg-purchase"
+      ]
+    },
+    "pages/inspection/list": {
+      "network": "all",
+      "packages": [
+        "pkg-inspect"
+      ]
+    }
   },
   "lazyCodeLoading": "requiredComponents",
   "usingComponents": {}

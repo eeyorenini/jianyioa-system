@@ -1,7 +1,9 @@
 import { defineConfig } from "vite";
+import type { Plugin } from "vite";
 import uni from "@dcloudio/vite-plugin-uni";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { MAIN_PAGES, PAGE_DIR_TO_PKG } from "./src/utils/pageMap";
 
 // 版本号单一来源：package.json 的 version。
 // 构建时注入为全局常量 __APP_VERSION__，页面里直接引用即可，
@@ -10,8 +12,48 @@ const pkg = JSON.parse(
   readFileSync(resolve(process.cwd(), "package.json"), "utf-8")
 ) as { version?: string };
 
+// ============================================================
+// 分包路径自动改写（2026-10-22）
+//
+// 为什么要做：小程序拆了 5 个分包，页面真实路径是 /pkg-xxx/yyy，
+// 而 H5 / App 没有分包，路径是 /pages/yyy。如果业务代码按平台各写一套，
+// 两端源码就会漂移（之前就是这样：小程序 /pkg-、H5 /pages/，改一边漏一边）。
+//
+// 约定：**源码统一写 /pages/yyy**，只有小程序构建时在这里自动改写成分包路径。
+// 这样业务代码两端逐行一致，导出 App 时直接用 H5 那份源码即可。
+//
+// 运行期由后端返回的 url 不经过构建，走 utils/pageUrl.ts 的 resolvePageUrl。
+// 映射表与 utils/pageMap.ts 共用，不重复维护。
+// ============================================================
+function subpackagePaths(): Plugin {
+  const MAIN = new Set(MAIN_PAGES);
+  // 只匹配「引号/反引号紧跟 /pages/」的形式，避免误伤 URL 或注释里的普通文本
+  const RE = /(['"`])\/pages\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_/-]+)/g;
+  return {
+    name: "jianyioa-subpackage-paths",
+    enforce: "pre",
+    transform(code, id) {
+      const file = id.split("?")[0];
+      if (!/\.(vue|ts|js)$/.test(file)) return null;
+      if (file.includes("node_modules")) return null;
+      let hit = false;
+      const out = code.replace(RE, (m, quote: string, dir: string, rest: string) => {
+        if (MAIN.has(`/pages/${dir}/${rest}`)) return m;
+        const pkgRoot = PAGE_DIR_TO_PKG[dir];
+        if (!pkgRoot) return m;
+        hit = true;
+        return `${quote}/${pkgRoot}/${dir}/${rest}`;
+      });
+      return hit ? { code: out, map: null } : null;
+    },
+  };
+}
+
+// 仅小程序端需要分包改写；H5 / App 保持 /pages/yyy 不变
+const IS_MP_WEIXIN = process.env.UNI_PLATFORM === "mp-weixin";
+
 export default defineConfig({
-  plugins: [uni()],
+  plugins: [uni(), ...(IS_MP_WEIXIN ? [subpackagePaths()] : [])],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version || "0.0.0"),
   },

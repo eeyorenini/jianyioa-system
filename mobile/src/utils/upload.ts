@@ -51,8 +51,22 @@ export function chooseAndUpload(count = 9): Promise<string[]> {
   });
 }
 
-/** 补全图片 http 地址（小程序 <image :src> 必须绝对地址） */
+/**
+ * 补全图片地址，供 <image :src> / previewImage 使用。
+ *
+ * 统一规则（两端必须一致）：
+ *   1. 先补前导斜杠，保证 `/uploads/x.jpg` 形态
+ *   2. 再交给 absAsset 按平台补域名：
+ *      H5 → 原样返回相对路径；小程序 / App → 补 https 绝对地址
+ *
+ * 小程序和 App 里 <image src="/uploads/x.jpg"> 无法解析，必须是绝对地址；
+ * H5 同源则保持相对路径最省事。差异全部收敛在 absAsset 的条件编译里。
+ */
 export function getImageUrl(path: string): string {
   if (!path) return '';
-  return absAsset(path);
+  const p =
+    path.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')
+      ? path
+      : '/' + path;
+  return absAsset(p);
 }

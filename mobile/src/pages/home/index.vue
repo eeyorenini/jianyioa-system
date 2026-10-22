@@ -189,6 +189,7 @@ import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
+import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -595,10 +596,11 @@ const goFinance = () => {
 };
 
 const goTodo = (todo) => {
-  if (todo.type === 'node') {
-    uni.navigateTo({ url: `/pages/projects/detail?id=${todo.id}` });
-  } else if (todo.type === 'inspect') {
-    uni.navigateTo({ url: '/pages/inspection/detail' });
+  if (todo.type === 'node' || todo.type === 'stage_due') {
+    const pid = todo.project_id || todo.id;
+    uni.navigateTo({ url: `/pages/projects/detail?id=${pid}` });
+  } else if (todo.type === 'inspect' || todo.type === 'inspect_rectify') {
+    uni.navigateTo({ url: `/pages/inspection/detail?id=${todo.id}` });
   }
 };
 
@@ -607,24 +609,25 @@ const goTodo = (todo) => {
 // uni-h5（hash 路由 + /m/ base）对 navigateTo 的 params 字段处理不可靠，
 // 单独传 params 会导致 onLoad(options).id 为 undefined，
 // 进而 /api/purchase-requests/undefined 返回 404 显示「加载失败」。
+// 2026-10-22 修复：后端 /api/todo/center 返回的 url 仍是分包改造前的 /pages/xxx，
+// 这些页面已迁进分包，直接 navigateTo 会失败（点了提示"页面不存在/无关联页面"）。
+// 统一先过 resolvePageUrl 归一化。
 const goTodoUrl = (todo) => {
-  const u = todo && todo.url
-  if (u) {
-    if (u.startsWith('/pages/')) {
-      const [path] = u.split('?')
-      if (path === '/pages/purchase/list' || path === '/pages/projects/list' || path === '/pages/inspection/list') {
-        // tabBar 页面：switchTab 不带 query，改用 redirectTo 保留参数；保持简单直接 switchTab
-        uni.switchTab({ url: path })
-      } else {
-        uni.navigateTo({ url: u, success: () => {}, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } })
-      }
-    } else {
-      uni.navigateTo({ url: u })
-    }
+  const target = resolvePageUrl(todo && todo.url)
+  if (!target) {
+    // 兜底：没有 url 时按类型猜测（旧数据兼容）
+    goTodo(todo)
     return
   }
-  // 兜底：没有 url 时按类型猜测（旧数据兼容）
-  goTodo(todo)
+  if (isTabBarPage(target)) {
+    // tabBar 页面只能 switchTab，且不支持 query 参数
+    uni.switchTab({ url: target.split('?')[0] })
+    return
+  }
+  uni.navigateTo({
+    url: target,
+    fail: () => { uni.showToast({ title: '页面打开失败', icon: 'none' }) }
+  })
 };
 
 // 待办中心：汇总各模块待我处理的事项（按权限聚合）
