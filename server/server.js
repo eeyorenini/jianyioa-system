@@ -11457,6 +11457,7 @@ app.get('/api/todo/center', async (req, res) => {
         }
         return {
           id: r.id, type: 'inspect_rectify',
+          source_type: 'rectification_issue', source_id: r.id,
           title: (r.title || r.issue_desc || '待整改').slice(0, 30),
           subtitle: r.project_name,
           time: __fmtTodoTime(r.created_at),

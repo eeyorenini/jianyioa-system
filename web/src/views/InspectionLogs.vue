@@ -157,18 +157,98 @@
       </div>
     </el-dialog>
 
+    <!-- 整改详情（从待办中心跳转） -->
+    <el-dialog v-model="rectifyVisible" title="整改详情" width="700px" destroy-on-close>
+      <div v-if="rectifyLoading" style="text-align:center;padding:40px">
+        <el-icon class="is-loading" style="font-size:28px"><Loading /></el-icon>
+        <p style="color:#909399;margin-top:8px">加载中…</p>
+      </div>
+      <div v-else-if="!rectifyDetail" style="text-align:center;padding:40px;color:#909399">
+        记录不存在或已被删除
+      </div>
+      <div v-else class="rectify-detail">
+        <!-- 状态栏 -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <el-tag :type="getRectifyStatusType(rectifyDetail)" size="large">
+            {{ getRectifyStatus(rectifyDetail) }}
+          </el-tag>
+          <span v-if="rectifyDetail.due_date" style="color:#f56c6c;font-size:13px">
+            期限：{{ rectifyDetail.due_date }}
+          </span>
+        </div>
+
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="项目">{{ rectifyDetail.project_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="检查项">{{ rectifyDetail.category || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="问题位置">{{ rectifyDetail.location || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="严重程度">
+            <el-tag :type="rectifyDetail.level==='high'?'danger':rectifyDetail.level==='medium'?'warning':'info'" size="small">
+              {{ getSeverityText(rectifyDetail.level) }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="负责人">{{ rectifyDetail.responsible_name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ rectifyDetail.created_at || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div style="margin-top:16px">
+          <div class="detail-label">问题描述</div>
+          <div class="detail-content">{{ rectifyDetail.issue_desc || rectifyDetail.description || '无' }}</div>
+        </div>
+
+        <div v-if="rectifyDetail.remark" style="margin-top:12px">
+          <div class="detail-label">备注 / 整改记录</div>
+          <div class="detail-content">{{ rectifyDetail.remark }}</div>
+        </div>
+
+        <div v-if="getRectifyImages(rectifyDetail).length > 0" style="margin-top:16px">
+          <div class="detail-label">现场照片</div>
+          <div class="detail-images">
+            <el-image
+              v-for="(img, idx) in getRectifyImages(rectifyDetail)"
+              :key="idx"
+              :src="img.startsWith('http') ? img : img"
+              fit="cover"
+              class="detail-img"
+              :preview-src-list="getRectifyImages(rectifyDetail)"
+              :preview-index="idx"
+            />
+          </div>
+        </div>
+
+        <!-- 操作区 -->
+        <div v-if="getRectifyStatus(rectifyDetail) !== '已整改'" style="margin-top:20px;padding-top:16px;border-top:1px solid #ebeef5">
+          <div v-if="getRectifyStatus(rectifyDetail) === '待整改'">
+            <div class="detail-label">提交整改</div>
+            <el-input v-model="fixForm.content" type="textarea" :rows="3" placeholder="请描述整改措施…" />
+            <div style="margin-top:10px;text-align:right">
+              <el-button type="primary" :loading="fixing" @click="submitFix">提交整改</el-button>
+            </div>
+          </div>
+          <div v-else-if="getRectifyStatus(rectifyDetail) === '整改中'">
+            <div class="detail-label">完成整改</div>
+            <el-input v-model="fixForm.remark" type="textarea" :rows="3" placeholder="请描述整改结果…" />
+            <div style="margin-top:10px;text-align:right">
+              <el-button type="success" :loading="fixing" @click="completeFix">完成整改</el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
     <el-image-viewer v-if="previewVisible" :url-list="previewImagesList" @close="previewVisible=false" />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Loading } from '@element-plus/icons-vue'
 import request from '../utils/request'
 import { inspectionApi } from '../utils/api'
 import { useUserStore } from '../stores/user'
 
+const route = useRoute()
 const userStore = useUserStore()
 const loading = ref(false)
 const saving = ref(false)
@@ -185,6 +265,16 @@ const filterProject = ref(0)
 const viewLog = ref(null)
 const previewImagesList = ref([])
 const fileInputRef = ref(null)
+
+// 整改详情弹窗
+const rectifyVisible = ref(false)
+const rectifyDetail = ref(null)
+const rectifyLoading = ref(false)
+const fixForm = reactive({
+  content: '',
+  remark: ''
+})
+const fixing = ref(false)
 
 const formImages = ref([]) // 每个元素: { localUrl: 'blob:xxx', serverUrl: '/uploads/logs/xxx.jpg', status: 'uploading'|'done'|'error', name: '' }
 const uploadQueue = ref(0) // 上传中数量
@@ -428,6 +518,109 @@ const handleDelete = async (row) => {
   }
 }
 
+/* ---------- 整改详情 ---------- */
+const openRectifyDetail = (id) => {
+  if (!id) return
+  loadRectifyDetail(id)
+}
+
+const loadRectifyDetail = async (id) => {
+  rectifyLoading.value = true
+  try {
+    const res = await request.get(`/rectification-issues/${id}`)
+    const data = res.data || res
+    rectifyDetail.value = data
+    rectifyVisible.value = true
+    fixForm.content = ''
+    fixForm.remark = data?.remark || ''
+  } catch (e) {
+    console.error('加载整改详情失败', e)
+    ElMessage.error('加载整改详情失败')
+  } finally {
+    rectifyLoading.value = false
+  }
+}
+
+const getRectifyImages = (item) => {
+  if (!item) return []
+  if (!item.images) return []
+  try {
+    const arr = typeof item.images === 'string' ? JSON.parse(item.images) : item.images
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+const getRectifyStatus = (item) => {
+  if (!item) return '未知'
+  const s = String(item.status || item.rectify_status || '').toLowerCase()
+  if (s.includes('已整改') || s.includes('完成')) return '已整改'
+  if (s.includes('整改中')) return '整改中'
+  return '待整改'
+}
+
+const getRectifyStatusType = (item) => {
+  const s = getRectifyStatus(item)
+  if (s === '已整改') return 'success'
+  if (s === '整改中') return 'warning'
+  return 'danger'
+}
+
+const getSeverityText = (level) => {
+  const map = { high: '严重', medium: '中等', low: '一般' }
+  return map[level] || level || '一般'
+}
+
+const submitFix = async () => {
+  if (!fixForm.content.trim()) {
+    ElMessage.warning('请输入整改内容')
+    return
+  }
+  fixing.value = true
+  try {
+    const id = rectifyDetail.value?.id
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    await request.put(`/rectification-issues/${id}`, {
+      status: '整改中',
+      remark: fixForm.content,
+      finish_date: now
+    })
+    ElMessage.success('整改已提交')
+    rectifyDetail.value.status = '整改中'
+    rectifyDetail.value.remark = fixForm.content
+    fixForm.content = ''
+  } catch (e) {
+    console.error('提交整改失败', e)
+    ElMessage.error('提交整改失败')
+  } finally {
+    fixing.value = false
+  }
+}
+
+const completeFix = async () => {
+  if (!fixForm.remark.trim()) {
+    ElMessage.warning('请输入完成说明')
+    return
+  }
+  fixing.value = true
+  try {
+    const id = rectifyDetail.value?.id
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    await request.put(`/rectification-issues/${id}`, {
+      status: '已整改',
+      remark: fixForm.remark,
+      finish_date: now
+    })
+    ElMessage.success('整改已完成')
+    rectifyDetail.value.status = '已整改'
+    rectifyDetail.value.rectify_status = '已整改'
+  } catch (e) {
+    console.error('完成整改失败', e)
+    ElMessage.error('完成整改失败')
+  } finally {
+    fixing.value = false
+  }
+}
+
 const handleSave = async () => {
   if (!form.result.trim()) {
     ElMessage.warning('巡检结果不能为空')
@@ -513,6 +706,10 @@ const handleSave = async () => {
 onMounted(() => {
   loadLogs()
   loadProjects()
+  // 从待办中心跳转：?id=整改记录ID
+  if (route.query.id) {
+    openRectifyDetail(route.query.id)
+  }
 })
 </script>
 
