@@ -64,6 +64,13 @@
               <div class="todo-main">
                 <div class="todo-title-row">
                   <span class="todo-title">{{ item.title }}</span>
+                  <!-- 逾期 / 加急徽标（与移动端首页同规则） -->
+                  <span v-if="item.urgency === 'overdue'" class="todo-badge badge-overdue">
+                    已逾期 {{ item.days_left != null ? Math.abs(item.days_left) + ' 天' : '' }}
+                  </span>
+                  <span v-else-if="item.urgency === 'urgent'" class="todo-badge badge-urgent">
+                    加急 {{ item.days_left != null ? item.days_left + ' 天' : '' }}
+                  </span>
                   <span v-if="item.amount !== null && item.amount !== undefined" class="todo-amount">
                     ¥{{ fmtMoney(item.amount) }}
                   </span>
@@ -288,6 +295,26 @@ onMounted(loadData)
   font-weight: 700;
   color: #E6A23C;
   flex-shrink: 0;
+}
+/* 逾期 / 加急徽标（与移动端 home/index.vue 的 badge-overdue / badge-urgent 完全同色） */
+.todo-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 18px;
+}
+.badge-overdue {
+  background: #FEF2F2;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+}
+.badge-urgent {
+  background: #FFF7ED;
+  color: #EA580C;
+  border: 1px solid #FED7AA;
 }
 .todo-sub-row {
   display: flex;

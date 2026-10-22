@@ -100,8 +100,15 @@
           class="todo-item"
           @click="goTodoItem(item)"
         >
-          <span class="todo-item-dot"></span>
+          <span class="todo-item-dot" :class="'dot-' + (item.priority || 'normal')"></span>
           <span class="todo-item-title">{{ item.title }}</span>
+          <!-- 逾期 / 加急徽标（与移动端首页同规则） -->
+          <span v-if="item.urgency === 'overdue'" class="todo-badge badge-overdue">
+            已逾期 {{ item.days_left != null ? Math.abs(item.days_left) + ' 天' : '' }}
+          </span>
+          <span v-else-if="item.urgency === 'urgent'" class="todo-badge badge-urgent">
+            加急 {{ item.days_left != null ? item.days_left + ' 天' : '' }}
+          </span>
           <span class="todo-item-sub">{{ item.subtitle }}</span>
           <span class="todo-item-time">{{ item.time }}</span>
           <span class="todo-item-arrow">›</span>
@@ -109,6 +116,29 @@
       </div>
       <div v-else-if="todoTotal === 0" class="todo-empty">
         🎉 没有待处理事项，喝杯茶吧
+      </div>
+    </div>
+
+    <!-- 逾期预警（与移动端首页同规则：项目节点计划结束日期已过且未完成） -->
+    <div v-if="todoWarnings.length" class="warn-block">
+      <div class="warn-head">
+        <span class="warn-title">⚠️ 逾期预警</span>
+        <el-tag type="danger" effect="plain" size="small" round>{{ todoWarnings.length }} 项</el-tag>
+        <el-button type="danger" link size="small" style="margin-left:auto" @click="$router.push('/projects')">
+          查看项目 →
+        </el-button>
+      </div>
+      <div class="warn-list">
+        <div
+          v-for="w in todoWarnings"
+          :key="w.id + '-' + w.node"
+          class="warn-item"
+          @click="$router.push('/projects')"
+        >
+          <span class="warn-name">{{ w.name }}</span>
+          <span class="warn-desc">{{ w.node }} 已逾期</span>
+          <span class="warn-days">{{ w.days }} 天</span>
+        </div>
       </div>
     </div>
 
@@ -358,6 +388,8 @@ const router = useRouter()
 const todoGroups = ref([])
 const todoItems = ref([])
 const todoTotal = ref(0)
+// 逾期预警（后端 home.warnings：项目节点计划结束日期已过且未完成）
+const todoWarnings = ref([])
 
 const loadTodo = async () => {
   try {
@@ -390,6 +422,8 @@ const loadTodo = async () => {
         for (const it of (g.items || [])) flat.push(it)
       }
       todoItems.value = flat.slice(0, 5)
+      // 逾期预警（与移动端首页「⚠️ 逾期预警」同源：home.warnings）
+      todoWarnings.value = (res.data.home?.warnings || []).slice(0, 5)
     }
   } catch (e) {
     console.error('加载待办失败:', e)
@@ -587,6 +621,31 @@ onMounted(() => {
   width: 6px; height: 6px; border-radius: 50%;
   background: #F56C6C; flex-shrink: 0;
 }
+/* 优先级圆点（与移动端 priority-{priority} 同规则） */
+.todo-item-dot.dot-danger { background: #F56C6C; }
+.todo-item-dot.dot-warning { background: #E6A23C; }
+.todo-item-dot.dot-normal { background: #909399; }
+
+/* 逾期 / 加急徽标（与移动端 home/index.vue 的 badge-overdue / badge-urgent 完全同色） */
+.todo-badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 18px;
+}
+.badge-overdue {
+  background: #FEF2F2;
+  color: #DC2626;
+  border: 1px solid #FCA5A5;
+}
+.badge-urgent {
+  background: #FFF7ED;
+  color: #EA580C;
+  border: 1px solid #FED7AA;
+}
 .todo-item-title {
   font-size: 13px; color: #303133; font-weight: 500;
   max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -598,6 +657,46 @@ onMounted(() => {
 .todo-item-time { font-size: 12px; color: #c0c4cc; flex-shrink: 0; }
 .todo-item-arrow { font-size: 15px; color: #c0c4cc; flex-shrink: 0; }
 .todo-empty { font-size: 13px; color: #909399; padding: 8px 0; }
+
+/* ===== 逾期预警区块（与移动端首页「⚠️ 逾期预警」对齐） ===== */
+.warn-block {
+  background: #fff;
+  border: 1px solid #FDE2E2;
+  border-left: 3px solid #F56C6C;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+.warn-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.warn-title { font-size: 15px; font-weight: 600; color: #C0392B; }
+.warn-list { display: flex; flex-direction: column; gap: 6px; }
+.warn-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s;
+  background: #FFFBFB;
+}
+.warn-item:hover { background: #FEF2F2; }
+.warn-name {
+  font-size: 13px; color: #303133; font-weight: 500;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.warn-desc { font-size: 12px; color: #909399; flex: 1; }
+.warn-desc b { color: #DC2626; }
+.warn-days {
+  font-size: 12px; color: #DC2626; font-weight: 600;
+  background: #FEF2F2; border: 1px solid #FCA5A5;
+  border-radius: 10px; padding: 1px 8px; flex-shrink: 0;
+}
 
 /* ===== Hero 顶部条 ===== */
 .hero-bar {
