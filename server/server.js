@@ -4989,17 +4989,83 @@ app.put('/api/messages/read-all', async (req, res) => {
 });
 
 // 获取单条消息
+// 2026-10-22 修复：/api/messages 列表是 messages + notifications 两表 UNION 的，
+// 两表 id 各自自增、必然撞号；而这里原来只查 messages 且用 getCurrentUser，
+// 导致 notifications 来的消息（实测占未读大头：inapp/node 168 条、project_log 145 条…）
+// 点进详情永远「消息不存在」。
+// 现在按前端回传的 src 精确查对应表，缺省时两表依次兜底；
+// 返回字段统一 alias 成 source_id / source_type，与列表口径一致。
 app.get('/api/messages/:id', async (req, res) => {
   try {
-    const { userId } = await getCurrentUser(req);
-    if (!userId) return res.status(401).json({ error: '未登录' });
-    
-    const [msg] = await db.prepare('SELECT * FROM messages WHERE id = ? AND user_id = ?').all(req.params.id, userId);
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
+    const id = parseInt(req.params.id) || 0;
+    if (!id) return res.status(400).json({ error: '参数错误' });
+    const src = String(req.query.src || '');
+
+    const MSG_COLS = `id, user_id, user_name, title, content, type, related_id AS source_id, related_type AS source_type, is_read, push_status, created_at, 'messages' AS src`;
+    const NOTIF_COLS = `id, NULL AS user_id, receiver_name AS user_name, title, content, type, source_id, source_type, is_read, channels AS push_status, created_at, 'notifications' AS src`;
+
+    const findMessages = async () => {
+      if (!actor.userId) return null;
+      const [rows] = await pool.query(`SELECT ${MSG_COLS} FROM messages WHERE id = ? AND user_id = ?`, [id, actor.userId]);
+      return rows[0] || null;
+    };
+    const findNotification = async () => {
+      if (!actor.phone) return null;
+      const [rows] = await pool.query(`SELECT ${NOTIF_COLS} FROM notifications WHERE id = ? AND receiver_phone = ?`, [id, actor.phone]);
+      return rows[0] || null;
+    };
+
+    let msg = null;
+    if (src === 'notifications') msg = await findNotification();
+    else if (src === 'messages') msg = await findMessages();
+    else msg = (await findMessages()) || (await findNotification());
+
     if (!msg) return res.status(404).json({ error: '消息不存在' });
     res.json(msg);
   } catch (err) {
     console.error('messages/:id error:', err);
     res.status(500).json({ error: '查询失败' });
+  }
+});
+
+// 删除单条消息（本人删自己的）
+// 2026-10-22 新增：移动端左滑删除原来调的是 DELETE /api/notifications/:id，
+// 那个接口 ① 只允许管理员 → 普通员工 403 ② 只删 notifications 表，
+// 而列表是两表 UNION，messages 来的消息根本删不掉；
+// 前端 success 回调不校验 statusCode，于是「看着删掉了，下拉刷新又回来」。
+app.delete('/api/messages/:id', async (req, res) => {
+  try {
+    const actor = await resolveMessageActor(req);
+    if (actor.type === 'unknown') return res.status(401).json({ error: '未登录' });
+
+    const id = parseInt(req.params.id) || 0;
+    if (!id) return res.status(400).json({ error: '参数错误' });
+    const src = String(req.query.src || '');
+
+    const delMessages = async () => {
+      if (!actor.userId) return 0;
+      const [r] = await pool.query('DELETE FROM messages WHERE id = ? AND user_id = ?', [id, actor.userId]);
+      return r.affectedRows || 0;
+    };
+    const delNotification = async () => {
+      if (!actor.phone) return 0;
+      const [r] = await pool.query('DELETE FROM notifications WHERE id = ? AND receiver_phone = ?', [id, actor.phone]);
+      return r.affectedRows || 0;
+    };
+
+    let affected = 0;
+    if (src === 'notifications') affected = await delNotification();
+    else if (src === 'messages') affected = await delMessages();
+    else affected = (await delMessages()) || (await delNotification());
+
+    if (!affected) return res.status(404).json({ error: '消息不存在或无权删除' });
+    res.json({ message: '已删除' });
+  } catch (err) {
+    console.error('messages delete error:', err);
+    res.status(500).json({ error: '删除失败' });
   }
 });
 
