@@ -5,7 +5,23 @@
         <div class="card-header">
           <span>巡检日志</span>
           <div style="display:flex;gap:8px;align-items:center">
-            <el-select v-model="filterProject" placeholder="选择项目" clearable filterable style="width:180px" @change="loadLogs">
+            <el-select
+              v-if="activeTab === 'rectify'"
+              v-model="rectifyFilterProject"
+              placeholder="选择项目"
+              clearable filterable style="width:180px"
+              @change="loadRectifyList"
+            >
+              <el-option label="全部项目" :value="0" />
+              <el-option v-for="p in projectList" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-select
+              v-else
+              v-model="filterProject"
+              placeholder="选择项目"
+              clearable filterable style="width:180px"
+              @change="loadLogs"
+            >
               <el-option label="全部项目" :value="0" />
               <el-option v-for="p in projectList" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
@@ -17,44 +33,118 @@
         </div>
       </template>
 
-      <el-table :data="logList" style="width:100%" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="project_name" label="项目名称" width="150">
-          <template #default="scope">
-            {{ scope.row.project_name || scope.row.project_id || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="operator" label="提交人" width="100" />
-        <el-table-column prop="location" label="巡检地点" width="150" show-overflow-tooltip />
-        <el-table-column prop="result" label="巡检结果" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="images" label="图片" width="80">
-          <template #default="scope">
-            <span v-if="getImageCount(scope.row.images) > 0" style="color:#409eff;cursor:pointer" @click="previewImages(scope.row)">
-              {{ getImageCount(scope.row.images) }}
-            </span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="created_at" label="提交时间" width="160" />
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="scope">
-            <el-button size="small" @click="handleView(scope.row)">查看</el-button>
-            <el-button size="small" type="danger" @click="handleDelete(scope.row)" v-if="canEdit(scope.row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-tabs v-model="activeTab" @tab-change="onTabChange">
+        <!-- 整改问题（与移动端同源：rectification_issues） -->
+        <el-tab-pane label="整改问题" name="rectify">
+          <el-table :data="rectifyList" style="width:100%" v-loading="rectifyListLoading" stripe>
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column prop="project_name" label="项目名称" width="150">
+              <template #default="scope">
+                {{ scope.row.project_name || scope.row.project_id || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="title" label="问题标题" width="140" show-overflow-tooltip>
+              <template #default="scope">
+                {{ scope.row.title || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="issue_desc" label="问题描述" min-width="200" show-overflow-tooltip>
+              <template #default="scope">
+                {{ scope.row.issue_desc || scope.row.description || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="location" label="位置" width="120" show-overflow-tooltip>
+              <template #default="scope">
+                {{ scope.row.location || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="level" label="严重程度" width="100">
+              <template #default="scope">
+                <el-tag v-if="scope.row.level" :type="getSeverityTagType(scope.row.level)" size="small">
+                  {{ getSeverityText(scope.row.level) }}
+                </el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="responsible_name" label="负责人" width="100">
+              <template #default="scope">
+                {{ scope.row.responsible_name || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="due_date" label="整改期限" width="120">
+              <template #default="scope">
+                <span :style="{ color: isOverdue(scope.row) ? '#f56c6c' : '' }">{{ scope.row.due_date || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="110">
+              <template #default="scope">
+                <el-tag :type="getRectifyStatusType(scope.row)" size="small">
+                  {{ getRectifyStatus(scope.row) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="创建时间" width="160" />
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="scope">
+                <el-button size="small" type="primary" @click="openRectifyDetail(scope.row.id)">处理</el-button>
+                <el-button size="small" type="danger" @click="handleDeleteRectify(scope.row)" v-if="userStore.isAdmin">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
 
-      <div style="margin-top:16px;display:flex;justify-content:center">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          :total="total"
-          :page-sizes="[10,20,50]"
-          layout="total,sizes,prev,pager,next"
-          @current-change="loadLogs"
-          @size-change="loadLogs"
-        />
-      </div>
+          <div style="margin-top:16px;display:flex;justify-content:center">
+            <el-pagination
+              v-model:current-page="rectifyPage"
+              v-model:page-size="rectifyPageSize"
+              :total="rectifyTotal"
+              :page-sizes="[10,20,50]"
+              layout="total,sizes,prev,pager,next"
+            />
+          </div>
+        </el-tab-pane>
+
+        <!-- 巡检记录（inspections 表，PC 端历史数据） -->
+        <el-tab-pane label="巡检记录" name="inspections">
+          <el-table :data="logList" style="width:100%" v-loading="loading" stripe>
+            <el-table-column prop="id" label="ID" width="70" />
+            <el-table-column prop="project_name" label="项目名称" width="150">
+              <template #default="scope">
+                {{ scope.row.project_name || scope.row.project_id || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="operator" label="提交人" width="100" />
+            <el-table-column prop="location" label="巡检地点" width="150" show-overflow-tooltip />
+            <el-table-column prop="result" label="巡检结果" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="images" label="图片" width="80">
+              <template #default="scope">
+                <span v-if="getImageCount(scope.row.images) > 0" style="color:#409eff;cursor:pointer" @click="previewImages(scope.row)">
+                  {{ getImageCount(scope.row.images) }}
+                </span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="提交时间" width="160" />
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="scope">
+                <el-button size="small" @click="handleView(scope.row)">查看</el-button>
+                <el-button size="small" type="danger" @click="handleDelete(scope.row)" v-if="canEdit(scope.row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div style="margin-top:16px;display:flex;justify-content:center">
+            <el-pagination
+              v-model:current-page="page"
+              v-model:page-size="pageSize"
+              :total="total"
+              :page-sizes="[10,20,50]"
+              layout="total,sizes,prev,pager,next"
+              @current-change="loadLogs"
+              @size-change="loadLogs"
+            />
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
     <!-- 新增/编辑对话框 -->
@@ -182,7 +272,7 @@
           <el-descriptions-item label="检查项">{{ rectifyDetail.category || '-' }}</el-descriptions-item>
           <el-descriptions-item label="问题位置">{{ rectifyDetail.location || '-' }}</el-descriptions-item>
           <el-descriptions-item label="严重程度">
-            <el-tag :type="rectifyDetail.level==='high'?'danger':rectifyDetail.level==='medium'?'warning':'info'" size="small">
+            <el-tag :type="getSeverityTagType(rectifyDetail.level)" size="small">
               {{ getSeverityText(rectifyDetail.level) }}
             </el-tag>
           </el-descriptions-item>
@@ -250,6 +340,16 @@ import { useUserStore } from '../stores/user'
 
 const route = useRoute()
 const userStore = useUserStore()
+
+// 双 Tab：整改问题（rectification_issues，与移动端同源）/ 巡检记录（inspections）
+const activeTab = ref('rectify')
+const rectifyList = ref([])
+const rectifyListLoading = ref(false)
+const rectifyPage = ref(1)
+const rectifyPageSize = ref(20)
+const rectifyTotal = ref(0)
+const rectifyFilterProject = ref(0)
+
 const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
@@ -438,6 +538,50 @@ const getViewImages = (imagesField) => {
     return Array.isArray(val) ? val : []
   } catch { return [] }
 }
+/* ---------- 整改问题列表（rectification_issues，与移动端同源） ---------- */
+const loadRectifyList = async () => {
+  rectifyListLoading.value = true
+  try {
+    const params = {}
+    if (rectifyFilterProject.value) params.project_id = rectifyFilterProject.value
+    const res = await request.get('/rectification-issues', { params })
+    const raw = Array.isArray(res) ? res : (res.list || res.data || [])
+    rectifyList.value = raw
+    rectifyTotal.value = raw.length
+  } catch (e) {
+    console.error('加载整改问题失败', e)
+    rectifyList.value = []
+    rectifyTotal.value = 0
+  } finally {
+    rectifyListLoading.value = false
+  }
+}
+
+const onTabChange = (name) => {
+  if (name === 'rectify') loadRectifyList()
+  else loadLogs()
+}
+
+const isOverdue = (row) => {
+  if (!row || !row.due_date) return false
+  const s = getRectifyStatus(row)
+  if (s === '已整改') return false
+  const due = new Date(String(row.due_date).replace(' ', 'T'))
+  if (isNaN(due.getTime())) return false
+  return due.getTime() < Date.now()
+}
+
+const handleDeleteRectify = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定删除这条整改问题？', '删除确认', { type: 'warning' })
+    await request.delete(`/rectification-issues/${row.id}`)
+    ElMessage.success('删除成功')
+    loadRectifyList()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
 // v2.3.6 hotfix（10-15）：走 inspections 表（之前走 /api/project-logs?type=inspection 是错接口）
 // 后端返回字段：inspector_name / project_name / result / issues / images / score / status / rectify_status
 // 前端模板字段：operator / location / result —— loadLogs 里做映射让模板不用改
@@ -566,8 +710,21 @@ const getRectifyStatusType = (item) => {
 }
 
 const getSeverityText = (level) => {
-  const map = { high: '严重', medium: '中等', low: '一般' }
-  return map[level] || level || '一般'
+  if (!level) return '一般'
+  const map = {
+    // 英文枚举（库里实际存的值）
+    serious: '严重', high: '严重', urgent: '紧急', critical: '严重',
+    medium: '中等', moderate: '中等',
+    normal: '一般', low: '一般', minor: '一般'
+  }
+  return map[String(level).toLowerCase()] || level
+}
+
+const getSeverityTagType = (level) => {
+  const s = String(level || '').toLowerCase()
+  if (['serious', 'high', 'urgent', 'critical'].includes(s)) return 'danger'
+  if (['medium', 'moderate'].includes(s)) return 'warning'
+  return 'info'
 }
 
 const submitFix = async () => {
@@ -694,6 +851,8 @@ const handleSave = async () => {
     }
     ElMessage.success(isEdit.value ? '更新成功' : '创建成功')
     dialogVisible.value = false
+    // 新增写的是 inspections 表，切到「巡检记录」tab 才看得到
+    activeTab.value = 'inspections'
     loadLogs()
   } catch (e) {
     console.error('保存失败', e)
@@ -704,10 +863,12 @@ const handleSave = async () => {
 }
 
 onMounted(() => {
-  loadLogs()
+  // 默认展示「整改问题」（实际有数据的那张表，与移动端同源）
+  loadRectifyList()
   loadProjects()
   // 从待办中心跳转：?id=整改记录ID
   if (route.query.id) {
+    activeTab.value = 'rectify'
     openRectifyDetail(route.query.id)
   }
 })
