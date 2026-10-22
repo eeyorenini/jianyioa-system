@@ -126,7 +126,7 @@
 <script setup >
 import { ref, onMounted } from "vue";
 import { useUserStore } from "@/stores/user";
-import { formatNodeDateRange } from "../../utils/format";
+import { formatNodeDateRange } from "../../utils/date";
 
 const projectId = ref(0);
 const nodeId = ref(0);

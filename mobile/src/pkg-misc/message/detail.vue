@@ -33,10 +33,10 @@
       <!-- 正文 -->
       <view class="message-body">{{ message.content }}</view>
 
-      <!-- 底部查看详情按钮 -->
-      <view v-if="hasSourceId" class="action-area">
+      <!-- 底部：跳转对应业务模块（该消息确实有关联页面才显示） -->
+      <view v-if="target" class="action-area">
         <view class="action-btn" @click="goToDetail">
-          <text>查看详情</text>
+          <text>{{ target.label }}</text>
           <text class="arrow">›</text>
         </view>
       </view>
@@ -53,6 +53,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { toDate } from '@/utils/date'
+import { resolveMessageTarget, openMessageTarget } from '@/utils/pageUrl'
 
 const message = ref({})
 const loading = ref(false)
@@ -76,48 +77,31 @@ const typeConfig = computed(() => {
     notice_published: { icon: '📢', color: '#909399', text: '公告' },
     customer_follow: { icon: '👤', color: '#409EFF', text: '客户跟进' },
     invoice_created: { icon: '💰', color: '#67C23A', text: '发票' },
+    // 2026-10-22 补齐：这些 type 在库里真实存在（见 messages / notifications 分布），
+    // 原来落到兜底分支会把英文 type 直接显示给用户
+    contract_uploaded: { icon: '📤', color: '#409EFF', text: '合同上传' },
+    contract_approved: { icon: '✅', color: '#67C23A', text: '合同审核通过' },
+    contract_change_created: { icon: '📝', color: '#E6A23C', text: '增减项' },
+    contract_change_approved: { icon: '✅', color: '#67C23A', text: '增减项审核通过' },
+    node_in_progress: { icon: '⏳', color: '#E6A23C', text: '节点进行中' },
+    node_completed: { icon: '🎯', color: '#67C23A', text: '节点完成' },
+    project_file_pending: { icon: '📎', color: '#E6A23C', text: '文件待审核' },
+    project_file_approved: { icon: '📎', color: '#67C23A', text: '文件审核通过' },
+    collection_created: { icon: '📞', color: '#E6A23C', text: '新建催收' },
+    collection_confirmed: { icon: '💵', color: '#67C23A', text: '催收回款确认' },
+    purchase: { icon: '🛒', color: '#E6A23C', text: '采购' },
+    '采购': { icon: '🛒', color: '#E6A23C', text: '采购' },
     system_notice: { icon: '⚙️', color: '#909399', text: '系统通知' },
     inapp: { icon: '🔔', color: '#909399', text: '通知' },
   }
   return config[type] || { icon: '📌', color: '#909399', text: type || '通知' }
 })
 
-const hasSourceId = computed(() => !!message.value.source_id)
-
-// 跳转路由映射
-const getTargetPath = (msg) => {
-  const { type, source_id } = msg
-  if (!source_id) return null
-  
-  const pathMap = {
-    contract_created: `/pages/contract/detail?id=${source_id}`,
-    contract_updated: `/pages/contract/detail?id=${source_id}`,
-    project_created: `/pages/projects/detail?id=${source_id}`,
-    project_status_changed: `/pages/projects/detail?id=${source_id}`,
-    project_progress: `/pages/projects/detail?id=${source_id}`,
-    node_status_changed: `/pages/projects/node?id=${source_id}`,
-    inspection_submit: `/pages/inspection/detail?id=${source_id}`,
-    acceptance_submit: `/pages/acceptance/list?id=${source_id}`,
-    dispatch_created: `/pages/dispatch/detail?id=${source_id}`,
-    dispatch_status_changed: `/pages/dispatch/detail?id=${source_id}`,
-    approval_submit: null,
-    approval_result: null,
-    notice_published: `/pages/notices/notices?id=${source_id}`,
-    system_notice: null,
-    customer_follow: `/pages/customers/customers?id=${source_id}`,
-    invoice_created: `/pages/finance/list?id=${source_id}`,
-  }
-  
-  return pathMap[type] || null
-}
+// 跳转目标：由 utils/pageUrl 统一算（实体优先，兼容 inapp/中文 type 等历史脏值）
+const target = computed(() => resolveMessageTarget(message.value))
 
 function goToDetail() {
-  const path = getTargetPath(message.value)
-  if (path) {
-    uni.navigateTo({ url: path })
-  } else {
-    uni.showToast({ title: '该内容已删除或无法访问', icon: 'none' })
-  }
+  openMessageTarget(target.value)
 }
 
 function formatTime(str) {
@@ -140,11 +124,13 @@ onMounted(() => {
   const currentPage = pages[pages.length - 1]
   const options = currentPage.options || currentPage.$page?.options || {}
   const id = options.id
-  
+  // src 决定详情查 messages 还是 notifications（两表 id 会撞号，见列表页注释）
+  const src = options.src || ''
+
   if (id) {
     loading.value = true
     uni.request({
-      url: `/api/messages/${id}`,
+      url: `/api/messages/${id}${src ? '?src=' + src : ''}`,
       header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
       success: (res) => {
         if (res.data && typeof res.data === 'object') {

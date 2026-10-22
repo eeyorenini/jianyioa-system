@@ -41,3 +41,23 @@ export function timeAgo(input: any): string {
   if (diff < 604800000) return Math.floor(diff / 86400000) + '天前';
   return '';
 }
+
+/**
+ * 格式化节点日期区间
+ * 同一天只显示 "9月14日"，不同天显示 "9月14日 ~ 9月18日"
+ *
+ * 原 utils/format.js 迁入：该文件仅被项目节点页引用，
+ * 留在主包会被微信「主包内不应存在主包未使用的 JS 文件」判定为冗余。
+ * 与 toDate 同属日期工具，合并到本文件。
+ */
+export function formatNodeDateRange(planDate: any, planEndDate?: any): string {
+  if (!planDate) return '';
+  const fmt = (d: any) => {
+    const date = toDate(d);
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  };
+  if (!planEndDate || planDate === planEndDate) {
+    return fmt(planDate);
+  }
+  return `${fmt(planDate)} ~ ${fmt(planEndDate)}`;
+}

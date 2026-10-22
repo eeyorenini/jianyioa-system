@@ -95,7 +95,7 @@
 <script setup>
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getImageUrl } from '@/utils/upload'
+import { getImageUrl } from '@/utils/api'
 
 const tab = ref('contract')
 const pendingId = ref(null)

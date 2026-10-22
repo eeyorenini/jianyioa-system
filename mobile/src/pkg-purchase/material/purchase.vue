@@ -111,7 +111,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import BottomPicker from "@/components/bottom-picker.vue";
-import { uploadImage, getImageUrl } from "@/utils/upload";
+import { uploadImage, getImageUrl } from "@/utils/api";
 
 const projects = ref([])
 const projectIndex = ref(-1)

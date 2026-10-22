@@ -1,1 +1,0 @@
-"use strict";const t=require("./date.js");exports.formatNodeDateRange=function(e,r){if(!e)return"";const n=e=>{const r=t.toDate(e);return`${r.getMonth()+1}月${r.getDate()}日`};return r&&e!==r?`${n(e)} ~ ${n(r)}`:n(e)};

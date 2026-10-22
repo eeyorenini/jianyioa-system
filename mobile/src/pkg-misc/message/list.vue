@@ -76,6 +76,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { toDate } from '@/utils/date'
+import { syncMessageBadge } from '@/utils/tabbar'
+import { authHeader } from '@/utils/permission'
 
 const messages = ref([])
 const loading = ref(false)
@@ -127,32 +129,10 @@ const typeConfig = (type) => {
 }
 
 // 跳转路由映射
-const getTargetPath = (msg) => {
-  const { type, source_id } = msg
-  if (!source_id) return null
-  
-  const pathMap = {
-    contract_created: `/pages/contract/detail?id=${source_id}`,
-    contract_updated: `/pages/contract/detail?id=${source_id}`,
-    contract_deleted: `/pages/contract/list`,
-    project_created: `/pages/projects/detail?id=${source_id}`,
-    project_status_changed: `/pages/projects/detail?id=${source_id}`,
-    project_progress: `/pages/projects/detail?id=${source_id}`,
-    node_status_changed: `/pages/projects/node?id=${source_id}`,
-    inspection_submit: `/pages/inspection/detail?id=${source_id}`,
-    acceptance_submit: `/pages/acceptance/list?id=${source_id}`,
-    dispatch_created: `/pages/dispatch/detail?id=${source_id}`,
-    dispatch_status_changed: `/pages/dispatch/detail?id=${source_id}`,
-    approval_submit: null, // 审批页面不存在
-    approval_result: null,
-    notice_published: `/pages/notices/notices?id=${source_id}`,
-    system_notice: null,
-    customer_follow: `/pages/customers/customers?id=${source_id}`,
-    invoice_created: `/pages/finance/list?id=${source_id}`,
-  }
-  
-  return pathMap[type] || null
-}
+// 2026-10-22 调整：本页不再自己做 type → 页面 的跳转（原来那份 pathMap 里的
+// /pages/contract/detail 等路径在小程序分包后已不存在，点了必 404）。
+// 现在统一「点消息 → 消息详情 → 详情页里的『查看XX』按钮 → 业务模块」，
+// 映射表收敛到 utils/pageUrl.ts，两端共用一份。
 
 function fetchMessages() {
   loading.value = true
@@ -231,14 +211,10 @@ function handleClick(msg) {
     setTimeout(() => refreshUnreadBadge(), 100)
   }
   
-  // 跳转
-  const path = getTargetPath(msg)
-  if (path) {
-    uni.navigateTo({ url: path })
-  } else {
-    // 没有跳转页面时，打开详情页
-    uni.navigateTo({ url: `/pages/message/detail?id=${msg.id}` })
-  }
+  // 跳转：一律进「消息详情」，详情页里再提供「查看XX」按钮跳对应业务模块。
+  // ⚠️ 必须带 src：列表是 messages + notifications 两表 UNION，两表 id 会撞号，
+  // 详情接口靠 src 判断该查哪张表（不带就会取到另一张表里同 id 的消息）。
+  uni.navigateTo({ url: `/pages/message/detail?id=${msg.id}&src=${msg.src || 'messages'}` })
 }
 
 // 左滑删除
@@ -267,16 +243,26 @@ function deleteMessage(msg) {
     title: '提示',
     content: '确定删除该消息？',
     success: (res) => {
-      if (res.confirm) {
-        uni.request({
-          url: `/api/notifications/${msg.id}`,
-          method: 'DELETE',
-          success: () => {
+      if (!res.confirm) return
+      // 2026-10-22 修复：原来调 DELETE /api/notifications/:id ——
+      // ① 那个接口只允许管理员，普通员工 403 ② 只删 notifications 表，messages 来的删不掉
+      // ③ success 回调不校验 statusCode，403 也当成功 → 界面删了、刷新又回来。
+      // 现在统一走 /api/messages/:id?src=xxx（本人可删自己的），并校验状态码。
+      uni.request({
+        url: `/api/messages/${msg.id}?src=${msg.src || 'messages'}`,
+        method: 'DELETE',
+        header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
+        success: (r) => {
+          if (r.statusCode >= 200 && r.statusCode < 300) {
             messages.value = messages.value.filter(m => m.id !== msg.id)
             uni.showToast({ title: '已删除', icon: 'success' })
+            refreshUnreadBadge()
+          } else {
+            uni.showToast({ title: (r.data && r.data.error) || '删除失败', icon: 'none' })
           }
-        })
-      }
+        },
+        fail: () => uni.showToast({ title: '网络异常，请重试', icon: 'none' })
+      })
     }
   })
 }
@@ -315,20 +301,25 @@ function markAllRead() {
 }
 
 const refreshUnreadBadge = () => {
-  // 2026-10-21 修复：原来这里是个空函数（注释说"不是 TabBar 页面不能调 setTabBarBadge"——
-  // 这个理解是错的，只要 index 在 tabBar 配置范围内，任何页面都能调）。
-  // 后果：用户从首页进消息页点"全部已读"，底部「我的」tab 上的原生徽标还留着旧数字；
-  // uni.setTabBarBadge 是原生持久化徽标，页面刷新、小程序重启都不会自动消失，
-  // 只有打开过「我的」页才会被 removeTabBarBadge 清掉 → 用户看到"刷新还是 48"。
-  // 现在已读后在这里立即同步一次。
-  // #ifdef MP-WEIXIN
-  const left = messages.value.filter(m => !m.is_read).length;
-  if (left > 0) {
-    uni.setTabBarBadge({ index: 4, text: left > 99 ? '99+' : String(left) });
-  } else {
-    uni.removeTabBarBadge({ index: 4 });
-  }
-  // #endif
+  // 2026-10-22 修复：本页在分包里（pkg-misc/message/list），**不是 tabBar 页面**，
+  // 直接调 uni.setTabBarBadge / uni.removeTabBarBadge 会抛：
+  //   MiniProgramError {"errMsg":"removeTabBarBadge:fail not TabBar page"}
+  // （2026-10-21 那条注释写的「任何页面都能调」是错的，微信只允许在 tabBar 页调。）
+  // 现在统一走 utils/tabbar 的 syncMessageBadge：非 tabBar 页自动跳过，
+  // 等用户回到首页 / 我的页时由它们的 onShow 用真实未读数补同步。
+  // 未读数取服务端口径（列表只加载了第一页，本地 count 不准）。
+  uni.request({
+    url: '/api/messages/unread-count',
+    header: authHeader(),
+    success: (res) => {
+      const count = Number((res.data && res.data.count) || 0)
+      syncMessageBadge(count)
+    },
+    fail: () => {
+      // 请求失败按本地已知未读兜底：宁可不显示，也不显示错数字
+      syncMessageBadge(messages.value.filter(m => !m.is_read).length)
+    }
+  })
 };
 </script>
 

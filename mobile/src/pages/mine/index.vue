@@ -99,6 +99,7 @@ import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
+import { syncMessageBadge } from "@/utils/tabbar";
 
 const userStore = useUserStore();
 // 版本号来自 package.json（vite define 注入），不再手写
@@ -123,16 +124,13 @@ const loadUnread = () => {
       // 首页0 项目1 巡检2 采购3 我的4。
       // ⚠️ 这里必须是 4：原代码按 6 项写成 5，小程序直接报
       //   "setTabBarBadge:fail tabbar item not found"
-      if (count > 0) {
-        uni.setTabBarBadge({ index: 4, text: count > 99 ? '99+' : String(count) });
-      } else {
-        uni.removeTabBarBadge({ index: 4 });
-      }
+      // 2026-10-22：统一走 utils/tabbar，内部会判断当前页是否 tabBar 页并静默 fail
+      syncMessageBadge(count);
     },
     fail: () => {
       // 请求失败（未登录/断网）也把徽标清掉，宁可不显示也不显示错数字
       unreadCount.value = 0;
-      uni.removeTabBarBadge({ index: 4 });
+      syncMessageBadge(0);
     }
   });
 };
