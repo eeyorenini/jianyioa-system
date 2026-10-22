@@ -133,6 +133,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import BottomPicker from '@/components/bottom-picker.vue'
+import { absAsset } from "@/utils/api";
 
 const selectedProject = ref(null)
 const selectedSupplier = ref(null)
@@ -330,11 +331,7 @@ const onUnitSelect = ({ item }) => {
   unitPicker.value.visible = false
 }
 
-const getImageUrl = (path) => {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
-}
+const getImageUrl = (path) => absAsset(path)
 
 const chooseImage = () => {
   if (uploadingImage.value) return

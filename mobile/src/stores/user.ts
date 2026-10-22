@@ -152,7 +152,17 @@ export const useUserStore = () => {
   // 不得一进小程序就强制跳登录页。故只有受保护页面才拦截。
   // 注意 pages/bind/index 属于登录流程本身（微信静默登录 + 手机号绑定），必须放行，
   // 否则冷启动直达时会被守卫踢回登录页。
-  const PUBLIC_PAGES = ["pages/landing/index", "pages/login/login", "pages/bind/index"];
+  // pages/showcase/index 是「样板工地」游客体验页：纯静态演示数据，不请求任何接口，
+  // 微信审核要求「先体验后授权」，未登录必须能进，否则引导页的「先逛逛」按钮会失效。
+  // pages/bind/scan 是员工扫码绑定落地页：进页面时还没有身份，绑定成功后才写 storage，
+  // 必须放行，否则会被守卫踢走，绑定码白扫。
+  const PUBLIC_PAGES = [
+    "pages/landing/index",
+    "pages/showcase/index",
+    "pages/login/login",
+    "pages/bind/index",
+    "pages/bind/scan",
+  ];
 
   /** 安全取页面栈（小程序 / H5 都可用，取不到返回空数组） */
   const getPages = (): any[] => {
@@ -221,6 +231,11 @@ export const useUserStore = () => {
     uni.removeStorageSync("userInfo");
     uni.removeStorageSync("impersonator");
     uni.removeStorageSync("impersonating");
+    // 身份类型与业主主账户 id 必须一起清：x-user-type 现在是后端区分「员工/业主」的依据，
+    // 残留会让下一次登录带着上一个身份的标识（业主登出后员工登录会被当成客户）。
+    uni.removeStorageSync("userType");
+    uni.removeStorageSync("masterCustomerId");
+    uni.removeStorageSync("masterPhone");
     uni.reLaunch({ url: "/pages/login/login" });
   };
 

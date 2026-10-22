@@ -80,6 +80,7 @@
 <script setup>
 import { ref, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 const userStore = useUserStore();
 
@@ -135,7 +136,7 @@ function getLogPhotos(log) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {

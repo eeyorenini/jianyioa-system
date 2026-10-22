@@ -1,0 +1,1 @@
+const e=["/pages/home/index","/pages/projects/list","/pages/inspection/list","/pages/purchase/list","/pages/mine/index"];function n(e){if(!e)return"";return String(e)}function i(n){if(!n)return!1;const i=String(n).split("?")[0];return-1!==e.indexOf(i)}export{i,n as r};

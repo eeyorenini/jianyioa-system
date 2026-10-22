@@ -674,7 +674,7 @@
             </view>
           </view>
           <view v-if="collectionModal.data.images" class="modal-images">
-            <image v-for="(img, idx) in JSON.parse(collectionModal.data.images)" :key="idx" :src="img" class="modal-img" mode="aspectFill" @click="previewImage(JSON.parse(collectionModal.data.images), idx)" />
+            <image v-for="(img, idx) in JSON.parse(collectionModal.data.images)" :key="idx" :src="absAsset(img)" class="modal-img" mode="aspectFill" @click="previewImage(JSON.parse(collectionModal.data.images), idx)" />
           </view>
           <view class="modal-actions">
             <button class="modal-btn cancel" @click="collectionModal.visible = false">取消</button>
@@ -712,7 +712,7 @@
             class="thumb-cell"
             @click="previewGalleryImage(idx, galleryPhotos)"
           >
-            <image class="thumb-img" :src="photo.url" mode="aspectFill" />
+            <image class="thumb-img" :src="absAsset(photo.url)" mode="aspectFill" />
             <view class="thumb-overlay">
               <text class="thumb-cat">{{ photo.category }}</text>
             </view>
@@ -801,6 +801,7 @@
 
 <script setup >
 import { ref, computed, onMounted, watch } from "vue";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 import { toDate } from "@/utils/date";
 import StatusWheel from "@/components/status-wheel.vue";
@@ -964,7 +965,7 @@ const loadGalleryStats = async () => {
         stats[item.category] = (stats[item.category] || 0) + 1;
       }
       galleryStats.value = stats;
-      galleryPhotos.value = res.data.list;
+      galleryPhotos.value = (res.data.list || []).map((x) => ({ ...x, url: absAsset(x.url) }));
     }
   } catch (e) { console.error('loadGalleryStats', e); }
 };
@@ -1166,7 +1167,7 @@ const getLogPhotos = (log) => {
     if (Array.isArray(parsed)) {
       console.log('返回图片数组，长度:', parsed.length);
       // 过滤掉空字符串或无效数据
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     console.log('不是数组，返回空');
     return [];
@@ -1192,7 +1193,7 @@ const getIssuePhotos = (issue) => {
     let photosStr = issue.images;
     let parsed = JSON.parse(photosStr);
     if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-    if (Array.isArray(parsed)) return parsed.filter(p => p && p.trim());
+    if (Array.isArray(parsed)) return parsed.filter(p => p && p.trim()).map(absAsset);
     return [];
   } catch (e) {
     return [];
@@ -1517,7 +1518,9 @@ const parseAttachments = (raw) => {
 // 打开单个附件
 const openOneAttachment = (url) => {
   if (!url) return;
-  const fullUrl = url.startsWith('http') ? url : (location.origin + url);
+  // 统一用 absAsset 补地址：H5 下原样返回相对路径，小程序 / App 补 https 绝对地址。
+  // 原先写 location.origin + url，App 端没有 location，会直接抛错。
+  const fullUrl = absAsset(url);
   const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(url);
 
   // #ifdef H5

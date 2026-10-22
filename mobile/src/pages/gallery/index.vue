@@ -61,6 +61,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 
 const projectId = ref('')
 const projectName = ref('')
@@ -103,7 +104,7 @@ function fetchGallery() {
       category: curCat.value === '全部' ? '' : curCat.value,
     },
     success: (res) => {
-      allPhotos.value = res.data?.list || []
+      allPhotos.value = (res.data?.list || []).map((x) => ({ ...x, url: absAsset(x.url) }))
     },
     complete: () => { loading.value = false }
   })

@@ -1,7 +1,11 @@
 /**
  * 统一图片上传工具
  * 所有页面图片上传都调用这里，name 字段固定为 'file'，方便后期统一替换后端接口
+ *
+ * 说明：`uni.uploadFile` 的 url 无需在此补绝对地址 —— App.vue 的 onLaunch 已统一拦截补齐。
  */
+
+import { absAsset } from './api';
 
 /** 单图上传（Promise 版本） */
 export function uploadImage(filePath: string): Promise<string> {
@@ -47,9 +51,22 @@ export function chooseAndUpload(count = 9): Promise<string[]> {
   });
 }
 
-/** 补全图片 http 地址 */
+/**
+ * 补全图片地址，供 <image :src> / previewImage 使用。
+ *
+ * 统一规则（两端必须一致）：
+ *   1. 先补前导斜杠，保证 `/uploads/x.jpg` 形态
+ *   2. 再交给 absAsset 按平台补域名：
+ *      H5 → 原样返回相对路径；小程序 / App → 补 https 绝对地址
+ *
+ * 小程序和 App 里 <image src="/uploads/x.jpg"> 无法解析，必须是绝对地址；
+ * H5 同源则保持相对路径最省事。差异全部收敛在 absAsset 的条件编译里。
+ */
 export function getImageUrl(path: string): string {
   if (!path) return '';
-  if (path.startsWith('http')) return path;
-  return path.startsWith('/') ? path : '/' + path;
+  const p =
+    path.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')
+      ? path
+      : '/' + path;
+  return absAsset(p);
 }

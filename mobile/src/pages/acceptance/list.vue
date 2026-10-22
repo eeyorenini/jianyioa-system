@@ -72,6 +72,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import { guardTab } from "@/utils/permission";
 import { pickProject } from "@/utils/projectPicker";
 
@@ -99,7 +100,7 @@ function getPhotos(item) {
     let p = item.attachment;
     if (typeof p === 'string') p = JSON.parse(p);
     if (typeof p === 'string') p = JSON.parse(p);
-    if (Array.isArray(p)) return p.filter((x) => x && String(x).trim());
+    if (Array.isArray(p)) return p.filter((x) => x && String(x).trim()).map(absAsset);
     return [];
   } catch { return []; }
 }

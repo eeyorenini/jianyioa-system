@@ -126,6 +126,57 @@ export async function bindOpenidQuietly(phone: string): Promise<void> {
   }
 }
 
+/**
+ * 员工扫码绑定：用管理员生成的 ticket 完成绑定。
+ * ⚠️ 传 code 不传 openid —— openid 一律由服务端用 code 换，前端不参与身份判定。
+ * @param ticket 小程序码 scene 里带的一次性票据
+ */
+export async function miniBindByTicket(ticket: string): Promise<any> {
+  // #ifdef MP-WEIXIN
+  try {
+    const code = await wxCode();
+    if (!code) return { success: false, message: "微信登录失败，请重试" };
+    const res: any = await uni.request({
+      url: "/api/wechat/mini-bind-by-ticket",
+      method: "POST",
+      data: { code, ticket },
+    });
+    return (res && res.data) || { success: false, message: "网络异常，请重试" };
+  } catch (e) {
+    console.warn("[wechat] 扫码绑定失败:", (e && (e as any).message) || e);
+    return { success: false, message: "网络异常，请重试" };
+  }
+  // #endif
+  // #ifndef MP-WEIXIN
+  return { success: false, message: "请在微信小程序中扫码绑定" };
+  // #endif
+}
+
+/**
+ * 保存员工身份到本地（与 login.vue 的员工密码登录保持一致）。
+ * 注意：permissions 必须一起写，否则首页快捷入口会因权限为空全部隐藏。
+ */
+export function saveEmployeeIdentity(emp: any): void {
+  if (!emp || !emp.id) return;
+  const userInfo = {
+    id: emp.id,
+    username: emp.username || "",
+    name: emp.name || "",
+    role_name: emp.role_name || "",
+    role_code: emp.role_code || "",
+    position: emp.position || "",
+    phone: emp.phone || "",
+    permissions: Array.isArray(emp.permissions) ? emp.permissions : [],
+    is_admin: !!emp.is_admin,
+  };
+  uni.setStorageSync("userInfo", userInfo);
+  uni.setStorageSync("token", "logged-in");
+  uni.setStorageSync("userType", "employee");
+  // 员工身份下不能残留业主的家庭成员标记，否则查项目会串号
+  uni.removeStorageSync("masterCustomerId");
+  uni.removeStorageSync("masterPhone");
+}
+
 /** 保存客户身份到本地（与 login.vue 的客户登录保持一致） */
 export function saveCustomerIdentity(data: any): void {
   if (!data || !data.customer) return;

@@ -88,6 +88,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+import { resolvePageUrl, isTabBarPage } from '@/utils/pageUrl'
 
 const loading = ref(false)
 const refreshing = ref(false)
@@ -154,8 +155,17 @@ const onRefresh = () => {
 }
 
 const openItem = (item) => {
-  if (!item || !item.url) return
-  uni.navigateTo({ url: item.url, fail: () => {
+  // 后端返回的 url 统一过 resolvePageUrl（小程序端映射到分包路径，H5/App 原样）
+  const target = resolvePageUrl(item && item.url)
+  if (!target) {
+    uni.showToast({ title: '该事项暂不支持跳转', icon: 'none' })
+    return
+  }
+  if (isTabBarPage(target)) {
+    uni.switchTab({ url: target.split('?')[0] })
+    return
+  }
+  uni.navigateTo({ url: target, fail: () => {
     uni.showToast({ title: '页面打开失败', icon: 'none' })
   } })
 }

@@ -181,7 +181,7 @@
             <text class="form-label">报销凭证 *</text>
             <view class="img-uploader">
               <view v-for="(img, idx) in reimburseForm.images" :key="idx" class="img-thumb-wrap">
-                <image class="img-thumb" :src="img" mode="aspectFill" @click="previewReimburseImage(img)" />
+                <image class="img-thumb" :src="absAsset(img)" mode="aspectFill" @click="previewReimburseImage(img)" />
                 <view class="img-remove" @click="removeReimburseImage(idx)">×</view>
               </view>
               <view v-if="reimburseForm.images.length < 9" class="img-add" @click="chooseReimburseImages">
@@ -204,6 +204,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { guardTab } from '@/utils/permission'
+import { absAsset } from "@/utils/api";
 
 const userStore = useUserStore()
 const activeTab = ref('my')
@@ -315,11 +316,7 @@ const reimburseImagesOf = (item) => {
   return getImages(item.reimbursement.images)
 }
 
-const getImgUrl = (path) => {
-  if (!path) return ''
-  if (path.startsWith('http')) return path
-  return path
-}
+const getImgUrl = (path) => absAsset(path)
 
 const previewImage = (current, list) => {
   uni.previewImage({ current, urls: list })

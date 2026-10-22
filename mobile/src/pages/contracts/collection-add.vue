@@ -48,7 +48,7 @@
         <view class="image-upload-wrap">
           <view class="image-list">
             <view v-for="(img, idx) in images" :key="img.id || idx" class="image-item">
-              <image class="image-thumb" :src="img.url || img" mode="aspectFill" />
+              <image class="image-thumb" :src="absAsset(img.url || img)" mode="aspectFill" />
               <text class="image-remove" @click="removeImage(idx)">✕</text>
             </view>
             <view v-if="images.length < 3 && !uploading" class="image-add" @click="chooseImages">
@@ -84,6 +84,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 import BottomPicker from '@/components/bottom-picker.vue'
 
 const projectId = ref('')

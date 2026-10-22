@@ -84,6 +84,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { absAsset } from "@/utils/api";
 import { toDate } from '@/utils/date'
 
 const log = ref(null)
@@ -126,7 +127,7 @@ function getPhotos(log) {
       parsed = JSON.parse(parsed)
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim())
+      return parsed.filter(p => p && p.trim()).map(absAsset)
     }
     return []
   } catch (e) {

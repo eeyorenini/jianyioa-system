@@ -318,6 +318,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import customerTabbar from "@/components/customer-tabbar.vue";
+import { absAsset } from "@/utils/api";
 import customerEmptyState from "@/components/customer-empty-state.vue";
 
 const loading = ref(true);
@@ -423,10 +424,6 @@ const loadProject = async () => {
       if (customerId) {
         const res = await uni.request({
           url: `/api/projects?customer_id=${customerId}`,
-          header: {
-            'x-user-role': 'admin',
-            'x-user-id': '1'
-          }
         });
         
         if (Array.isArray(res.data)) {
@@ -549,7 +546,7 @@ function getLogPhotos(log) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {
@@ -573,7 +570,7 @@ function getIssuePhotos(issue) {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {

@@ -78,6 +78,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 
 const record = ref(null);
 const photos = ref([]);
@@ -100,7 +101,7 @@ const parsePhotos = (att) => {
     let p = att;
     if (typeof p === 'string') p = JSON.parse(p);
     if (typeof p === 'string') p = JSON.parse(p);
-    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()) : [];
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()).map(absAsset) : [];
   } catch { return []; }
 };
 

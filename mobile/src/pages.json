@@ -8,6 +8,13 @@
       }
     },
     {
+      "path": "pages/showcase/index",
+      "style": {
+        "navigationBarTitleText": "样板工地",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/login/login",
       "style": {
         "navigationBarTitleText": "登录",
@@ -25,6 +32,13 @@
       "path": "pages/bind/phone",
       "style": {
         "navigationBarTitleText": "绑定手机号",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/bind/scan",
+      "style": {
+        "navigationBarTitleText": "绑定微信",
         "navigationStyle": "custom"
       }
     },

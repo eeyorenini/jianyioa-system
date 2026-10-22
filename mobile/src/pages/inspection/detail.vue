@@ -131,6 +131,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { toDate } from '@/utils/date'
+import { absAsset } from "@/utils/api";
 
 const loading = ref(true)
 const detail = ref(null)
@@ -260,7 +261,7 @@ function getPhotos(item) {
     let s = item.images
     let p = JSON.parse(s)
     if (typeof p === 'string') p = JSON.parse(p)
-    if (Array.isArray(p)) return p.filter(x => x && x.trim())
+    if (Array.isArray(p)) return p.filter(x => x && x.trim()).map(absAsset)
     return []
   } catch { return [] }
 }

@@ -56,7 +56,9 @@
       <view class="quick-entry-section">
         <view class="section-title">快捷操作</view>
         <view class="quick-grid">
-          <view class="quick-item" v-for="item in quickEntries" :key="item.icon" @click="handleQuick(item)">
+          <!-- key 必须唯一：原先用 item.icon，而「公司财务」和「催收记录」都是 💰，
+               导致微信报 `Do not set same key in wx:key`。label 在本列表里唯一。 -->
+          <view class="quick-item" v-for="item in quickEntries" :key="item.label" @click="handleQuick(item)">
             <view class="quick-icon" :style="{ background: item.bg }">
               <text>{{ item.icon }}</text>
             </view>
@@ -117,7 +119,9 @@
         <text>⚠️ 逾期预警</text>
       </view>
       <view class="warning-list">
-        <view class="warning-item" v-for="w in warnings" :key="w.id" @click="goProject(w.id)">
+        <!-- ⚠️ key 用后端返回数据里预生成的 _key（见 loadStats 里 warnings 的 map），
+             不能只用 w.id：同一项目多个逾期节点会导致重复 key。 -->
+        <view class="warning-item" v-for="w in warnings" :key="w._key" @click="goProject(w.id)">
           <view class="warning-info">
             <text class="warning-name">{{ w.name }}</text>
             <text class="warning-desc">{{ w.node }} 已逾期 {{ w.days }} 天</text>
@@ -185,6 +189,7 @@ import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
+import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
 
 const userStore = useUserStore();
 const imp = userStore.imp;
@@ -292,7 +297,9 @@ const loadHomeStats = async () => {
     // 1) stats
     if (d.home && d.home.stats) stats.value = { ...stats.value, ...d.home.stats };
     // 2) warnings（逾期预警）
-    if (d.home && Array.isArray(d.home.warnings)) warnings.value = d.home.warnings;
+    if (d.home && Array.isArray(d.home.warnings)) {
+      warnings.value = d.home.warnings.map((w, i) => ({ ...w, _key: `${w.id}-${i}` }));
+    }
     // 3) 待办列表：合并审批流 groups + 项目相关 home.sections
     const merged = [];
     // 审批流按权限：财务优先报销/回执；经理/设计师：采购审批；所有人：通用审批
@@ -586,10 +593,11 @@ const goFinance = () => {
 };
 
 const goTodo = (todo) => {
-  if (todo.type === 'node') {
-    uni.navigateTo({ url: `/pages/projects/detail?id=${todo.id}` });
-  } else if (todo.type === 'inspect') {
-    uni.navigateTo({ url: '/pages/inspection/detail' });
+  if (todo.type === 'node' || todo.type === 'stage_due') {
+    const pid = todo.project_id || todo.id;
+    uni.navigateTo({ url: `/pages/projects/detail?id=${pid}` });
+  } else if (todo.type === 'inspect' || todo.type === 'inspect_rectify') {
+    uni.navigateTo({ url: `/pages/inspection/detail?id=${todo.id}` });
   }
 };
 
@@ -598,24 +606,24 @@ const goTodo = (todo) => {
 // uni-h5（hash 路由 + /m/ base）对 navigateTo 的 params 字段处理不可靠，
 // 单独传 params 会导致 onLoad(options).id 为 undefined，
 // 进而 /api/purchase-requests/undefined 返回 404 显示「加载失败」。
+// 2026-10-22 修复：统一过 resolvePageUrl 归一化（小程序端会把 /pages/xxx 映射到分包路径，
+// H5 端无分包，条件编译后原样返回）。
 const goTodoUrl = (todo) => {
-  const u = todo && todo.url
-  if (u) {
-    if (u.startsWith('/pages/')) {
-      const [path] = u.split('?')
-      if (path === '/pages/purchase/list' || path === '/pages/projects/list' || path === '/pages/inspection/list') {
-        // tabBar 页面：switchTab 不带 query，改用 redirectTo 保留参数；保持简单直接 switchTab
-        uni.switchTab({ url: path })
-      } else {
-        uni.navigateTo({ url: u, success: () => {}, fail: () => { uni.showToast({ title: '页面不存在', icon: 'none' }) } })
-      }
-    } else {
-      uni.navigateTo({ url: u })
-    }
+  const target = resolvePageUrl(todo && todo.url)
+  if (!target) {
+    // 兜底：没有 url 时按类型猜测（旧数据兼容）
+    goTodo(todo)
     return
   }
-  // 兜底：没有 url 时按类型猜测（旧数据兼容）
-  goTodo(todo)
+  if (isTabBarPage(target)) {
+    // tabBar 页面只能 switchTab，且不支持 query 参数
+    uni.switchTab({ url: target.split('?')[0] })
+    return
+  }
+  uni.navigateTo({
+    url: target,
+    fail: () => { uni.showToast({ title: '页面打开失败', icon: 'none' }) }
+  })
 };
 
 // 待办中心：汇总各模块待我处理的事项（按权限聚合）

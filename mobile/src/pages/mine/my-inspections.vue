@@ -111,7 +111,7 @@
           <view class="photo-label">巡检照片</view>
           <view class="photo-grid">
             <view class="photo-item" v-for="(img, idx) in editPhotos" :key="idx">
-              <image class="photo-img" :src="img" mode="aspectFill" />
+              <image class="photo-img" :src="absAsset(img)" mode="aspectFill" />
               <view class="photo-del" @click="removePhoto(idx)">✕</view>
             </view>
             <view class="photo-add" @click="addPhoto">
@@ -133,6 +133,7 @@
 
 <script setup>
 import { ref, onMounted } from "vue";
+import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
 import { toDate } from "@/utils/date";
 
@@ -179,7 +180,7 @@ const getPhotos = (item) => {
       parsed = JSON.parse(parsed);
     }
     if (Array.isArray(parsed)) {
-      return parsed.filter(p => p && p.trim());
+      return parsed.filter(p => p && p.trim()).map(absAsset);
     }
     return [];
   } catch (e) {
