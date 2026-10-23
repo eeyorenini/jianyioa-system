@@ -1,1 +1,0 @@
-<view class="grid-menu data-v-2e126c56"><view class="menu-grid data-v-2e126c56"><view wx:for="{{a}}" wx:for-item="item" wx:key="c" class="menu-item data-v-2e126c56" bindtap="{{item.d}}"><view class="menu-icon data-v-2e126c56">{{item.a}}</view><text class="menu-text data-v-2e126c56">{{item.b}}</text></view></view></view>

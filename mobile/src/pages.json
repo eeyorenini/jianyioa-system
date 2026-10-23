@@ -125,6 +125,20 @@
         "navigationBarTitleText": "我的",
         "navigationStyle": "custom"
       }
+    },
+    {
+      "path": "pages/agreement/service",
+      "style": {
+        "navigationBarTitleText": "用户服务协议",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/agreement/privacy",
+      "style": {
+        "navigationBarTitleText": "隐私政策",
+        "navigationStyle": "custom"
+      }
     }
   ],
   "globalStyle": {

@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "采购申请",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "bottom-picker": "../../components/bottom-picker"
-  }
-}

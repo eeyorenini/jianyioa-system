@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "首页",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "bottom-picker": "../../components/bottom-picker"
-  }
-}

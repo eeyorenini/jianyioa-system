@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "消息通知",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "customer-tabbar": "../../components/customer-tabbar"
-  }
-}

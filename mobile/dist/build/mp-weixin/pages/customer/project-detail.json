@@ -1,8 +1,0 @@
-{
-  "navigationBarTitleText": "项目信息",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "customer-tabbar": "../../components/customer-tabbar",
-    "customer-empty-state": "../../components/customer-empty-state"
-  }
-}

@@ -98,7 +98,8 @@ import { ref, computed, onMounted } from "vue";
 import { onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
-import { MY_WORK_ITEMS, TAB_BAR_PERMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
+import { MY_WORK_ITEMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
+import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
 import { syncMessageBadge } from "@/utils/tabbar";
 
 const userStore = useUserStore();
@@ -144,7 +145,12 @@ onMounted(syncUser);
 onShow(syncUser);
 
 const goMessage = () => {
-  uni.navigateTo({ url: '/pages/message/list' });
+  // 过一层 resolvePageUrl：小程序端该页在 pkg-misc 分包，构建期虽然会改写字面量，
+  // 但运行期归一化更保险（导出 App / H5 两端一致）
+  uni.navigateTo({
+    url: resolvePageUrl('/pages/message/list'),
+    fail: () => uni.showToast({ title: '页面打开失败', icon: 'none' })
+  });
 };
 
 // 「我的工作」按权限过滤（配置集中在 utils/permission.ts，不再硬编码角色名）
@@ -157,15 +163,20 @@ const roleBadgeClass = computed(() => roleClass(userStore.state.role_code, roleN
 const canSeeReport = computed(() => userStore.canSee('report:read'));
 
 const goPage = (url) => {
-  if (url.startsWith('/pages')) {
-    // tabBar 页面必须用 switchTab，否则 navigateTo 会静默失败
-    // 2026-10-12 修复：原硬编码只列 3 个 tabBar 页 → projects/inspection/purchase 三页跳转失效
-    const tabbarPages = TAB_BAR_PERMS.map((t) => t.path)
-    if (tabbarPages.some(p => url === p || url.startsWith(p + '?'))) {
-      uni.switchTab({ url })
-    } else {
-      uni.navigateTo({ url })
-    }
+  if (!url) return;
+  // ⚠️ 2026-10-23 修复「我的」里点待办中心/消息通知没任何反应：
+  // 原来用 `url.startsWith('/pages')` 做前置判断，但小程序构建期 vite 的
+  // subpackagePaths 插件会把源码里的 '/pages/xxx' 字面量改写成 '/pkg-xxx/xxx'，
+  // 运行时这个判断恒为 false → 函数体整段跳过 → 点击静默无反应。
+  // 现在统一走 utils/pageUrl：先归一化路径，再按「tabBar 页 / 普通页」分流，失败给提示。
+  const target = url.startsWith('/pages/') ? resolvePageUrl(url) : url;
+  const path = target.split('?')[0];
+  const fail = () => uni.showToast({ title: '页面打开失败', icon: 'none' });
+  if (isTabBarPage(path)) {
+    // tabBar 页面只能用 switchTab，且不能带 query
+    uni.switchTab({ url: path, fail });
+  } else {
+    uni.navigateTo({ url: target, fail });
   }
 };
 

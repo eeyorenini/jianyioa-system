@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "新建日志",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "voice-input": "../../components/voice-input"
-  }
-}

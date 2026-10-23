@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "家庭成员",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "customer-tabbar": "../../components/customer-tabbar"
-  }
-}
