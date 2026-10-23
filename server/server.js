@@ -7685,9 +7685,13 @@ app.delete('/api/cost-records/:id', async (req, res) => {
 // 整改问题列表
 app.get('/api/rectification-issues', async (req, res) => {
   const { project_id } = req.query;
-  let sql = `SELECT ri.*, e.name as creator_name
+  // 2026-10-23：project_name 是提交时快照，历史上存在空串（移动端提交页取不到项目名），
+  // 统一用项目表当前名称兜底，避免各端列表/详情显示空白。
+  let sql = `SELECT ri.*, COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name,
+    e.name as creator_name
     FROM rectification_issues ri
-    LEFT JOIN employees e ON ri.creator_id = e.id`;
+    LEFT JOIN employees e ON ri.creator_id = e.id
+    LEFT JOIN projects p ON p.id = ri.project_id`;
   const params = [];
   if (project_id) {
     sql += ' WHERE ri.project_id = ?';
@@ -7703,7 +7707,11 @@ app.get('/api/rectification-issues/:id', async (req, res) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ error: '未登录' });
-    const stmt = db.prepare('SELECT * FROM rectification_issues WHERE id = ?');
+    // 2026-10-23：同上，project_name 空串时用项目表名称兜底
+    const stmt = db.prepare(`SELECT ri.*, COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name
+      FROM rectification_issues ri
+      LEFT JOIN projects p ON p.id = ri.project_id
+      WHERE ri.id = ?`);
     const row = await stmt.get(req.params.id);
     if (!row) return res.status(404).json({ error: '记录不存在' });
     res.json(row);
@@ -7717,6 +7725,16 @@ app.post('/api/rectification-issues', async (req, res) => {
   const userId = getUserId(req);
   const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description } = req.body;
   const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  // 2026-10-23 修复：移动端巡检提交页只带了 project_id，project_name 取不到就是空串，
+  // 导致整改表落库后项目名为空 → 待办中心/巡检列表副标题显示空白。
+  // 服务端按 project_id 反查项目名兜底，不依赖客户端是否传对。
+  let finalProjectName = project_name || '';
+  if (!finalProjectName && project_id) {
+    try {
+      const p = await db.prepare('SELECT name FROM projects WHERE id = ?').get(project_id);
+      if (p && p.name) finalProjectName = p.name;
+    } catch (_) { /* 项目查不到就保持空，不影响主流程 */ }
+  }
   // 关键修复：兼容客户端两种提交方式——
   //   老客户端：images 已是 JSON 字符串（["url1","url2"]），服务端不应再 stringify 一次
   //   新客户端：images 是数组
@@ -7734,17 +7752,17 @@ app.post('/api/rectification-issues', async (req, res) => {
     (inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description, creator_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const result = await stmt.run(
-    inspection_id, project_id, project_name,
+    inspection_id, project_id, finalProjectName,
     issue_desc || title || '', priority || '普通', status || '待处理',
     responsible_id, responsible_name, due_date,
     normalizedImages, remark || description || '',
     title || issue_desc || '', category || '', location || '', level || '', description || '', userId, nowStr
   );
-  await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, project_name, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
+  await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, finalProjectName, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
 
   // 发送站内通知：项目经理/监理/管理员/客户（巡检整改类维持全关联人）
   await notifyProject('inspection_submit', project_id,
-    `【新巡检问题】${project_name || '项目'}`,
+    `【新巡检问题】${finalProjectName || '项目'}`,
     `问题：${(issue_desc || title || '').slice(0, 100)}`,
     result.lastInsertRowid, 'rectification_issue'
   );
@@ -11928,10 +11946,17 @@ app.get('/api/todo/center', async (req, res) => {
     // due_date 字段这张表本来就有，无需 ALTER。
     let rectify_alerts = [];
     {
-      const sc = buildScope('inspection');
+      const sc = buildScope('inspection', 'ri.project_id');
+      // 2026-10-23 修复：rectification_issues.project_name 是"提交时快照"，
+      // 移动端巡检提交页取不到项目名时会写空串（实测 2026-10-22 的 10 条全是 ''），
+      // 待办中心列表的副标题就读成 '—'，看起来像"列表没有信息"。
+      // 这里 LEFT JOIN projects 兜底：字段为空时用项目表当前名称。
       const [rows] = await pool.query(
-        `SELECT ri.id, ri.project_id, ri.project_name, ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status
+        `SELECT ri.id, ri.project_id,
+                COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name,
+                ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status
          FROM rectification_issues ri
+         LEFT JOIN projects p ON p.id = ri.project_id
          WHERE ri.status IN ('待处理','待整改','整改中')${sc.sql}
          ORDER BY ri.created_at DESC LIMIT 10`,
         sc.params
