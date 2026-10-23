@@ -10,8 +10,8 @@
     <!-- 筛选 -->
     <view class="filter-row">
       <view class="filter-tag" :class="{ active: curStatus === '' }" @click="curStatus = ''; loadData()">全部</view>
-      <view class="filter-tag danger" :class="{ active: curStatus === '待整改' }" @click="curStatus = '待整改'; loadData()">待整改</view>
-      <view class="filter-tag warning" :class="{ active: curStatus === '整改中' }" @click="curStatus = '整改中'; loadData()">整改中</view>
+      <view class="filter-tag danger" :class="{ active: curStatus === '待处理' }" @click="curStatus = '待处理'; loadData()">待处理</view>
+      <view class="filter-tag warning" :class="{ active: curStatus === '处理中' }" @click="curStatus = '处理中'; loadData()">处理中</view>
       <view class="filter-tag success" :class="{ active: curStatus === '已完成' }" @click="curStatus = '已完成'; loadData()">已完成</view>
     </view>
 
@@ -153,14 +153,15 @@ function previewPhoto(item, idx) {
   uni.previewImage({ urls: photos, current: photos[idx] });
 }
 
-// 获取状态文字
+// 获取状态文字（口径与业务流程统一：待处理 → 处理中 → 已完成；
+// 兼容历史脏值 pending/fixing/completed 和旧词「待整改/整改中」）
 function getStatusText(status) {
   if (!status) return '待处理';
   const s = String(status).toLowerCase();
-  if (s.includes('待整改') || s.includes('待处理') || s === 'pending') return '待整改';
+  if (s.includes('待整改') || s.includes('待处理') || s === 'pending') return '待处理';
+  if (s.includes('整改中') || s.includes('处理中') || s === 'fixing') return '处理中';
   if (s.includes('已完成') || s === 'completed') return '已完成';
   if (s.includes('已验收') || s === 'verified') return '已验收';
-  if (s.includes('整改中') || s === 'fixing') return '整改中';
   return status;
 }
 

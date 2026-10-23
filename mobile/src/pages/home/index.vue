@@ -427,8 +427,11 @@ const handleQuick = (item) => {
       uni.navigateTo({ url: `/pages/dispatch/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'newMaterial': openMaterialPicker(); break;
-    case 'newAccept': openProjectPicker('选择项目后查看验收', (p) => {
+    case 'newAccept': openProjectPicker('选择项目后查看进度验收', (p) => {
       uni.navigateTo({ url: `/pages/acceptance/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    }); break;
+    case 'newMatAccept': openProjectPicker('选择项目后查看主材验收', (p) => {
+      uni.navigateTo({ url: `/pages/material-accept/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'newChange': openProjectPicker('选择项目后添加增减项', (p) => {
       uni.navigateTo({ url: `/pages/contracts/contract-change-add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
@@ -493,9 +496,11 @@ const onProjectPickerCancel = () => {
 };
 
 // ====== 材料管理弹窗 ======
+// v2.4.1：原「到货验收」跳 pages/material/inbound（后端无 /api/material/inbound，必 404），
+// 已换成「材料验收」——工长逐项验收进场材料，走 material_acceptance 模块。
 const materialActionItems = [
   { name: '采购申请', desc: '向供应商提交材料采购', icon: '🛒', value: 'purchase' },
-  { name: '到货验收', desc: '验收已到货的材料', icon: '📦', value: 'inbound' },
+  { name: '材料验收', desc: '验收本批进场材料的数量与质量', icon: '✅', value: 'mat_accept' },
   { name: '采购申请列表', desc: '查看所有采购申请', icon: '📋', value: 'purchase_list' },
 ];
 
@@ -535,8 +540,11 @@ const onMaterialSelect = ({ item }) => {
     // 关键修复：/pages/purchase/list 是 tabBar 页，必须用 switchTab；
     // navigateTo 跳 tabBar 会被 uni-app 拒绝（console: navigateTo:fail can not navigateTo a tabbar page）。
     uni.switchTab({ url: '/pages/purchase/list' });
-  } else if (item.value === 'inbound') {
-    uni.navigateTo({ url: '/pages/material/inbound' });
+  } else if (item.value === 'mat_accept') {
+    // 从「主材管理」弹窗进来也要先选项目（与首页快捷入口同口径）
+    openProjectPicker('选择项目后查看主材验收', (p) => {
+      uni.navigateTo({ url: `/pages/material-accept/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    });
   }
 };
 

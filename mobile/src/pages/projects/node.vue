@@ -223,19 +223,23 @@ const changeStatus = async (newStatus) => {
       uni.showToast({ title: '已保存', icon: 'success' });
     }
 
-    // 写项目日志
-    const actionMap = { pending: 'node_pending', in_progress: 'node_started', completed: 'node_completed', skipped: 'node_skipped' };
-    await uni.request({
-      url: "/api/project-logs",
-      method: "POST",
-      header: { Authorization: token },
-      data: {
-        project_id: projectId.value,
-        stage_id: nodeId.value,
-        action_type: actionMap[newStatus] || 'node_updated',
-        description: `节点「${node.value.node_name || node.value.stage_name}」状态变更为「${statusLabel[newStatus]}」${confirm === 'sms' ? '（已发短信）' : ''}`,
-      },
-    });
+    // 写项目日志（后端按 action_type=node_* 判定，不再额外推「项目新进展」消息）
+    try {
+      const actionMap = { pending: 'node_pending', in_progress: 'node_started', completed: 'node_completed', skipped: 'node_skipped' };
+      await uni.request({
+        url: "/api/project-logs",
+        method: "POST",
+        header: { Authorization: token },
+        data: {
+          project_id: projectId.value,
+          stage_id: nodeId.value,
+          action_type: actionMap[newStatus] || 'node_updated',
+          content: `节点「${node.value.node_name || node.value.stage_name}」状态变更为「${statusLabel[newStatus]}」${confirm === 'sms' ? '（已发短信）' : ''}`,
+        },
+      });
+    } catch (logErr) {
+      // 日志写失败不影响状态变更结果，静默跳过
+    }
 
     await fetchData();
   } catch (e) {

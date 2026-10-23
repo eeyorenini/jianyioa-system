@@ -70,6 +70,8 @@ const typeConfig = computed(() => {
     project_progress: { icon: '📊', color: '#909399', text: '项目进展' },
     inspection_submit: { icon: '🔍', color: '#F56C6C', text: '巡检报告' },
     acceptance_submit: { icon: '✅', color: '#409EFF', text: '验收提交' },
+    // v2.4.1 主材验收
+    material_acceptance_submit: { icon: '📦', color: '#E6A23C', text: '材料验收' },
     dispatch_created: { icon: '📋', color: '#E6A23C', text: '派工通知' },
     dispatch_status_changed: { icon: '🔔', color: '#E6A23C', text: '派工状态' },
     approval_submit: { icon: '⏳', color: '#F56C6C', text: '待审批' },
@@ -128,19 +130,52 @@ onMounted(() => {
   const src = options.src || ''
 
   if (id) {
+    // 1) 列表页已经把整条消息塞进缓存了（title/content/type/source_id/src 全在，
+    //    与详情接口返回字段完全一致），缓存命中就直接渲染、**一次请求都不发**。
+    //    2026-10-23：线上后端 /api/messages/:id 仍是旧版（只查 messages 表），
+    //    notifications 来的消息点进去必 404，控制台红字一片。数据本来就在手上，
+    //    不请求就不会有 404，比"请求失败再兜底"干净。
+    let cached = null
+    try { cached = uni.getStorageSync('message_detail_cache') } catch (e) {}
+    if (cached && String(cached.id) === String(id) && (!src || !cached.src || cached.src === src)) {
+      message.value = cached
+      loading.value = false
+      return
+    }
+
+    // 2) 没缓存才请求（直接打开链接、小程序冷启动直达详情等场景）；
+    //    详情接口拿不到再退一步从列表接口按 id 捞（兼容线上旧后端）。
     loading.value = true
     uni.request({
       url: `/api/messages/${id}${src ? '?src=' + src : ''}`,
       header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
       success: (res) => {
-        if (res.data && typeof res.data === 'object') {
+        // 只有真拿到消息才覆盖缓存；404/500 一律保留缓存内容
+        if (res.statusCode === 200 && res.data && typeof res.data === 'object' && res.data.id) {
           message.value = res.data.data || res.data
         }
       },
-      complete: () => { loading.value = false }
+      complete: () => {
+        loading.value = false
+        if (!message.value.id) loadFromList(id, src)
+      }
     })
   }
 })
+
+// 详情接口不可用时的兜底：从列表接口（第一页 100 条）里按 id + src 找
+function loadFromList(id, src) {
+  uni.request({
+    url: '/api/messages',
+    data: { page: 1, pageSize: 100 },
+    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
+    success: (r) => {
+      const list = r.data?.list || (Array.isArray(r.data) ? r.data : [])
+      const hit = list.find(x => String(x.id) === String(id) && (!src || !x.src || x.src === src))
+      if (hit) message.value = hit
+    }
+  })
+}
 </script>
 
 <style lang="scss" scoped>

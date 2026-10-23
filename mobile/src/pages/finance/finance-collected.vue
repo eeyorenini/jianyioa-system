@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">实收统计</text>
       <text class="nav-btn"></text>
@@ -84,7 +84,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 
 const projectId = ref('')
 const projectName = ref('')
@@ -94,19 +95,15 @@ const allRecords = ref([])
 const pendingList = computed(() => allRecords.value.filter(r => r.status === 'pending'))
 const confirmedList = computed(() => allRecords.value.filter(r => r.status === 'confirmed'))
 
-onMounted(() => {
-  const pages = getCurrentPages()
-  const current = pages[pages.length - 1]
-  const options = current.options || {}
-
-  if (options.projectId) {
-    projectId.value = options.projectId
+// ⚠️ 必须用 onLoad 取参：H5 首屏 mounted 阶段页面栈还没就绪，
+//    getCurrentPages().options 会拿到空对象 → projectId 为空 → 列表永远空。
+onLoad((options) => {
+  const opts = options || {}
+  projectId.value = opts.projectId || opts.project_id || ''
+  if (opts.projectName) {
+    try { projectName.value = decodeURIComponent(opts.projectName) } catch (e) { projectName.value = opts.projectName }
   }
-  if (options.projectName) {
-    projectName.value = decodeURIComponent(options.projectName)
-  }
-
-  loadRecords()
+  if (projectId.value) loadRecords()
 })
 
 function loadRecords() {

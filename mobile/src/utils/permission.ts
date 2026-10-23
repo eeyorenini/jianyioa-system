@@ -114,7 +114,10 @@ export const HOME_QUICK_ENTRIES: EntryItem[] = [
   { label: "派工管理", icon: "👷", bg: "#FEF3C7", action: "newDispatch", perm: "dispatch:write" },
   // v2.3.12：主材入口原挂 purchase:read（与"采购"混用），改挂主材自己的 material 模块
   { label: "主材管理", icon: "🧱", bg: "#EDE9FE", action: "newMaterial", perm: "material:read" },
-  { label: "验收管理", icon: "✅", bg: "#D1FAE5", action: "newAccept", perm: "acceptance:read" },
+  // v2.4.1：原「验收管理」改名「进度验收」（节点/隐蔽/竣工等工序验收）；
+  // 材料进场验收独立成「主材验收」模块（工长逐项验收，权限位 material_acceptance）
+  { label: "进度验收", icon: "✅", bg: "#D1FAE5", action: "newAccept", perm: "acceptance:read" },
+  { label: "主材验收", icon: "📦", bg: "#FFF7E6", action: "newMatAccept", perm: "material_acceptance:read" },
   { label: "增减项", icon: "📄", bg: "#FEF3C7", action: "newChange", perm: "contract_change:write" },
   // v2.3.6: 首页快捷入口的"收支记录"原本 action=newFinance → 跳新建收支页（add.vue，写入老 finance 表），
   // 是命名和逻辑双重错位。改成 url 直跳全公司财务大盘（基于 payment_records 活数据）。

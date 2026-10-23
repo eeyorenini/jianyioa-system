@@ -110,6 +110,8 @@ const typeConfig = (type) => {
     project_progress: { icon: '📊', color: '#909399', text: '项目进展', bgColor: '#90939911' },
     inspection_submit: { icon: '🔍', color: '#F56C6C', text: '巡检报告', bgColor: '#F56C6C11' },
     acceptance_submit: { icon: '✅', color: '#409EFF', text: '验收提交', bgColor: '#409EFF11' },
+    // v2.4.1 主材验收
+    material_acceptance_submit: { icon: '📦', color: '#E6A23C', text: '材料验收', bgColor: '#E6A23C11' },
     dispatch_created: { icon: '📋', color: '#E6A23C', text: '派工通知', bgColor: '#E6A23C11' },
     dispatch_status_changed: { icon: '🔔', color: '#E6A23C', text: '派工状态', bgColor: '#E6A23C11' },
     approval_submit: { icon: '⏳', color: '#F56C6C', text: '待审批', bgColor: '#F56C6C11' },
@@ -214,6 +216,13 @@ function handleClick(msg) {
   // 跳转：一律进「消息详情」，详情页里再提供「查看XX」按钮跳对应业务模块。
   // ⚠️ 必须带 src：列表是 messages + notifications 两表 UNION，两表 id 会撞号，
   // 详情接口靠 src 判断该查哪张表（不带就会取到另一张表里同 id 的消息）。
+  // 2026-10-23 兜底：线上后端若还是旧版 /api/messages/:id（只查 messages 表），
+  // notifications 来的消息点进详情必 404 → 白屏「消息不存在」。列表里其实
+  // 已经有 title/content/type/source_id 全套字段，先塞进缓存让详情页直接渲染，
+  // 接口只当"刷新/补全"用，失败也不影响阅读。
+  try {
+    uni.setStorageSync('message_detail_cache', { ...msg, _cached_at: Date.now() })
+  } catch (e) {}
   uni.navigateTo({ url: `/pages/message/detail?id=${msg.id}&src=${msg.src || 'messages'}` })
 }
 

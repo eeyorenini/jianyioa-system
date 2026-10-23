@@ -104,9 +104,15 @@ function fetchLogDetail(logId) {
   uni.request({
     url: `/api/project-log/${logId}`,
     success: (res) => {
-      if (res.data) {
+      // 2026-10-23 修复：原来只判 `if (res.data)`，而 404 时后端返回的是
+      // {"error":"日志不存在"} —— truthy，于是被当成日志对象渲染，
+      // 页面显示一条 1970 年、作者"未知"的空日志。改为严格校验 200 + id。
+      // 日志被删后消息/工单仍指向它，这是常态，走空态提示即可。
+      if (res.statusCode === 200 && res.data && res.data.id) {
         log.value = res.data
         photos.value = getPhotos(res.data)
+      } else {
+        log.value = null
       }
     },
     fail: () => {
