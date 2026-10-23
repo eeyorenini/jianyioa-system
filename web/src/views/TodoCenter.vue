@@ -97,9 +97,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { Refresh } from '@element-plus/icons-vue'
-import { resolvePcTarget } from '@/utils/message-link'
+import { resolveTodoTarget } from '@/utils/message-link'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(false)
 const groups = ref([])
@@ -159,7 +161,9 @@ const loadData = async () => {
 
 /** 点待办项 → 跳到对应 PC 页面（带 id，页面支持就自动定位） */
 const goItem = (item) => {
-  const target = resolvePcTarget(item)
+  // 用 resolveTodoTarget 而非 resolvePcTarget：催收未确认收款落到 /finance-projects，
+  // 该页有 finance 权限守卫，无财务权限的提交人会回落到项目列表
+  const target = resolveTodoTarget(item, userStore.can)
   if (!target) {
     router.push('/dashboard')
     return

@@ -3,7 +3,7 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>验收管理</span>
+          <span>进度验收</span>
           <el-button type="primary" @click="showAddDialog = true">
             <el-icon><Plus /></el-icon>
             新增验收

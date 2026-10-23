@@ -99,6 +99,8 @@ const TYPE_ROUTE = {
   // 巡检 / 验收
   inspection_submit: '/inspection-logs',
   inspect_rectify: '/inspection-logs',
+  // 2026-10-23 整改到期提醒（定时器推送）
+  inspection_due: '/inspection-logs',
   acceptance_submit: '/acceptance',
   // 项目文件
   project_file: '/project-files',
@@ -108,6 +110,10 @@ const TYPE_ROUTE = {
   // 财务
   collection_created: '/finance-projects',
   collection_confirmed: '/finance-projects',
+  // 2026-10-23 新增：催收提交后财务未确认收款，挂提交人待办
+  //   ⚠️ /finance-projects 有 meta.perm='finance' 守卫，无财务权限的提交人会被弹回
+  //   dashboard —— 调用方请用 resolveTodoTarget()（带权限兜底），不要直接用 resolvePcTarget。
+  collection_pending: '/finance-projects',
   invoice_created: '/invoices',
   // 其他
   notice_published: '/notices',
@@ -169,4 +175,26 @@ export function resolvePcTarget(item) {
   if (byEntity) return id ? { path: byEntity, query: { id: String(id) } } : { path: byEntity, query: {} }
 
   return null
+}
+
+/**
+ * 待办项 → PC 路由（带权限兜底）。
+ * 场景：`collection_pending`（催收未确认收款）的天然落点是 /finance-projects，
+ * 但该路由 meta.perm='finance'，提交人（监理/项目经理）通常没有财务权限，
+ * 直接跳会被路由守卫弹回 dashboard。这里对无财务权限的人回落到项目列表，
+ * 并把 project_id 带上，至少能看到项目本身。
+ *
+ * @param {object} item 待办项（/api/todo/center 返回）
+ * @param {(perm:string)=>boolean} [can] 权限判断（通常传 userStore.can）
+ */
+export function resolveTodoTarget(item, can) {
+  const base = resolvePcTarget(item)
+  const noFinance = typeof can === 'function' ? !can('finance') : false
+  if (item && item.type === 'collection_pending' && noFinance) {
+    return {
+      path: '/projects',
+      query: item.project_id ? { id: String(item.project_id) } : {}
+    }
+  }
+  return base
 }

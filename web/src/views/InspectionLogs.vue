@@ -305,22 +305,62 @@
           </div>
         </div>
 
-        <!-- 操作区 -->
-        <div v-if="getRectifyStatus(rectifyDetail) !== '已整改'" style="margin-top:20px;padding-top:16px;border-top:1px solid #ebeef5">
-          <div v-if="getRectifyStatus(rectifyDetail) === '待整改'">
-            <div class="detail-label">提交整改</div>
-            <el-input v-model="fixForm.content" type="textarea" :rows="3" placeholder="请描述整改措施…" />
-            <div style="margin-top:10px;text-align:right">
-              <el-button type="primary" :loading="fixing" @click="submitFix">提交整改</el-button>
-            </div>
+        <!-- 受理信息（有受理人才显示） -->
+        <div v-if="rectifyDetail.accept_name || rectifyDetail.accept_date" style="margin-top:16px;padding-top:16px;border-top:1px solid #ebeef5">
+          <div class="detail-label">受理信息</div>
+          <div class="detail-content">
+            受理人：{{ rectifyDetail.accept_name || '-' }}{{ rectifyDetail.accept_date ? ' · ' + rectifyDetail.accept_date : '' }}
           </div>
-          <div v-else-if="getRectifyStatus(rectifyDetail) === '整改中'">
-            <div class="detail-label">完成整改</div>
-            <el-input v-model="fixForm.remark" type="textarea" :rows="3" placeholder="请描述整改结果…" />
-            <div style="margin-top:10px;text-align:right">
-              <el-button type="success" :loading="fixing" @click="completeFix">完成整改</el-button>
+        </div>
+
+        <!-- 延期记录 -->
+        <div v-if="rectifyDelayLogs.length > 0" style="margin-top:16px;padding-top:16px;border-top:1px solid #ebeef5">
+          <div class="detail-label">延期记录（{{ rectifyDelayLogs.length }} 次）</div>
+          <div v-for="(log, idx) in rectifyDelayLogs" :key="idx" style="padding:8px 10px;background:#fdf6ec;border-radius:6px;margin-bottom:8px;font-size:13px">
+            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <span style="font-weight:600;color:#E6A23C">第 {{ idx + 1 }} 次延期</span>
+              <span style="color:#909399">{{ log.at || '' }}</span>
             </div>
+            <div style="color:#606266;margin-top:4px">
+              {{ log.from || '未设置' }} → <span style="color:#f56c6c;font-weight:600">{{ log.to || '-' }}</span>
+            </div>
+            <div v-if="log.reason" style="color:#909399;margin-top:2px">原因：{{ log.reason }}</div>
+            <div v-if="log.by" style="color:#909399;margin-top:2px">操作人：{{ log.by }}</div>
           </div>
+        </div>
+
+        <!-- 操作区：按业务流程分状态（与移动端口径一致） -->
+        <!-- 待处理 → 受理（可同步修改整改截止时间） -->
+        <div v-if="getRectifyStatus(rectifyDetail) === '待处理'" style="margin-top:20px;padding-top:16px;border-top:1px solid #ebeef5">
+          <div class="detail-label">受理整改</div>
+          <div style="color:#909399;font-size:12px;margin-bottom:8px">
+            原截止时间：{{ rectifyDetail.due_date || '未设置' }}。如时间不合理可一并调整：
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <el-date-picker v-model="fixForm.acceptDue" type="date" value-format="YYYY-MM-DD"
+              placeholder="新截止时间（选填）" style="width:180px" size="small" />
+            <el-input v-model="fixForm.acceptRemark" placeholder="受理说明（选填）" style="width:220px" size="small" />
+            <el-button type="primary" size="small" :loading="fixing" @click="submitAccept">确认受理</el-button>
+          </div>
+        </div>
+        <!-- 处理中 → 申请延期 / 申报完成 -->
+        <div v-else-if="getRectifyStatus(rectifyDetail) === '处理中'" style="margin-top:20px;padding-top:16px;border-top:1px solid #ebeef5">
+          <div class="detail-label">申请延期</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <el-date-picker v-model="fixForm.delayDue" type="date" value-format="YYYY-MM-DD"
+              placeholder="延期至（必填）" style="width:170px" size="small" />
+            <el-input v-model="fixForm.delayReason" placeholder="延期原因（必填）" style="width:220px" size="small" />
+            <el-button size="small" :loading="fixing" @click="submitDelay">提交延期</el-button>
+          </div>
+          <div class="detail-label" style="margin-top:16px">申报完成</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <el-input v-model="fixForm.completeRemark" placeholder="完成说明（选填）" style="width:280px" size="small" />
+            <el-button type="success" size="small" :loading="fixing" @click="submitComplete">确认已完成</el-button>
+          </div>
+        </div>
+        <!-- 已完成 → 终态 -->
+        <div v-else style="margin-top:20px;padding-top:16px;border-top:1px solid #ebeef5;color:#67C23A;font-weight:600">
+          ✓ 已结案{{ rectifyDetail.finish_date ? ' · ' + rectifyDetail.finish_date : '' }}
         </div>
       </div>
     </el-dialog>
@@ -330,13 +370,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Loading } from '@element-plus/icons-vue'
 import request from '../utils/request'
 import { inspectionApi } from '../utils/api'
 import { useUserStore } from '../stores/user'
+import { normalizeRectifyStatus, parseDelayLog, RECTIFY_STATE_TEXT } from '../utils/rectify'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -372,7 +413,12 @@ const rectifyDetail = ref(null)
 const rectifyLoading = ref(false)
 const fixForm = reactive({
   content: '',
-  remark: ''
+  remark: '',
+  acceptDue: '',
+  acceptRemark: '',
+  delayDue: '',
+  delayReason: '',
+  completeRemark: ''
 })
 const fixing = ref(false)
 
@@ -564,8 +610,9 @@ const onTabChange = (name) => {
 
 const isOverdue = (row) => {
   if (!row || !row.due_date) return false
-  const s = getRectifyStatus(row)
-  if (s === '已整改') return false
+  // 已结案不再算逾期。注意 getRectifyStatus 返回的是归一化文本（待处理/处理中/已完成），
+  // 库里旧的「已整改」已于 2026-10-23 统一刷成「已完成」，不能再拿旧名比较。
+  if (getRectifyStatus(row) === '已完成') return false
   const due = new Date(String(row.due_date).replace(' ', 'T'))
   if (isNaN(due.getTime())) return false
   return due.getTime() < Date.now()
@@ -696,16 +743,19 @@ const getRectifyImages = (item) => {
 
 const getRectifyStatus = (item) => {
   if (!item) return '未知'
-  const s = String(item.status || item.rectify_status || '').toLowerCase()
-  if (s.includes('已整改') || s.includes('完成')) return '已整改'
-  if (s.includes('整改中')) return '整改中'
-  return '待整改'
+  // 统一走归一化口径（与移动端 utils/rectify 一致）：
+  // 库里 status 实际是「待处理」，旧的白名单判断会漏掉它。
+  return RECTIFY_STATE_TEXT[normalizeRectifyStatus(item.status || item.rectify_status)]
 }
 
+// 延期历史（后端 delay_log 为 JSON 字符串，兼容数组）
+const rectifyDelayLogs = computed(() => parseDelayLog(rectifyDetail.value?.delay_log))
+
 const getRectifyStatusType = (item) => {
+  // 归一化口径：已完成→绿、处理中→橙、待处理→红（旧的「已整改/整改中」比较永不命中）
   const s = getRectifyStatus(item)
-  if (s === '已整改') return 'success'
-  if (s === '整改中') return 'warning'
+  if (s === '已完成') return 'success'
+  if (s === '处理中') return 'warning'
   return 'danger'
 }
 
@@ -727,52 +777,72 @@ const getSeverityTagType = (level) => {
   return 'info'
 }
 
-const submitFix = async () => {
-  if (!fixForm.content.trim()) {
-    ElMessage.warning('请输入整改内容')
-    return
-  }
+// ===== 业务流程三动作：受理 / 延期 / 申报完成（与移动端 utils/rectify 同口径）=====
+
+// 受理：待处理 → 处理中（可同步修改整改截止时间）
+const submitAccept = async () => {
   fixing.value = true
   try {
     const id = rectifyDetail.value?.id
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    await request.put(`/rectification-issues/${id}`, {
-      status: '整改中',
-      remark: fixForm.content,
-      finish_date: now
-    })
-    ElMessage.success('整改已提交')
-    rectifyDetail.value.status = '整改中'
-    rectifyDetail.value.remark = fixForm.content
-    fixForm.content = ''
+    const payload = { action: 'accept', remark: fixForm.acceptRemark }
+    if (fixForm.acceptDue) payload.new_due_date = fixForm.acceptDue
+    const res = await request.put(`/rectification-issues/${id}`, payload)
+    const d = res.data || res
+    ElMessage.success(d.message || '已受理')
+    rectifyDetail.value.status = '处理中'
+    if (fixForm.acceptDue) rectifyDetail.value.due_date = fixForm.acceptDue
+    if (d.accept_name) rectifyDetail.value.accept_name = d.accept_name
+    if (d.accept_date) rectifyDetail.value.accept_date = d.accept_date
+    fixForm.acceptDue = ''
+    fixForm.acceptRemark = ''
   } catch (e) {
-    console.error('提交整改失败', e)
-    ElMessage.error('提交整改失败')
+    ElMessage.error(e?.response?.data?.error || '受理失败')
   } finally {
     fixing.value = false
   }
 }
 
-const completeFix = async () => {
-  if (!fixForm.remark.trim()) {
-    ElMessage.warning('请输入完成说明')
-    return
-  }
+// 延期：处理中 → 处理中（改截止时间 + 必填原因，后端记 delay_log）
+const submitDelay = async () => {
+  if (!fixForm.delayDue) { ElMessage.warning('请选择延期后的截止时间'); return }
+  if (!String(fixForm.delayReason || '').trim()) { ElMessage.warning('请填写延期原因'); return }
   fixing.value = true
   try {
     const id = rectifyDetail.value?.id
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    await request.put(`/rectification-issues/${id}`, {
-      status: '已整改',
-      remark: fixForm.remark,
-      finish_date: now
+    const res = await request.put(`/rectification-issues/${id}`, {
+      action: 'delay',
+      new_due_date: fixForm.delayDue,
+      delay_reason: String(fixForm.delayReason).trim()
     })
-    ElMessage.success('整改已完成')
-    rectifyDetail.value.status = '已整改'
-    rectifyDetail.value.rectify_status = '已整改'
+    const d = res.data || res
+    ElMessage.success(d.message || '已延期')
+    rectifyDetail.value.due_date = fixForm.delayDue
+    if (Array.isArray(d.delay_log)) rectifyDetail.value.delay_log = JSON.stringify(d.delay_log)
+    fixForm.delayDue = ''
+    fixForm.delayReason = ''
   } catch (e) {
-    console.error('完成整改失败', e)
-    ElMessage.error('完成整改失败')
+    ElMessage.error(e?.response?.data?.error || '延期失败')
+  } finally {
+    fixing.value = false
+  }
+}
+
+// 申报完成：处理中（或历史遗留的待处理）→ 已完成（终态）
+const submitComplete = async () => {
+  fixing.value = true
+  try {
+    const id = rectifyDetail.value?.id
+    const res = await request.put(`/rectification-issues/${id}`, {
+      action: 'complete',
+      remark: fixForm.completeRemark || '已整改完成'
+    })
+    const d = res.data || res
+    ElMessage.success(d.message || '已结案')
+    rectifyDetail.value.status = '已完成'
+    if (d.finish_date) rectifyDetail.value.finish_date = d.finish_date
+    fixForm.completeRemark = ''
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.error || '提交失败')
   } finally {
     fixing.value = false
   }

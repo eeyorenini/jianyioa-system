@@ -350,6 +350,64 @@ setTimeout(async () => {
   }
 }, 2500);
 
+// ==================== 主材验收建表（v2.4.1）====================
+// 服务器（Windows 宝塔）覆盖代码后重启即自动建表，不需要单独跑 migration 脚本。
+// 注意 MySQL 5.5 的 DATETIME 不支持 CURRENT_TIMESTAMP 默认值，统一 DEFAULT NULL + 代码写 NOW()。
+setTimeout(async () => {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS material_acceptances (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        accept_no VARCHAR(50) DEFAULT '',
+        project_id INT NOT NULL,
+        project_name VARCHAR(255) DEFAULT '',
+        accept_date VARCHAR(50) DEFAULT '',
+        stage VARCHAR(50) DEFAULT '',
+        foreman_id INT DEFAULT NULL,
+        foreman_name VARCHAR(100) DEFAULT '',
+        supplier_id INT DEFAULT NULL,
+        supplier_name VARCHAR(255) DEFAULT '',
+        delivery_no VARCHAR(100) DEFAULT '',
+        docs TEXT,
+        storage VARCHAR(50) DEFAULT '',
+        result VARCHAR(50) DEFAULT '',
+        handling VARCHAR(50) DEFAULT '',
+        item_count INT DEFAULT 0,
+        pass_count INT DEFAULT 0,
+        fail_count INT DEFAULT 0,
+        photos TEXT,
+        remark TEXT,
+        creator_id INT DEFAULT NULL,
+        created_at DATETIME NULL DEFAULT NULL,
+        updated_at DATETIME NULL DEFAULT NULL,
+        KEY idx_ma_project (project_id),
+        KEY idx_ma_date (accept_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS material_acceptance_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        accept_id INT NOT NULL,
+        material_id INT DEFAULT NULL,
+        material_name VARCHAR(255) DEFAULT '',
+        spec VARCHAR(255) DEFAULT '',
+        brand VARCHAR(255) DEFAULT '',
+        unit VARCHAR(50) DEFAULT '',
+        plan_qty DECIMAL(12,2) DEFAULT NULL,
+        actual_qty DECIMAL(12,2) DEFAULT NULL,
+        verdict VARCHAR(20) DEFAULT '合格',
+        problem_tags TEXT,
+        remark VARCHAR(255) DEFAULT '',
+        sort_order INT DEFAULT 0,
+        KEY idx_mai_accept (accept_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    console.log('[migrate] material_acceptances / material_acceptance_items 表已就绪');
+  } catch (e) {
+    console.error('[migrate] 主材验收建表失败:', e.message);
+  }
+}, 2600);
+
 // ==================== 家庭成员管理 ====================
 // 确保家庭成员表存在
 setTimeout(async () => {
@@ -903,14 +961,14 @@ async function notifyProject(type, projectId, title, content, sourceId, sourceTy
           mgr.id as manager_user_id, mgr.phone as manager_phone, mgr.name as manager_name,
           des.id as designer_user_id, sup.id as supervisor_user_id,
           cre.id as creator_user_id, cre.phone as creator_phone, cre.name as creator_name,
-          for.id as foreman_user_id, for.phone as foreman_phone, for.name as foreman_name
+          fm.id as foreman_user_id, fm.phone as foreman_phone, fm.name as foreman_name
           FROM projects p
           LEFT JOIN customers c ON p.customer_id = c.id
           LEFT JOIN employees des ON p.designer_id = des.id
           LEFT JOIN employees sup ON p.supervisor_id = sup.id
           LEFT JOIN employees mgr ON p.manager_id = mgr.id
           LEFT JOIN employees cre ON p.creator_id = cre.id
-          LEFT JOIN employees for ON p.foreman_id = for.id
+          LEFT JOIN employees fm ON p.foreman_id = fm.id
           WHERE p.id = ?
         `, [projectId]);
 
@@ -1179,7 +1237,12 @@ async function sendSmsFromNotify(phone, name, title, content, templateId) {
   if (!templateCode) { result.reason = 'sms_template_not_found'; return result; }
 
   // 提取项目名称（title格式：XXX：项目名）
-  const projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：|项目节点进行中：|项目节点待处理：|项目节点已跳过：)/, '');
+  // 2026-10-23：新文案「项目进度更新「节点」完成」的 title 里没有项目名，从 content 的 项目「xxx」 兜底
+  let projectName = title.replace(/^(工地巡检提交：|项目节点完成：|项目新进展：|项目节点进行中：|项目节点待处理：|项目节点已跳过：)/, '');
+  if (projectName === title) {
+    const pm = String(content || '').match(/项目「([^」]+)」/);
+    if (pm) projectName = pm[1];
+  }
 
   try {
     const aliyunResp = await sendAliyunSms({
@@ -2833,6 +2896,9 @@ app.post('/api/project-stages', async (req, res) => {
   const userId = getUserId(req);
   const { project_id, node_name, plan_date, plan_end_date, status, progress, note, sms_template_id, after_node_id } = req.body;
   try {
+    // 2026-10-23：通知里用真项目名（原来写「项目「ID:15」」把 ID 当项目名）
+    const [projForNotify] = await db.prepare('SELECT name FROM projects WHERE id = ?').all(project_id);
+    const projLabel = (projForNotify && projForNotify.name) || `项目${project_id}`;
     if (after_node_id !== undefined && after_node_id !== null) {
       const [after] = await db.prepare('SELECT sort_order FROM project_progress_nodes WHERE id = ?').all(after_node_id);
       if (after) {
@@ -2842,7 +2908,7 @@ app.post('/api/project-stages', async (req, res) => {
         const nodeId = result.lastInsertRowid;
         notifyProject('node_status_changed', project_id,
           `新增项目节点：${node_name}`,
-          `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
+          `项目「${projLabel}」新增节点「${node_name}」，请及时跟进。`,
           nodeId, 'node', null, { mode: 'subscribers' }
         ).catch(console.error);
         await addLog(userId, '', '新增', '项目节点', nodeId, node_name, `新增节点: ${node_name}`, req.ip);
@@ -2856,7 +2922,7 @@ app.post('/api/project-stages', async (req, res) => {
     await addLog(userId, '', '新增', '项目节点', nodeId, node_name, `新增节点: ${node_name}`, req.ip);
     notifyProject('node_status_changed', project_id,
       `新增项目节点：${node_name}`,
-      `项目「ID:${project_id}」新增节点「${node_name}」，请及时跟进。`,
+      `项目「${projLabel}」新增节点「${node_name}」，请及时跟进。`,
       nodeId, 'node', null, { mode: 'subscribers' }
     ).catch(console.error);
     res.json({ id: nodeId, message: '添加成功' });
@@ -2890,18 +2956,29 @@ app.put('/api/project-stages/:id', async (req, res) => {
     // ✅ 节点状态变化时，通知项目成员和客户（任意状态变化都通知）
     let smsResults = null;  // 2026-10-09：把短信结果返回给前端
     if (row.status !== updated.status) {
-      const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '已完成', skipped: '已跳过' };
+      // 2026-10-23：文案统一为「项目进度更新「节点名」完成」（大王指定）
+      //   旧文案「项目节点已完成：xxx」不含项目名；content 里还把节点名当项目名写（bug）
+      const statusLabel = { pending: '待处理', in_progress: '进行中', completed: '完成', skipped: '已跳过' };
       const typeMap = { pending: 'node_pending', in_progress: 'node_in_progress', completed: 'node_completed', skipped: 'node_skipped' };
       const type = typeMap[updated.status] || 'node_completed';
-      const title = `项目节点${statusLabel[updated.status] || updated.status}：${updated.node_name || row.node_name}`;
-      const content = `项目「${row.node_name}」已变更为「${statusLabel[updated.status] || updated.status}」，请知悉。`;
+      const nodeName = updated.node_name || row.node_name;
+      const label = statusLabel[updated.status] || updated.status;
+      // content 里要带真项目名；短信的项目名也从这里兜底提取
+      const [projRow] = await db.prepare('SELECT name FROM projects WHERE id = ?').all(row.project_id);
+      const projectName = (projRow && projRow.name) || `项目${row.project_id}`;
+      const title = `项目进度更新「${nodeName}」${label}`;
+      const content = `项目「${projectName}」的节点「${nodeName}」${label}，请知悉。`;
       const smsNotify = parseInt(req.body.sms_notify || 0);
-      if (smsNotify) {
-        // 用户选择发送短信：用节点绑定的模板发短信（第7参=短信模板ID；2026-10-12 修复原先模板传位错误）
-        smsResults = await notifyProject(type, row.project_id, title, content, row.id, 'node', updated.sms_template_id, { mode: 'subscribers' });
-      }
-      // 无论是否发短信，都写一条应用内消息记录状态变更
-      await insertInAppNotification(row.project_id, title, content, row.id, 'node');
+      // 2026-10-23 统一接收人口径（原来两条路径不一致，还重复）：
+      //   旧实现：勾短信 → notifyProject（订阅角色+关联人+管理员），不勾 → insertInAppNotification（仅经理/设计师/监理/客户4人）
+      //   后果 ① 操作者（管理员）自己收不到；② 勾短信时会写两遍。
+      //   现在统一走 notifyProject(subscribers)：订阅角色 + 项目关联人 + 管理员(id=1)；
+      //   短信仍只在勾选 + 客户身份时才真发（notifyProject 内部判定）。
+      smsResults = await notifyProject(
+        type, row.project_id, title, content, row.id, 'node',
+        smsNotify ? updated.sms_template_id : null,
+        { mode: 'subscribers' }
+      );
     }
 
     // 2026-10-09：返回短信结果（数组），前端可显示每条的成功/失败
@@ -3050,10 +3127,17 @@ app.post('/api/project-logs', async (req, res) => {
   // ✅ 新增项目进展时，通知项目成员和客户
   const [proj] = await db.prepare('SELECT name FROM projects WHERE id = ?').all(project_id);
   await addLog(userId, '', '新增', '项目进展', logId, proj?.name || project_id, `项目「${proj?.name || project_id}」添加进展`, req.ip);
-  if (proj) {
+  // 2026-10-23：两类日志不再推「项目新进展」
+  //   ① 节点状态变更（action_type=node_* 或带 stage_id）—— 节点变更已有专门的
+  //      「项目进度更新「节点名」完成」通知（PUT /api/project-stages/:id），再推一条就重复了，
+  //      而且点进去是施工日志，跟用户做的操作对不上。
+  //   ② 内容为空 —— 推出去是「有新进展：...」，纯噪音。
+  const isNodeAction = String(req.body.action_type || '').startsWith('node_') || !!req.body.stage_id;
+  const hasContent = String(content || '').trim().length > 0;
+  if (proj && !isNodeAction && hasContent) {
     await notifyProject('project_progress', project_id,
       `项目新进展`,
-      `「${proj.name}」有新进展：${content ? content.substring(0, 50) : ''}...`,
+      `「${proj.name}」有新进展：${content.substring(0, 50)}${content.length > 50 ? '...' : ''}`,
       logId, 'project_log', null, { mode: 'subscribers' });
   }
 
@@ -3640,6 +3724,8 @@ app.post('/api/main-materials/batch-upsert', async (req, res) => {
 });
 
 app.post('/api/main-materials/import', upload.single('file'), async (req, res) => {
+  // 2026-10-23 修复：本路由原先引用未声明的 userId，导入成功时抛 ReferenceError 并崩进程
+  const userId = getUserId(req);
   if (!req.file) {
     res.status(400).json({ message: '未上传文件' });
     return;
@@ -4826,6 +4912,70 @@ async function resolveMessageActor(req) {
   return { type: 'unknown', userId: userId || null, phone: null };
 }
 
+/* ------------------------------------------------------------------
+ * 消息 → 项目信息补全（2026-10-23 新增）
+ *
+ * 背景：messages / notifications 两张表**都没有 project_id 列**，只有
+ * related_id / related_type（对外 alias 成 source_id / source_type）。
+ * 前端的「查看应收」按钮跳到 /pages/finance/finance-receivable 时需要
+ * projectId 才能核算，拿不到就只能显示 ¥0.00（实测就是这个现象）。
+ *
+ * 这里按实体类型把 project_id 反查回来，并补 project_name：
+ *   collection（催收记录）→ collection_records.project_id
+ *   project（项目）        → source_id 本身就是 project_id
+ * 查不到就保持 null，让前端自己降级，绝不猜。
+ * ------------------------------------------------------------------ */
+async function attachProjectInfo(list) {
+  if (!Array.isArray(list) || list.length === 0) return list;
+  const sourceOf = (m) => String(m.source_type || m.related_type || '');
+  const idOf = (m) => parseInt(m.source_id != null ? m.source_id : m.related_id) || 0;
+
+  const collectIds = [];
+  for (const m of list) {
+    const sid = idOf(m);
+    if (!sid) continue;
+    if (sourceOf(m) === 'collection') collectIds.push(sid);
+    else if (sourceOf(m) === 'project') m.project_id = sid;
+  }
+
+  if (collectIds.length) {
+    try {
+      const ids = [...new Set(collectIds)];
+      const [rows] = await pool.query(
+        `SELECT id, project_id FROM collection_records WHERE id IN (${ids.map(() => '?').join(',')})`,
+        ids
+      );
+      const map = {};
+      for (const r of rows) map[r.id] = r.project_id;
+      for (const m of list) {
+        if (sourceOf(m) === 'collection') {
+          const pid = map[idOf(m)];
+          if (pid) m.project_id = pid;
+        }
+      }
+    } catch (e) {
+      console.error('[attachProjectInfo] 催收记录反查项目失败:', e.message);
+    }
+  }
+
+  const pids = [...new Set(list.map((m) => parseInt(m.project_id) || 0).filter(Boolean))];
+  if (pids.length) {
+    try {
+      const [pros] = await pool.query(
+        `SELECT id, name FROM projects WHERE id IN (${pids.map(() => '?').join(',')})`,
+        pids
+      );
+      const pm = {};
+      for (const p of pros) pm[p.id] = p.name;
+      for (const m of list) if (m.project_id && pm[m.project_id]) m.project_name = pm[m.project_id];
+    } catch (e) {
+      console.error('[attachProjectInfo] 项目名查询失败:', e.message);
+    }
+  }
+
+  return list;
+}
+
 // 获取消息列表（统一查 notifications 表，兼容员工和客户）
 app.get('/api/messages', async (req, res) => {
   try {
@@ -4904,7 +5054,10 @@ app.get('/api/messages', async (req, res) => {
       }
       total = totalAll;
     }
-    
+
+    // 补 project_id / project_name（「查看应收」等按钮要靠它定位项目）
+    await attachProjectInfo(list);
+
     res.json({ list, total, page: parseInt(page), page_size: parseInt(pageSize) });
   } catch (err) {
     console.error('messages error:', err);
@@ -5024,6 +5177,10 @@ app.get('/api/messages/:id', async (req, res) => {
     else msg = (await findMessages()) || (await findNotification());
 
     if (!msg) return res.status(404).json({ error: '消息不存在' });
+
+    // 补 project_id / project_name（详情页「查看应收」按钮要用）
+    await attachProjectInfo([msg]);
+
     res.json(msg);
   } catch (err) {
     console.error('messages/:id error:', err);
@@ -5532,8 +5689,35 @@ app.post('/api/purchase-requests', async (req, res) => {
   }
 });
 
+// 采购申请列表的项目名快照可能是空串（客户端提交时项目未选/取值失败），
+// 按 project_id 反查 projects 补齐。同类"快照字段为空"都按这个思路兜底，不要指望历史数据。
+async function attachPurchaseProjectName(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const need = [...new Set(
+    rows.filter(r => !r.project_name && r.project_id).map(r => r.project_id)
+  )];
+  if (need.length === 0) return rows;
+  try {
+    const [prows] = await pool.query(
+      `SELECT id, name FROM projects WHERE id IN (${need.map(() => '?').join(',')})`,
+      need
+    );
+    const map = new Map(prows.map(p => [p.id, p.name]));
+    rows.forEach(r => {
+      if (!r.project_name && r.project_id && map.get(r.project_id)) {
+        r.project_name = map.get(r.project_id);
+      }
+    });
+  } catch (e) {
+    console.warn('[purchase] 补项目名失败:', e.message);
+  }
+  return rows;
+}
+
 // GET /api/purchase-requests/my — 我的申请（applicant_id 过滤）
-app.get('/api/purchase-requests/my', checkPermission('purchase:read'), async (req, res) => {
+// 权限用 checkAnyPermission：财务角色只有 purchase:read_all（无 purchase:read），
+// 而 checkPermission 是精确匹配、不认 read_all 覆盖 read，会导致财务点「我的申请」403。
+app.get('/api/purchase-requests/my', checkAnyPermission(['purchase:read', 'purchase:read_all', 'purchase:finance']), async (req, res) => {
   const { applicant_id, page, page_size } = req.query;
   const targetId = applicant_id || getUserId(req);
   const p = parseInt(page) || 1;
@@ -5564,6 +5748,7 @@ app.get('/api/purchase-requests/my', checkPermission('purchase:read'), async (re
       const map = new Map(reim.map(r => [r.request_id, r]));
       rows.forEach(r => { r.reimbursement = map.get(r.id) || null; });
     }
+    await attachPurchaseProjectName(rows);
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests my error:', err);
@@ -5591,6 +5776,7 @@ app.get('/api/purchase-requests/pending', checkPermission('purchase:approve'), a
       'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
       ['pending']
     );
+    await attachPurchaseProjectName(rows);
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests pending error:', err);
@@ -5618,6 +5804,7 @@ app.get('/api/purchase-requests/reimburse', checkPermission('purchase:finance'),
       'SELECT COUNT(*) as total FROM purchase_requests WHERE status = ?',
       ['reimbursing']
     );
+    await attachPurchaseProjectName(rows);
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests reimburse error:', err);
@@ -5652,6 +5839,7 @@ app.get('/api/purchase-requests/to-reimburse', checkPermission('purchase:write')
          AND NOT EXISTS (SELECT 1 FROM purchase_reimbursements WHERE request_id = pr.id)`,
       [userId]
     );
+    await attachPurchaseProjectName(rows);
     res.json({ list: rows, total: countResult[0].total, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests to-reimburse error:', err);
@@ -5694,6 +5882,7 @@ app.get('/api/purchase-requests/finance', checkPermission('purchase:finance'), a
     const [[{ pending_count }]] = await pool.query(
       "SELECT COUNT(*) as pending_count FROM purchase_requests WHERE status = 'finance_confirmed'"
     );
+    await attachPurchaseProjectName(rows);
     res.json({ list: rows, total, pending_count, page: p, page_size: l });
   } catch (err) {
     console.error('purchase-requests finance error:', err);
@@ -6554,6 +6743,409 @@ app.delete('/api/acceptance/:id', checkPermission('acceptance:delete'), async (r
   await stmt.run(req.params.id);
   await addLog(userId, '', '删除', '验收管理', req.params.id, aName, `删除验收: ${aName}`, req.ip);
   res.json({ message: '删除成功' });
+});
+
+// ==================== 主材验收（v2.4.1）====================
+// 业务：工长在材料进场时逐项验收（对不对版 / 数量 / 外观 / 资料），
+//   记录可追溯，不合格可作为退换货依据。
+// 表：material_acceptances（主单）+ material_acceptance_items（材料明细）
+// 权限：material_acceptance:read / read_all / write / delete
+// 可见范围与 acceptance 同口径：业主看名下项目，员工按 visibleScope（all / related）
+
+/** 生成验收单号：MA + yyyyMMdd + 3 位当天序号 */
+async function genMaterialAcceptNo(runner) {
+  const q = runner || pool;
+  const d = new Date();
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  const prefix = 'MA' + ymd;
+  const [rows] = await q.query(
+    'SELECT accept_no FROM material_acceptances WHERE accept_no LIKE ? ORDER BY accept_no DESC LIMIT 1',
+    [prefix + '%']
+  );
+  let seq = 1;
+  if (rows && rows[0] && rows[0].accept_no) {
+    const tail = String(rows[0].accept_no).slice(prefix.length);
+    seq = (parseInt(tail, 10) || 0) + 1;
+  }
+  return prefix + String(seq).padStart(3, '0');
+}
+
+/** 写一条材料明细（POST / PUT 共用） */
+async function insertMaterialAcceptItems(conn, acceptId, items) {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] || {};
+    await conn.query(
+      `INSERT INTO material_acceptance_items
+       (accept_id, material_id, material_name, spec, brand, unit, plan_qty, actual_qty, verdict, problem_tags, remark, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        acceptId,
+        it.material_id || null,
+        it.material_name || '',
+        it.spec || '',
+        it.brand || '',
+        it.unit || '',
+        it.plan_qty === '' || it.plan_qty == null ? null : Number(it.plan_qty),
+        it.actual_qty === '' || it.actual_qty == null ? null : Number(it.actual_qty),
+        it.verdict || '合格',
+        JSON.stringify(Array.isArray(it.problem_tags) ? it.problem_tags : []),
+        it.remark || '',
+        i,
+      ]
+    );
+  }
+}
+
+/** 统计合格/不合格项数（列表页直接展示"3 项中 1 项不合格"） */
+function countMaterialAcceptVerdicts(items = []) {
+  let pass = 0, fail = 0;
+  for (const it of items) {
+    if (!it) continue;
+    if (it.verdict === '合格') pass++;
+    else if (it.verdict === '不合格') fail++;
+  }
+  return { item_count: items.length, pass_count: pass, fail_count: fail };
+}
+
+// 新增页所需的项目元信息：项目名 + 工长 + 项目关联员工（验收人可选）+ 供应商候选
+// ⚠️ 必须注册在 /:id 之前，否则 'meta' 会被当成 id
+app.get('/api/material-acceptances/meta', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const projectId = Number(req.query.project_id);
+    if (!projectId) return res.status(400).json({ error: '缺少 project_id' });
+    const [prows] = await pool.query(
+      `SELECT p.id, p.name, p.foreman_id, p.manager_id, p.designer_id, p.supervisor_id, p.creator_id,
+              f.name AS foreman_name, c.name AS customer
+       FROM projects p
+       LEFT JOIN employees f ON f.id = p.foreman_id
+       LEFT JOIN customers c ON c.id = p.customer_id
+       WHERE p.id = ? LIMIT 1`,
+      [projectId]
+    );
+    const p = prows && prows[0];
+    if (!p) return res.status(404).json({ error: '项目不存在' });
+    // 项目关联员工（验收人下拉）：工长 / 项目经理 / 设计师 / 监理 / 创建人
+    const ids = [...new Set([p.foreman_id, p.manager_id, p.designer_id, p.supervisor_id, p.creator_id].filter(Boolean))];
+    let staff = [];
+    if (ids.length) {
+      const [rows] = await pool.query(
+        `SELECT id, name, position FROM employees WHERE id IN (?) AND (status IS NULL OR status <> '离职') ORDER BY FIELD(id, ?)`,
+        [ids, ids]
+      );
+      staff = rows;
+    }
+    // 供应商候选（外部联系人里 category=supplier 或 role 含供应商的，取前 200 个）
+    let suppliers = [];
+    try {
+      const [rows] = await pool.query(
+        `SELECT id, name FROM external_contacts
+         WHERE is_active IS NULL OR is_active = 1
+         ORDER BY id DESC LIMIT 200`
+      );
+      suppliers = rows;
+    } catch (_) { suppliers = []; }
+    res.json({
+      project_name: p.name,
+      customer: p.customer || '',
+      foreman_id: p.foreman_id || null,
+      foreman_name: p.foreman_name || '',
+      staff,
+      suppliers,
+    });
+  } catch (err) {
+    console.error('material-acceptance meta error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 材料选择器用的轻量搜索（登录即可，不要求 purchase:read_all ——
+// 工长是普通员工角色，走 /api/main-materials 会被 hasReadAllPermission 挡成空列表）
+app.get('/api/material-acceptances/material-search', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const kw = String(req.query.keyword || '').trim();
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    // main_materials 的实际列名是 specification / quote_unit / purchase_unit，没有 spec / unit，
+    // 这里直接起别名对齐前端，避免每个端各写一套取值逻辑
+    let sql = `SELECT id, name, specification AS spec, model, brand,
+                      COALESCE(NULLIF(purchase_unit, ''), quote_unit) AS unit, category
+               FROM main_materials`;
+    const params = [];
+    if (kw) {
+      sql += ' WHERE (name LIKE ? OR code LIKE ? OR brand LIKE ? OR model LIKE ?)';
+      const k = `%${kw}%`;
+      params.push(k, k, k, k);
+    }
+    sql += ' ORDER BY sort_order ASC, id ASC LIMIT ?';
+    params.push(limit);
+    const [rows] = await pool.query(sql, params);
+    res.json({ list: rows, total: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/material-acceptances', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const customer = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    let scope;
+    if (customer) {
+      scope = 'customer';
+    } else {
+      scope = await permCore.visibleScope(userId, 'material_acceptance');
+      if (scope === 'none') return res.status(403).json({ error: '无权限查看材料验收' });
+    }
+    const { project_id, result, keyword, page, limit } = req.query;
+    const where = [];
+    const params = [];
+    if (project_id) {
+      if (scope === 'customer') {
+        const myIds = await permCore.customerProjectIds(customer);
+        if (!myIds.has(Number(project_id))) return res.status(403).json({ error: '该项目不在您的名下' });
+      }
+      where.push('a.project_id = ?');
+      params.push(project_id);
+    }
+    if (result) { where.push('a.result = ?'); params.push(result); }
+    if (keyword) {
+      where.push('(a.accept_no LIKE ? OR a.project_name LIKE ? OR a.supplier_name LIKE ?)');
+      const k = `%${keyword}%`;
+      params.push(k, k, k);
+    }
+    if (scope === 'related') {
+      const rel = await permCore.relatedProjectIds(userId);
+      where.push('(a.project_id IN (?) OR a.creator_id = ?)');
+      params.push(rel.size ? Array.from(rel) : [-1], userId);
+    } else if (scope === 'customer') {
+      const ids = Array.from(await permCore.customerProjectIds(customer));
+      if (!ids.length) return res.json({ list: [], total: 0 });
+      where.push('a.project_id IN (?)');
+      params.push(ids);
+    }
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const [cntRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM material_acceptances a ${whereSql}`, params
+    );
+    const total = (cntRows && cntRows[0] && cntRows[0].total) || 0;
+    const [rows] = await pool.query(
+      `SELECT a.*, e.name AS creator_name,
+              COALESCE(NULLIF(a.project_name, ''), p.name) AS project_name_display
+       FROM material_acceptances a
+       LEFT JOIN employees e ON e.id = a.creator_id
+       LEFT JOIN projects p ON p.id = a.project_id
+       ${whereSql}
+       ORDER BY a.accept_date DESC, a.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (pageNum - 1) * pageSize]
+    );
+    res.json({ list: rows, total });
+  } catch (err) {
+    console.error('material-acceptance list error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/material-acceptances/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    const [rows] = await pool.query(
+      `SELECT a.*, e.name AS creator_name,
+              COALESCE(NULLIF(a.project_name, ''), p.name) AS project_name_display
+       FROM material_acceptances a
+       LEFT JOIN employees e ON e.id = a.creator_id
+       LEFT JOIN projects p ON p.id = a.project_id
+       WHERE a.id = ?`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: '材料验收记录不存在' });
+    const a = rows[0];
+    const customer = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    const scope = customer ? 'customer' : await permCore.visibleScope(userId, 'material_acceptance');
+    if (scope === 'none') return res.status(403).json({ error: '无权限查看' });
+    if (scope === 'related') {
+      const rel = await permCore.relatedProjectIds(userId);
+      const ok = (a.project_id && rel.has(a.project_id)) || a.creator_id === userId;
+      if (!ok) return res.status(403).json({ error: '无权限查看该记录' });
+    }
+    if (scope === 'customer') {
+      const ids = await permCore.customerProjectIds(customer);
+      if (!a.project_id || !ids.has(a.project_id)) return res.status(403).json({ error: '无权限查看该记录' });
+    }
+    const [items] = await pool.query(
+      'SELECT * FROM material_acceptance_items WHERE accept_id = ? ORDER BY sort_order ASC, id ASC',
+      [a.id]
+    );
+    res.json({ ...a, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/material-acceptances', checkPermission('material_acceptance:write'), async (req, res) => {
+  const userId = getUserId(req);
+  const b = req.body || {};
+  if (!b.project_id) return res.status(400).json({ error: '缺少 project_id' });
+  const items = Array.isArray(b.items) ? b.items.filter((x) => x && (x.material_name || x.material_id)) : [];
+  if (!items.length) return res.status(400).json({ error: '请至少添加一项验收材料' });
+  // 项目可见范围校验（同 acceptance：related 只能对自己关联的项目提交）
+  const scope = await permCore.visibleScope(userId, 'project');
+  if (scope === 'none') return res.status(403).json({ error: '无项目可见权限' });
+  if (scope === 'related') {
+    const rel = await permCore.relatedProjectIds(userId);
+    if (!rel.has(Number(b.project_id))) return res.status(403).json({ error: '仅可对关联项目提交材料验收' });
+  }
+  // 项目名兜底：前端没传就按 project_id 反查（快照字段不能指望前端）
+  let projectName = b.project_name || '';
+  let foremanName = b.foreman_name || '';
+  if (!projectName || !foremanName) {
+    const [prows] = await pool.query(
+      `SELECT p.name, f.name AS foreman_name FROM projects p
+       LEFT JOIN employees f ON f.id = p.foreman_id WHERE p.id = ? LIMIT 1`,
+      [b.project_id]
+    );
+    const prow = prows && prows[0];
+    if (prow) {
+      if (!projectName) projectName = prow.name || '';
+      if (!foremanName) foremanName = prow.foreman_name || '';
+    }
+  }
+  const stat = countMaterialAcceptVerdicts(items);
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const acceptNo = await genMaterialAcceptNo(conn);
+    const [r1] = await conn.query(
+      `INSERT INTO material_acceptances
+       (accept_no, project_id, project_name, accept_date, stage, foreman_id, foreman_name,
+        supplier_id, supplier_name, delivery_no, docs, storage, result, handling,
+        item_count, pass_count, fail_count, photos, remark, creator_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        acceptNo, b.project_id, projectName, b.accept_date || '', b.stage || '',
+        b.foreman_id || null, foremanName,
+        b.supplier_id || null, b.supplier_name || '', b.delivery_no || '',
+        JSON.stringify(Array.isArray(b.docs) ? b.docs : []),
+        b.storage || '', b.result || '', b.handling || '',
+        stat.item_count, stat.pass_count, stat.fail_count,
+        JSON.stringify(Array.isArray(b.photos) ? b.photos : []),
+        b.remark || '', userId,
+      ]
+    );
+    const acceptId = r1.insertId;
+    await insertMaterialAcceptItems(conn, acceptId, items);
+    await conn.commit();
+    await addLog(userId, '', '新增', '主材验收', acceptId, projectName,
+      `主材验收提交：${projectName}（${acceptNo}，${stat.item_count} 项，不合格 ${stat.fail_count} 项）`, req.ip);
+    notifyProject('material_acceptance_submit', b.project_id,
+      `材料验收：${projectName}`,
+      `项目「${projectName}」提报材料进场验收 ${acceptNo}，共 ${stat.item_count} 项，合格 ${stat.pass_count} 项、不合格 ${stat.fail_count} 项，结论：${b.result || '未填'}。`,
+      acceptId, 'material_acceptance'
+    ).catch(console.error);
+    res.json({ code: 0, id: acceptId, accept_no: acceptNo, message: '提交成功' });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    console.error('material-acceptance create error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.put('/api/material-acceptances/:id', checkPermission('material_acceptance:write'), async (req, res) => {
+  const userId = getUserId(req);
+  const b = req.body || {};
+  const [existRows] = await pool.query(
+    'SELECT id, project_id, project_name, creator_id FROM material_acceptances WHERE id = ? LIMIT 1',
+    [req.params.id]
+  );
+  if (!existRows[0]) return res.status(404).json({ error: '记录不存在' });
+  const existing = existRows[0];
+  if (existing.creator_id !== userId && !(await isAdmin(userId))) {
+    return res.status(403).json({ error: '无权修改他人的数据' });
+  }
+  const items = Array.isArray(b.items) ? b.items.filter((x) => x && (x.material_name || x.material_id)) : null;
+  const stat = items ? countMaterialAcceptVerdicts(items) : null;
+  const fields = [];
+  const params = [];
+  const setField = (col, val) => { if (val !== undefined) { fields.push(`${col}=?`); params.push(val); } };
+  setField('accept_date', b.accept_date);
+  setField('stage', b.stage);
+  setField('foreman_id', b.foreman_id);
+  setField('foreman_name', b.foreman_name);
+  setField('supplier_id', b.supplier_id);
+  setField('supplier_name', b.supplier_name);
+  setField('delivery_no', b.delivery_no);
+  setField('storage', b.storage);
+  setField('result', b.result);
+  setField('handling', b.handling);
+  setField('remark', b.remark);
+  if (b.docs !== undefined) { fields.push('docs=?'); params.push(JSON.stringify(Array.isArray(b.docs) ? b.docs : [])); }
+  if (b.photos !== undefined) { fields.push('photos=?'); params.push(JSON.stringify(Array.isArray(b.photos) ? b.photos : [])); }
+  if (stat) {
+    fields.push('item_count=?', 'pass_count=?', 'fail_count=?');
+    params.push(stat.item_count, stat.pass_count, stat.fail_count);
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (fields.length) {
+      params.push(req.params.id);
+      await conn.query(`UPDATE material_acceptances SET ${fields.join(', ')}, updated_at=NOW() WHERE id=?`, params);
+    }
+    if (items) {
+      await conn.query('DELETE FROM material_acceptance_items WHERE accept_id = ?', [req.params.id]);
+      await insertMaterialAcceptItems(conn, Number(req.params.id), items);
+    }
+    await conn.commit();
+    await addLog(userId, '', '编辑', '主材验收', req.params.id, existing.project_name,
+      `更新主材验收：${existing.project_name}`, req.ip);
+    res.json({ code: 0, message: '更新成功' });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    console.error('material-acceptance update error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.delete('/api/material-acceptances/:id', checkPermission('material_acceptance:delete'), async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const [rows] = await pool.query(
+      'SELECT project_name, creator_id FROM material_acceptances WHERE id = ? LIMIT 1', [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: '记录不存在' });
+    const a = rows[0];
+    if (a.creator_id !== userId && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无权删除他人的数据' });
+    }
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query('DELETE FROM material_acceptance_items WHERE accept_id = ?', [req.params.id]);
+      await conn.query('DELETE FROM material_acceptances WHERE id = ?', [req.params.id]);
+      await conn.commit();
+    } catch (e) {
+      try { await conn.rollback(); } catch (_) {}
+      throw e;
+    } finally {
+      conn.release();
+    }
+    await addLog(userId, '', '删除', '主材验收', req.params.id, a.project_name,
+      `删除主材验收：${a.project_name}`, req.ip);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ==================== 派工管理 ====================
@@ -7665,6 +8257,7 @@ app.get('/api/cost-records/project/:projectId', async (req, res) => {
 });
 
 app.post('/api/cost-records', async (req, res) => {
+  const userId = getUserId(req);
   const { project_id, project_name, type, category, amount, date, operator, invoice_status, remark } = req.body;
   const stmt = db.prepare('INSERT INTO cost_records (project_id, project_name, type, category, amount, date, operator, invoice_status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(project_id, project_name, type, category, amount, date, operator, invoice_status || '未开票', remark);
@@ -7735,6 +8328,21 @@ app.post('/api/rectification-issues', async (req, res) => {
       if (p && p.name) finalProjectName = p.name;
     } catch (_) { /* 项目查不到就保持空，不影响主流程 */ }
   }
+  // 2026-10-23 业务流程：监理提交 → 待处理 → 工长受理 → 处理中 → 结案 → 已完成。
+  // 提交页不选负责人时，按项目关联的工长（projects.foreman_id）自动指派，
+  // 这样待办中心能精确推给工长本人，而不是丢给全体项目关联人。
+  let finalResponsibleId = responsible_id || null;
+  let finalResponsibleName = responsible_name || '';
+  if (!finalResponsibleId && project_id) {
+    try {
+      const p = await db.prepare('SELECT foreman_id FROM projects WHERE id = ?').get(project_id);
+      if (p && p.foreman_id) {
+        finalResponsibleId = p.foreman_id;
+        const f = await db.prepare('SELECT name FROM employees WHERE id = ?').get(p.foreman_id);
+        finalResponsibleName = (f && f.name) || '';
+      }
+    } catch (_) { /* 查不到工长就保持为空，通知走项目关联人兜底 */ }
+  }
   // 关键修复：兼容客户端两种提交方式——
   //   老客户端：images 已是 JSON 字符串（["url1","url2"]），服务端不应再 stringify 一次
   //   新客户端：images 是数组
@@ -7754,27 +8362,131 @@ app.post('/api/rectification-issues', async (req, res) => {
   const result = await stmt.run(
     inspection_id, project_id, finalProjectName,
     issue_desc || title || '', priority || '普通', status || '待处理',
-    responsible_id, responsible_name, due_date,
+    finalResponsibleId, finalResponsibleName, due_date,
     normalizedImages, remark || description || '',
     title || issue_desc || '', category || '', location || '', level || '', description || '', userId, nowStr
   );
   await addLog(userId, '', '新增', '整改问题', result.lastInsertRowid, finalProjectName, `整改问题: ${(title || issue_desc || '').slice(0, 30)}`, req.ip);
 
-  // 发送站内通知：项目经理/监理/管理员/客户（巡检整改类维持全关联人）
-  await notifyProject('inspection_submit', project_id,
-    `【新巡检问题】${finalProjectName || '项目'}`,
-    `问题：${(issue_desc || title || '').slice(0, 100)}`,
-    result.lastInsertRowid, 'rectification_issue'
-  );
+  // 发送站内通知：有工长时精确通知「工长 + 提交人」；没派到工长才退回全体项目关联人
+  const notifyTargets = [finalResponsibleId, userId].filter(Boolean);
+  if (notifyTargets.length) {
+    await notifyProject('inspection_submit', project_id,
+      `【新巡检问题】${finalProjectName || '项目'}`,
+      `问题：${(issue_desc || title || '').slice(0, 100)}${finalResponsibleName ? `（负责人：${finalResponsibleName}）` : ''}`,
+      result.lastInsertRowid, 'rectification_issue',
+      undefined, { mode: 'participants', userIds: notifyTargets }
+    );
+  } else {
+    await notifyProject('inspection_submit', project_id,
+      `【新巡检问题】${finalProjectName || '项目'}`,
+      `问题：${(issue_desc || title || '').slice(0, 100)}`,
+      result.lastInsertRowid, 'rectification_issue'
+    );
+  }
 
   res.json({ id: result.lastInsertRowid, message: '添加成功' });
 });
 
 app.put('/api/rectification-issues/:id', async (req, res) => {
-  const { status, finish_date, remark } = req.body;
+  // 2026-10-23 修复：原代码直接引用未声明的 userId，一旦有人更新整改状态就抛
+  // ReferenceError 并把整个 Node 进程带崩（Express 4 + Node 22 未捕获 rejection 直接退出）
+  const userId = getUserId(req);
+  const { status, finish_date, remark, action, new_due_date, delay_reason } = req.body;
+  const issueId = parseInt(req.params.id);
+  const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  // 取当前记录（动作需要做状态机校验 + 通知要用项目/负责人信息）
+  const cur = await db.prepare('SELECT * FROM rectification_issues WHERE id = ?').get(issueId);
+  if (!cur) return res.status(404).json({ error: '记录不存在' });
+
+  // 操作人姓名（通知/日志用）
+  let operatorName = '';
+  try {
+    const op = await db.prepare('SELECT name FROM employees WHERE id = ?').get(userId);
+    operatorName = (op && op.name) || '';
+  } catch (_) {}
+
+  const notifyRectify = async (title, content) => {
+    // 通知对象：负责人（工长）+ 提交人（监理），去重去空；都没有才退回项目关联人
+    const targets = [cur.responsible_id, cur.creator_id, userId].filter(Boolean);
+    const uniq = [...new Set(targets)];
+    if (uniq.length) {
+      await notifyProject('inspection_submit', cur.project_id, title, content,
+        issueId, 'rectification_issue', undefined, { mode: 'participants', userIds: uniq });
+    } else {
+      await notifyProject('inspection_submit', cur.project_id, title, content,
+        issueId, 'rectification_issue');
+    }
+  };
+
+  // ===== 动作分支（业务流程）=====
+  if (action === 'accept') {
+    // 受理：待处理 → 处理中。可同时修改整改截止时间（工长评估后调整）。
+    if (String(cur.status) !== '待处理') {
+      return res.status(400).json({ error: `当前状态是「${cur.status}」，不能重复受理` });
+    }
+    const finalDue = new_due_date || cur.due_date;
+    await db.prepare(`UPDATE rectification_issues
+      SET status='处理中', accept_date=?, accept_by=?, accept_name=?, due_date=?, remark=? WHERE id=?`)
+      .run(nowStr, userId, operatorName, finalDue || null,
+        remark || cur.remark, issueId);
+    await addLog(userId, '', '受理', '整改问题', issueId, cur.project_name || '',
+      `受理整改${new_due_date && new_due_date !== cur.due_date ? `，整改时间调整为 ${new_due_date}` : ''}`, req.ip);
+    await notifyRectify(`【整改已受理】${cur.project_name || ''}`,
+      `${(cur.title || cur.issue_desc || '').slice(0, 40)} 已由 ${operatorName || '工长'} 受理${new_due_date && new_due_date !== cur.due_date ? `，整改时间调整为 ${new_due_date}` : ''}`);
+    return res.json({ message: '已受理', status: '处理中', due_date: finalDue || null, accept_name: operatorName, accept_date: nowStr });
+  }
+
+  if (action === 'delay') {
+    // 延期：处理中 → 处理中（改 due_date + 记延期历史）。原因必填。
+    if (String(cur.status) !== '处理中') {
+      return res.status(400).json({ error: `当前状态是「${cur.status}」，只有处理中才能申请延期` });
+    }
+    if (!new_due_date) return res.status(400).json({ error: '请选择延期后的截止时间' });
+    if (!String(delay_reason || '').trim()) return res.status(400).json({ error: '请填写延期原因' });
+    let log = [];
+    try { log = cur.delay_log ? JSON.parse(cur.delay_log) : []; } catch (_) { log = []; }
+    if (!Array.isArray(log)) log = [];
+    log.push({
+      from: cur.due_date || null,
+      to: new_due_date,
+      reason: String(delay_reason).trim(),
+      by: operatorName || String(userId),
+      at: nowStr
+    });
+    await db.prepare('UPDATE rectification_issues SET due_date=?, delay_log=? WHERE id=?')
+      .run(new_due_date, JSON.stringify(log), issueId);
+    await addLog(userId, '', '延期', '整改问题', issueId, cur.project_name || '',
+      `整改时间 ${cur.due_date || '未设置'} → ${new_due_date}，原因：${String(delay_reason).slice(0, 50)}`, req.ip);
+    await notifyRectify(`【整改延期】${cur.project_name || ''}`,
+      `${(cur.title || cur.issue_desc || '').slice(0, 40)} 延期至 ${new_due_date}，原因：${String(delay_reason).slice(0, 60)}`);
+    return res.json({ message: '已延期', due_date: new_due_date, delay_log: log });
+  }
+
+  if (action === 'complete') {
+    // 结案：处理中（或历史遗留的待处理）→ 已完成。已完成是终态。
+    const st = String(cur.status);
+    if (st === '已完成') {
+      return res.status(400).json({ error: '该问题已结案，不能重复提交' });
+    }
+    if (st !== '处理中' && st !== '待处理') {
+      return res.status(400).json({ error: `当前状态是「${st}」，不能结案` });
+    }
+    await db.prepare('UPDATE rectification_issues SET status=?, finish_date=?, remark=? WHERE id=?')
+      .run('已完成', finish_date || nowStr, remark || '已整改完成', issueId);
+    await addLog(userId, '', '结案', '整改问题', issueId, cur.project_name || '',
+      `整改完成结案${cur.due_date ? `（原定 ${cur.due_date}）` : ''}`, req.ip);
+    await notifyRectify(`【整改已完成】${cur.project_name || ''}`,
+      `${(cur.title || cur.issue_desc || '').slice(0, 40)} 已由 ${operatorName || '负责人'} 完成并结案`);
+    return res.json({ message: '已结案', status: '已完成', finish_date: finish_date || nowStr });
+  }
+
+  // ===== 兼容旧调用：直接传 status（老客户端/内部工具）=====
+  if (!status) return res.status(400).json({ error: '缺少 status' });
   await db.prepare('UPDATE rectification_issues SET status=?, finish_date=?, remark=? WHERE id=?')
-    .run(status, finish_date, remark, req.params.id);
-  await addLog(userId, '', '编辑', '整改问题', parseInt(req.params.id), '', `更新整改状态: ${status}`, req.ip);
+    .run(status, finish_date || null, remark || null, req.params.id);
+  await addLog(userId, '', '编辑', '整改问题', issueId, '', `更新整改状态: ${status}`, req.ip);
   res.json({ message: '更新成功' });
 });
 
@@ -7801,6 +8513,7 @@ app.get('/api/attendance', async (req, res) => {
 });
 
 app.post('/api/attendance', async (req, res) => {
+  const userId = getUserId(req);
   const { employee_id, employee_name, date, check_in_time, check_out_time, work_hours, status, type, remark } = req.body;
   const stmt = db.prepare('INSERT INTO attendance (employee_id, employee_name, date, check_in_time, check_out_time, work_hours, status, type, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(employee_id, employee_name, date, check_in_time, check_out_time, work_hours || 0, status || '正常', type || '上班', remark);
@@ -7825,6 +8538,7 @@ app.get('/api/warranties', async (req, res) => {
 });
 
 app.post('/api/warranties', async (req, res) => {
+  const userId = getUserId(req);
   const { project_id, project_name, customer_name, customer_phone, type, description, images, status, handle_user, handle_date, result, satisfaction, cost } = req.body;
   const stmt = db.prepare('INSERT INTO warranties (project_id, project_name, customer_name, customer_phone, type, description, images, status, handle_user, handle_date, result, satisfaction, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result2 = await stmt.run(project_id, project_name, customer_name, customer_phone, type, description, JSON.stringify(images || []), status || '待处理', handle_user, handle_date, result, satisfaction, cost || 0);
@@ -7833,6 +8547,7 @@ app.post('/api/warranties', async (req, res) => {
 });
 
 app.put('/api/warranties/:id', async (req, res) => {
+  const userId = getUserId(req);
   const { status, handle_date, result, satisfaction, cost, remark } = req.body;
   await db.prepare('UPDATE warranties SET status=?, handle_date=?, result=?, satisfaction=?, cost=?, remark=? WHERE id=?')
     .run(status, handle_date, result, satisfaction, cost, remark, req.params.id);
@@ -7857,6 +8572,7 @@ app.get('/api/design-measurements', async (req, res) => {
 });
 
 app.post('/api/design-measurements', async (req, res) => {
+  const userId = getUserId(req);
   const { customer_id, customer_name, building_name, house_number, area, layout, measure_date, designer, status, drawings, remark } = req.body;
   const stmt = db.prepare('INSERT INTO design_measurements (customer_id, customer_name, building_name, house_number, area, layout, measure_date, designer, status, drawings, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const result = await stmt.run(customer_id, customer_name, building_name, house_number, area, layout, measure_date, designer, status || '待测量', drawings, remark);
@@ -7865,6 +8581,7 @@ app.post('/api/design-measurements', async (req, res) => {
 });
 
 app.put('/api/design-measurements/:id', async (req, res) => {
+  const userId = getUserId(req);
   const { status, drawings, remark } = req.body;
   await db.prepare('UPDATE design_measurements SET status=?, drawings=?, remark=? WHERE id=?')
     .run(status, drawings, remark, req.params.id);
@@ -7967,6 +8684,7 @@ app.get('/api/contract-variables', async (req, res) => {
 });
 
 app.post('/api/contract-variables', async (req, res) => {
+  const userId = getUserId(req);
   const { name, label, description } = req.body;
   if (!name || !label) {
     return res.json({ success: false, message: '变量名和显示名必填' });
@@ -10941,20 +11659,27 @@ app.get('/api/finance/summary', async (req, res) => {
     );
 
     // 已确认实收
+    // v2.4.6 修正（2026-10-23）：排除"应收占位"记录。
+    // payment_records 里 category='contract'（合同应收占位）和 category='contract_change'
+    // （增项应收占位 / 减项应付占位）是业务审核通过时自动写入的"金额锚点"，
+    // **不是真实到账**。原来的 `type='income'` 把它们一起算进已收，
+    // 导致项目 17「云秀花园紫竹院1102」显示已收 80000（50000 占位 + 30000 真实催收），
+    // 剩余应收算成 -30000（超收）。口径与 v2.3.6 的 /api/finance/dashboard 对齐。
+    // ⚠️ category 可能为 NULL（手工记账），必须用 IS NULL OR NOT IN，否则会漏记录。
     const [[collected]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'income\' AND status=\'confirmed\'' : 'WHERE type=\'income\' AND status=\'confirmed\''}`,
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND' : 'WHERE'} type='income' AND status='confirmed' AND (category IS NULL OR category NOT IN ('contract','contract_change'))`,
       project_id ? [project_id] : []
     );
 
-    // 已确认支出
+    // 已确认支出（同样排除减项应付占位）
     const [[expensed]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'expense\' AND status=\'confirmed\'' : 'WHERE type=\'expense\' AND status=\'confirmed\''}`,
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND' : 'WHERE'} type='expense' AND status='confirmed' AND (category IS NULL OR category NOT IN ('contract','contract_change'))`,
       project_id ? [project_id] : []
     );
 
-    // 待确认支出
+    // 待确认支出（同样排除占位）
     const [[pendingExpense]] = await pool.query(
-      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND type=\'expense\' AND status=\'pending\'' : 'WHERE type=\'expense\' AND status=\'pending\''}`,
+      `SELECT COALESCE(SUM(amount), 0) as total FROM payment_records ${whereProject ? 'WHERE project_id = ? AND' : 'WHERE'} type='expense' AND status='pending' AND (category IS NULL OR category NOT IN ('contract','contract_change'))`,
       project_id ? [project_id] : []
     );
 
@@ -11458,14 +12183,16 @@ app.get('/api/mobile/home-stats', async (req, res) => {
       "SELECT COUNT(*) as count FROM projects WHERE status NOT IN ('已完成','已交付','已取消','已完工','已结算','作废','archived','completed','cancelled') AND status IS NOT NULL AND status <> ''"
     ).get())?.count) || 0;
 
-    // 2. 逾期节点数（end_date < 今天 且 status != 'completed'）
+    // 2. 逾期节点数（plan_end_date < 今天 且 未完成）
+    // ⚠️ 2026-10-23：改读 project_progress_nodes（项目详情/节点管理真正读写的表）。
+    //    project_stages 已是废弃历史表，两套数据对不上会导致首页与项目里不一致。
     const overdue = Number((await db.prepare(
-      "SELECT COUNT(*) as count FROM project_stages WHERE plan_end_date IS NOT NULL AND plan_end_date < ? AND status NOT IN ('completed', '已完成')"
+      "SELECT COUNT(*) as count FROM project_progress_nodes WHERE plan_end_date IS NOT NULL AND plan_end_date < ? AND (status IS NULL OR status NOT IN ('completed', '已完成'))"
     ).get(today))?.count) || 0;
 
-    // 3. 待整改巡检（inspections 表 rectify_status='待整改'）
+    // 3. 待整改巡检（rectification_issues 未完成口径，与待办中心/首页统计一致）
     const pendingInspect = Number((await db.prepare(
-      "SELECT COUNT(*) as count FROM inspections WHERE rectify_status = '待整改'"
+      `SELECT COUNT(*) as count FROM rectification_issues ri WHERE ${RECTIFY_OPEN_SQL}`
     ).get())?.count) || 0;
 
     // 4. 待回款金额 = 已签订合同的总金额 - 已收款（payment1+payment2+payment3）
@@ -11476,10 +12203,10 @@ app.get('/api/mobile/home-stats', async (req, res) => {
 
     // 5. 待办事项（按优先级混合：节点待审核 + 巡检待整改 + 财务待审核，最多 5 条）
     const todos = [];
-    // 节点待审核
+    // 节点待审核（读 project_progress_nodes）
     try {
       const stages = await db.prepare(
-        "SELECT ps.id, ps.stage_name, ps.project_id, p.name as project_name FROM project_stages ps LEFT JOIN projects p ON ps.project_id = p.id WHERE ps.status = 'pending' OR ps.status = 'in_progress' ORDER BY ps.created_at DESC LIMIT 5"
+        "SELECT ps.id, ps.node_name AS stage_name, ps.project_id, p.name as project_name FROM project_progress_nodes ps LEFT JOIN projects p ON ps.project_id = p.id WHERE ps.status IN ('pending', 'in_progress') ORDER BY ps.created_at DESC LIMIT 5"
       ).all();
       for (const s of stages.slice(0, 2)) {
         todos.push({
@@ -11492,10 +12219,14 @@ app.get('/api/mobile/home-stats', async (req, res) => {
         });
       }
     } catch (_) {}
-    // 巡检待整改
+    // 巡检待整改（rectification_issues 未完成口径）
     try {
       const inspects = await db.prepare(
-        "SELECT id, project_name, issues FROM inspections WHERE rectify_status = '待整改' ORDER BY created_at DESC LIMIT 3"
+        `SELECT ri.id, COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name, ri.issue_desc AS issues
+           FROM rectification_issues ri
+           LEFT JOIN projects p ON p.id = ri.project_id
+          WHERE ${RECTIFY_OPEN_SQL}
+          ORDER BY ri.created_at DESC LIMIT 3`
       ).all();
       for (const i of inspects.slice(0, 2)) {
         todos.push({
@@ -11509,15 +12240,15 @@ app.get('/api/mobile/home-stats', async (req, res) => {
       }
     } catch (_) {}
 
-    // 6. 逾期预警（project_stages 里 end_date < today 的节点 + 项目名 + 逾期天数）
+    // 6. 逾期预警（project_progress_nodes 里 plan_end_date < today 的节点 + 项目名 + 逾期天数）
     let warnings = [];
     try {
       const warns = await db.prepare(
-        `SELECT ps.id, ps.stage_name, p.name as project_name, p.id as project_id,
+        `SELECT ps.id, ps.node_name AS stage_name, p.name as project_name, p.id as project_id,
                 DATEDIFF(?, ps.plan_end_date) as days
-         FROM project_stages ps
+         FROM project_progress_nodes ps
          LEFT JOIN projects p ON ps.project_id = p.id
-         WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date < ? AND ps.status NOT IN ('completed', '已完成')
+         WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date < ? AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
          ORDER BY ps.plan_end_date ASC LIMIT 5`
       ).all(today, today);
       warnings = warns.map(w => ({
@@ -11553,6 +12284,14 @@ app.get('/api/mobile/home-stats', async (req, res) => {
 // §7.3 共享作用域（2026-10-12）：待办计数与待办列表必须同一口径 ——
 //   未配 read_all 时按"关联项目 ∪ 提交人=我"过滤，否则徽章数字会把
 //   用户实际看不到的条目也算进去（徽章 6 列表 4 问题）。
+
+// 「待整改」唯一口径（2026-10-23）：待办列表、待办计数、首页统计卡片三处必须共用。
+// 判「未完成」而不是判白名单状态：库里存在 status=NULL 且 finish_date 也为空的历史数据
+// （早期版本没写状态机），按 status IN ('待处理',...) 会被漏掉，永远不出现在任何待办里；
+// 而只判 status 不过滤的话，已完成的历史整改又会被算进"待整改"卡片（曾出现卡片 6 / 列表 1）。
+const RECTIFY_OPEN_SQL = `(ri.status IS NULL OR ri.status NOT IN ('已完成','completed','done','已关闭','已作废'))
+   AND (ri.finish_date IS NULL OR ri.finish_date = '')`;
+
 function __todoScope(userId, perms, admin, relatedIds) {
   const fullScope = {
     purchase: admin || perms.includes('purchase:read_all'),
@@ -11573,12 +12312,15 @@ function __todoScope(userId, perms, admin, relatedIds) {
       dispatch: "`d`.applicant_id = ?",
       contract: "`c`.submitted_by = ?",
       contract_change: "`cc`.submitted_by = ?",
-      inspection: "`ri`.creator_id = ?",
+      // 2026-10-23：巡检整改的三类人要看待办 ——
+      //   ① 项目关联人（原有）② 提交问题的监理（原有）③ 被派为整改负责人的工长（新增）
+      // 派单在 POST 时按 projects.foreman_id 自动落 responsible_id，这里按它精确推送。
+      inspection: "(`ri`.creator_id = ? OR `ri`.responsible_id = ?)",
     }[mod] || null;
     if (submitters) {
       return {
         sql: ` AND (${extraCol} IN (${placeholders}) OR ${submitters})`,
-        params: [...ids, userId],
+        params: [...ids, userId, userId],
       };
     }
     return {
@@ -11638,6 +12380,29 @@ async function __todoCounts(userId, perms, admin) {
     const [[r]] = await pool.query("SELECT COUNT(*) AS c FROM contract_changes cc WHERE cc.status='pending'" + sc.sql, sc.params);
     out.change_approve = { key: 'change_approve', label: '增减项待审核', icon: '🧮', type: 'change_approve', count: Number(r.c) || 0 };
   }
+  // 7) 催收未确认收款（项目相关人可见，2026-10-23 扩围）
+  //    ⚠️ 口径变更：初版只推给提交人（submitted_by=我），业务上不对 ——
+  //       "这笔款还没收到"应该让**整个项目组**都知道（项目经理/监理/工长/设计师/创建人），
+  //       不能只让提交催收的那个人自己盯着。
+  //    新口径：project_id ∈ 我的关联项目 ∪ 我提交的；admin / collection:read_all / finance:read_all 看全部。
+  //    财务确认收款（status='confirmed'）后，所有人列表里同时消失。
+  {
+    const colAllScope = admin || perms.includes('collection:read_all') || perms.includes('finance:read_all');
+    let sql = "SELECT COUNT(*) AS c FROM collection_records cr WHERE cr.status='pending'";
+    const params = [];
+    if (!colAllScope) {
+      // relatedIds 为空时不能拼 IN ()（语法错），退回"仅自己提交的"
+      if (relatedIds && relatedIds.length) {
+        sql += ` AND (cr.project_id IN (${relatedIds.map(() => '?').join(',')}) OR cr.submitted_by = ?)`;
+        params.push(...relatedIds, userId);
+      } else {
+        sql += ' AND cr.submitted_by = ?';
+        params.push(userId);
+      }
+    }
+    const [[r]] = await pool.query(sql, params);
+    out.collection_pending = { key: 'collection_pending', label: '催收未确认收款', icon: '📞', type: 'collection_pending', count: Number(r.c) || 0 };
+  }
   return out;
 }
 
@@ -11663,20 +12428,21 @@ async function __todoProjectCounts(userId, perms, admin, relatedIds) {
   const today = new Date().toISOString().split('T')[0];
   const todayPlus3 = new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0];
 
-  // 1) 节点提前 3 天到期
+  // 1) 节点提前 3 天到期（读 project_progress_nodes，与项目详情/节点管理同源）
+  //    2026-10-23 修复：原读 project_stages（废弃表）→ 与列表、与项目里看到的节点全对不上。
   const [[stageDue]] = await pool.query(
-    `SELECT COUNT(*) AS c FROM project_stages ps
+    `SELECT COUNT(*) AS c FROM project_progress_nodes ps
      JOIN projects p ON p.id = ps.project_id
      WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
        AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
        AND ps.plan_end_date BETWEEN ? AND ?${projectFilter('p.id')}`,
     [today, todayPlus3, ...projectParams()]
   );
-  // 2) 待整改巡检（作用域与列表完全一致）
+  // 2) 待整改巡检（作用域与列表完全一致，口径用模块级 RECTIFY_OPEN_SQL）
   const sc = __todoScope(userId, perms, admin, relatedIds).buildScope('inspection');
   const [[rectify]] = await pool.query(
     `SELECT COUNT(*) AS c FROM rectification_issues ri
-     WHERE ri.status IN ('待处理','待整改','整改中')${sc.sql}`,
+     WHERE ${RECTIFY_OPEN_SQL}${sc.sql}`,
     sc.params
   );
   // 3) 我的派工（与 center 同条件）
@@ -11885,11 +12651,63 @@ app.get('/api/todo/center', async (req, res) => {
       });
     }
 
+    // 8) 催收未确认收款（项目相关人可见，2026-10-23 扩围）
+    //    ⚠️ 口径变更：初版只推给提交人（submitted_by=我），业务上不对 ——
+    //       "这笔款还没收到"应该让**整个项目组**都知道（项目经理/监理/工长/设计师/创建人），
+    //       不能只让提交催收的那个人自己盯着。
+    //    新口径：project_id ∈ 我的关联项目 ∪ 我提交的；admin / collection:read_all / finance:read_all 看全部。
+    //    财务确认收款（status='confirmed'）后，所有人列表里同时消失。
+    {
+      const colAllScope = can('collection:read_all') || can('finance:read_all');
+      let sql = `SELECT cr.id, cr.project_id, cr.amount, cr.collect_date, cr.remark, cr.submitted_at,
+                        COALESCE(NULLIF(p.name, ''), CONCAT('项目#', cr.project_id)) AS project_name,
+                        e.name AS submitter_name
+                 FROM collection_records cr
+                 LEFT JOIN projects p ON p.id = cr.project_id
+                 LEFT JOIN employees e ON e.id = cr.submitted_by
+                 WHERE cr.status = 'pending'`;
+      const params = [];
+      if (!colAllScope) {
+        // relatedIds 为空时不能拼 IN ()（语法错），退回"仅自己提交的"
+        if (relatedIds && relatedIds.length) {
+          sql += ` AND (cr.project_id IN (${relatedIds.map(() => '?').join(',')}) OR cr.submitted_by = ?)`;
+          params.push(...relatedIds, userId);
+        } else {
+          sql += ' AND cr.submitted_by = ?';
+          params.push(userId);
+        }
+      }
+      sql += ' ORDER BY cr.id DESC LIMIT ?';
+      params.push(limit);
+      const [rows] = await pool.query(sql, params);
+      groups.push({
+        ...counts.collection_pending,
+        items: rows.map(r => ({
+          id: r.id, type: 'collection_pending',
+          project_id: r.project_id,
+          title: `催收未确认收款 · ${r.project_name || ''}`.trim(),
+          // 扩围后别人也能看到这条，副标题必须写清「谁提交的」，否则不知道找谁问。
+          // ⚠️ 不再重复项目名 —— title 里已经有了，重复会把「提交人」挤出可视区被截断。
+          subtitle: [
+            r.submitter_name ? ('提交人：' + r.submitter_name) : '',
+            r.remark || '等待财务确认收款'
+          ].filter(Boolean).join(' · '),
+          amount: r.amount != null ? Number(r.amount) : null,
+          time: __fmtTodoTime(r.submitted_at || r.collect_date),
+          // 移动端：项目详情财务 tab（待确认催收列表就在这里）
+          url: `/pages/projects/detail?id=${r.project_id}&tab=finance`
+        }))
+      });
+    }
+
     const total = groups.reduce((s, g) => s + (g.count || 0), 0);
 
     // ==== home 区块：按角色过滤的统计 + 项目相关事项 + 逾期预警 ====
     const today = new Date().toISOString().split('T')[0];
     const todayPlus3 = new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0];
+
+    // ⚠️ 2026-10-23：「待整改」的唯一口径见模块级 RECTIFY_OPEN_SQL（待办列表 / 待办计数 / 统计卡片共用）。
+    // 这里不再重复定义，避免三处各写一份后再次漂移。
 
     // v2.3.1 §7.3：home 统计/列表口径严格按"我能看到的项目"
     //   - admin → 看全部（特殊）
@@ -11914,11 +12732,14 @@ app.get('/api/todo/center', async (req, res) => {
     const homeProjectParams = () => (projectAllScope ? [] : (hasRelated ? [...relatedIds] : []));
 
     // 1) 节点提前 3 天提醒 —— 仅展示我能看到的项目下的节点
+    // ⚠️ 2026-10-23 修复：原来查 project_stages（已废弃的历史表，全库只剩 3 条 9 月的脏数据），
+    //    而项目详情/节点管理真正读写的都是 project_progress_nodes（连 /api/project-stages 这个
+    //    URL 内部也是查 progress_nodes）。两套表数据完全不同 → 首页提醒与项目里看到的节点对不上。
     let stage_alerts = [];
     {
       const [rows] = await pool.query(
-        `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, ps.status, p.name AS project_name
-         FROM project_stages ps
+        `SELECT ps.id, ps.project_id, ps.node_name AS stage_name, ps.plan_end_date, ps.status, p.name AS project_name
+         FROM project_progress_nodes ps
          JOIN projects p ON p.id = ps.project_id
          WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
            AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
@@ -11942,8 +12763,7 @@ app.get('/api/todo/center', async (req, res) => {
 
     // 2) 待整改巡检（整改问题表 rectification_issues，详情页 /api/rectification-issues/:id 读这张表）
     // 原实现查的是 inspections.rectify_status='待整改'，id 与详情接口对不上（不同表）。
-    // 改为查 rectification_issues，status='待处理'/'待整改'/'整改中' 都算待办；
-    // due_date 字段这张表本来就有，无需 ALTER。
+    // 2026-10-23：口径统一为 RECTIFY_OPEN（未完成），与首页"待整改"统计卡片完全一致。
     let rectify_alerts = [];
     {
       const sc = buildScope('inspection', 'ri.project_id');
@@ -11954,10 +12774,11 @@ app.get('/api/todo/center', async (req, res) => {
       const [rows] = await pool.query(
         `SELECT ri.id, ri.project_id,
                 COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name,
-                ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status
+                ri.issue_desc, ri.title, ri.created_at, ri.due_date, ri.status,
+                ri.responsible_id, ri.responsible_name, ri.accept_date, ri.accept_name
          FROM rectification_issues ri
          LEFT JOIN projects p ON p.id = ri.project_id
-         WHERE ri.status IN ('待处理','待整改','整改中')${sc.sql}
+         WHERE ${RECTIFY_OPEN_SQL}${sc.sql}
          ORDER BY ri.created_at DESC LIMIT 10`,
         sc.params
       );
@@ -11978,7 +12799,7 @@ app.get('/api/todo/center', async (req, res) => {
           id: r.id, type: 'inspect_rectify',
           source_type: 'rectification_issue', source_id: r.id,
           title: (r.title || r.issue_desc || '待整改').slice(0, 30),
-          subtitle: r.project_name,
+          subtitle: [r.project_name, r.responsible_name].filter(Boolean).join(' · '),
           time: __fmtTodoTime(r.created_at),
           due_date: r.due_date || null,
           days_left,
@@ -12010,12 +12831,14 @@ app.get('/api/todo/center', async (req, res) => {
     }
 
     // 4) 逾期节点预警 —— 仅展示我能看到的项目下的逾期节点
+    // ⚠️ 2026-10-23 修复：同 1)，改读 project_progress_nodes（真正的节点表）。
+    //    原来读 project_stages 导致"首页说水电验收逾期、项目里该节点却还没到计划结束日"。
     let warnings = [];
     {
       const [rows] = await pool.query(
-        `SELECT ps.id, ps.project_id, ps.stage_name, ps.plan_end_date, p.name AS project_name,
+        `SELECT ps.id, ps.project_id, ps.node_name AS stage_name, ps.plan_end_date, p.name AS project_name,
                 DATEDIFF(?, ps.plan_end_date) AS days
-         FROM project_stages ps
+         FROM project_progress_nodes ps
          JOIN projects p ON p.id = ps.project_id
          WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date != ''
            AND ps.plan_end_date < ?
@@ -12026,6 +12849,7 @@ app.get('/api/todo/center', async (req, res) => {
       );
       warnings = rows.map(r => ({
         id: r.project_id,
+        node_id: r.id,
         name: r.project_name || '未知项目',
         node: r.stage_name || '',
         days: r.days || 0,
@@ -12042,9 +12866,9 @@ app.get('/api/todo/center', async (req, res) => {
          ${projectAllScope ? '' : ' AND id IN (' + homePh + ')'}`,
       homeProjectParams()
     ))[0][0].c;
-    //    逾期节点：项目阶段中逾期未完成的（join projects 取可见集）
+    //    逾期节点：项目进度节点中逾期未完成的（读 project_progress_nodes，与项目详情同源）
     const overdue = (await pool.query(
-      `SELECT COUNT(*) c FROM project_stages ps
+      `SELECT COUNT(*) c FROM project_progress_nodes ps
        JOIN projects p ON p.id = ps.project_id
        WHERE ps.plan_end_date IS NOT NULL AND ps.plan_end_date <> '' AND ps.plan_end_date < ?
          AND (ps.status IS NULL OR ps.status NOT IN ('completed', '已完成'))
@@ -12054,9 +12878,13 @@ app.get('/api/todo/center', async (req, res) => {
     //    待整改：整改问题（关联项目要在可见集内，或我是创建人）
     // 注意：relatedIds=[] 时 homePh='-1'（字面量，无占位），参数只有 userId 1 个；
     //       relatedIds=[15] 时 homePh='?'（占位）+ userId 1 个占位 = 2 个参数。
+    // ⚠️ 2026-10-23 修复：原来这条 COUNT 完全没有状态过滤，把「已完成」的历史整改也算进来
+    //    （实测库里 6 条：3 条已完成、1 条待处理、2 条 status 为 NULL 但 finish_date 也为空）。
+    //    卡片显示 6 而下方待办列表只有 1 条 → 用户看到的就是"待整改 6 但实际只有 1 个"。
+    //    口径统一为「未完成」：status 不在已完成集合，且没有完成时间。与下方 rectify_alerts 一致。
     const pendingInspect = (await pool.query(
       `SELECT COUNT(*) c FROM rectification_issues ri
-       ${projectAllScope ? '' : ' WHERE (ri.project_id IN (' + homePh + ') OR ri.creator_id = ?)'}`,
+       WHERE ${RECTIFY_OPEN_SQL}${projectAllScope ? '' : ' AND (ri.project_id IN (' + homePh + ') OR ri.creator_id = ?)'}`,
       projectAllScope ? [] : [...homeProjectParams(), userId]
     ))[0][0].c;
 
@@ -12185,6 +13013,18 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
+// v2.4.1 兜底：进程级异常不应让整站下线。
+// 背景：2026-10-23 发现 9 个路由引用了未声明的 userId，任意一次调用即抛
+// ReferenceError。Express 4 不接管 async 处理函数的 rejection，Node 22 默认
+// 直接退出进程 —— 表现就是「某个人点了某个按钮，整个系统 502」。
+// 这里把「整站挂掉」降级为「该请求失败 + 日志留痕」，其余用户不受影响。
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection] 未捕获的异步异常（进程已保活）:', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException] 未捕获异常（进程已保活）:', err && err.stack ? err.stack : err);
+});
+
 // v2.3.6-hotfix2：listen 失败时（端口被 TIME_WAIT/CLOSE_WAIT 占用）重试 3 次，每次间隔 2 秒
 // 解决宝塔拉起新进程时 EADDRINUSE 死循环
 function startServer(retry = 0) {
@@ -12202,3 +13042,70 @@ function startServer(retry = 0) {
   });
 }
 startServer();
+
+// ============================================================
+// 巡检整改到期提醒（2026-10-23 新增）
+// 业务流程：监理提交(待处理) → 工长受理(处理中，可改时间) → 到期提醒 → 延期 or 结案(已完成)
+// 每天 09:00 扫一遍「整改截止时间 = 今天 且未结案」的问题，给负责人（工长）发消息。
+// 与待办中心的逾期/加急徽标互补：徽标是被动展示，这里是主动推送。
+// ⚠️ 延期后 due_date 会变，天然按新日期重新排队，不会重复提醒旧日期。
+// ============================================================
+async function runRectifyDueReminder() {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const [rows] = await pool.query(
+      `SELECT ri.id, ri.project_id, ri.title, ri.issue_desc, ri.due_date, ri.status,
+              ri.responsible_id, ri.responsible_name,
+              COALESCE(NULLIF(ri.project_name, ''), p.name) AS project_name
+         FROM rectification_issues ri
+         LEFT JOIN projects p ON p.id = ri.project_id
+        WHERE ri.due_date = ? AND ri.status IN ('待处理', '处理中')`,
+      [today]
+    );
+    if (!rows.length) return;
+    console.log(`[rectify-due] ${today} 有 ${rows.length} 条整改到期，发送提醒`);
+    for (const r of rows) {
+      // 通知对象：负责人（工长）优先；没派负责人则退回项目工长/关联人
+      let targets = [];
+      if (r.responsible_id) {
+        const [emps] = await pool.query(
+          'SELECT id, name, phone FROM employees WHERE id = ?', [r.responsible_id]);
+        targets = (emps || []).filter(e => e.phone).map(e => ({ phone: e.phone, name: e.name || '', user_id: e.id }));
+      }
+      if (!targets.length) {
+        // 兜底：项目绑定的工长 + 项目经理
+        const [emps] = await pool.query(
+          `SELECT id, name, phone FROM employees
+            WHERE id IN (SELECT foreman_id FROM projects WHERE id = ?
+                         UNION SELECT manager_id FROM projects WHERE id = ?)
+              AND phone IS NOT NULL AND phone != ''`,
+          [r.project_id, r.project_id]);
+        targets = (emps || []).map(e => ({ phone: e.phone, name: e.name || '', user_id: e.id }));
+      }
+      if (!targets.length) continue;
+      const stateText = r.status === '待处理' ? '尚未受理' : '处理中';
+      await sendAppNotification(
+        'inspection_due',
+        `【整改今日到期】${r.project_name || ''}`,
+        `${(r.title || r.issue_desc || '整改问题').slice(0, 40)}（${stateText}）截止今天，请及时处理或申请延期。`,
+        r.id, 'rectification_issue', targets
+      );
+    }
+  } catch (e) {
+    console.error('[rectify-due] 到期提醒执行失败:', e.message);
+  }
+}
+
+// 注册每日定时器：每天 09:00 跑一次（进程启动时先算毫秒差，之后每 24h 一轮）
+(function scheduleRectifyDueReminder() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(9, 0, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  const firstDelay = next.getTime() - now.getTime();
+  setTimeout(() => {
+    runRectifyDueReminder();
+    setInterval(runRectifyDueReminder, 24 * 3600 * 1000);
+  }, firstDelay);
+  console.log(`[rectify-due] 到期提醒已注册，下次执行 ${next.toLocaleString('zh-CN')}`);
+})();

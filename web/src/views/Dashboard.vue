@@ -380,9 +380,11 @@
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import { useRouter } from 'vue-router'
-import { resolvePcTarget } from '@/utils/message-link'
+import { resolveTodoTarget } from '@/utils/message-link'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 // 待办事项（与移动端待办中心共用 /api/todo/center）
 const todoGroups = ref([])
@@ -431,7 +433,8 @@ const loadTodo = async () => {
 }
 
 const goTodoItem = (item) => {
-  const target = resolvePcTarget(item)
+  // 带权限兜底：催收未确认收款落到 /finance-projects，无 finance 权限的人回落项目列表
+  const target = resolveTodoTarget(item, userStore.can)
   router.push(target || '/todo')
 }
 

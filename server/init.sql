@@ -463,6 +463,54 @@ CREATE TABLE IF NOT EXISTS acceptance (
   created_at DATETIME DEFAULT '2024-01-01 00:00:00'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ========================================
+-- v2.4.1 主材验收（工长对进场材料的逐项验收）
+-- ========================================
+CREATE TABLE IF NOT EXISTS material_acceptances (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  accept_no VARCHAR(50) DEFAULT '',
+  project_id INT NOT NULL,
+  project_name VARCHAR(255) DEFAULT '',
+  accept_date VARCHAR(50) DEFAULT '',
+  stage VARCHAR(50) DEFAULT '',
+  foreman_id INT DEFAULT NULL,
+  foreman_name VARCHAR(100) DEFAULT '',
+  supplier_id INT DEFAULT NULL,
+  supplier_name VARCHAR(255) DEFAULT '',
+  delivery_no VARCHAR(100) DEFAULT '',
+  docs TEXT,
+  storage VARCHAR(50) DEFAULT '',
+  result VARCHAR(50) DEFAULT '',
+  handling VARCHAR(50) DEFAULT '',
+  item_count INT DEFAULT 0,
+  pass_count INT DEFAULT 0,
+  fail_count INT DEFAULT 0,
+  photos TEXT,
+  remark TEXT,
+  creator_id INT DEFAULT NULL,
+  created_at DATETIME NULL DEFAULT NULL,
+  updated_at DATETIME NULL DEFAULT NULL,
+  KEY idx_ma_project (project_id),
+  KEY idx_ma_date (accept_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS material_acceptance_items (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  accept_id INT NOT NULL,
+  material_id INT DEFAULT NULL,
+  material_name VARCHAR(255) DEFAULT '',
+  spec VARCHAR(255) DEFAULT '',
+  brand VARCHAR(255) DEFAULT '',
+  unit VARCHAR(50) DEFAULT '',
+  plan_qty DECIMAL(12,2) DEFAULT NULL,
+  actual_qty DECIMAL(12,2) DEFAULT NULL,
+  verdict VARCHAR(20) DEFAULT '合格',
+  problem_tags TEXT,
+  remark VARCHAR(255) DEFAULT '',
+  sort_order INT DEFAULT 0,
+  KEY idx_mai_accept (accept_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS invoices (
   id INT AUTO_INCREMENT PRIMARY KEY,
   invoice_no VARCHAR(100),
