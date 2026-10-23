@@ -29,6 +29,18 @@
           <text v-if="!loading">确认绑定</text>
           <text v-else>绑定中...</text>
         </view>
+        <!-- 条款勾选 -->
+        <view class="agree-row">
+          <view class="agree-check" :class="{ checked: agreed }" @click="agreed = !agreed">
+            <text v-if="agreed" class="agree-check-icon">✓</text>
+          </view>
+          <text class="agree-text">
+            我已阅读并同意
+            <text class="agree-link" @click.stop="goService">《用户服务协议》</text>
+            和
+            <text class="agree-link" @click.stop="goPrivacy">《隐私政策》</text>
+          </text>
+        </view>
         <text class="hint">仅用于核对项目归属，不会对外展示</text>
       </view>
 
@@ -48,6 +60,7 @@ const phone = ref("");
 const loading = ref(false);
 const checking = ref(true);
 const openid = ref("");
+const agreed = ref(false);
 
 onLoad(async () => {
   const r = await miniSilentLogin();
@@ -70,6 +83,10 @@ onLoad(async () => {
 });
 
 const submit = async () => {
+  if (!agreed.value) {
+    uni.showToast({ title: '请先阅读并同意用户服务协议和隐私政策', icon: 'none', duration: 2000 });
+    return;
+  }
   const p = String(phone.value || "").trim();
   if (p.length !== 11) {
     uni.showToast({ title: "请输入 11 位手机号", icon: "none" });
@@ -93,6 +110,14 @@ const submit = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const goService = () => {
+  uni.navigateTo({ url: '/pages/agreement/service' });
+};
+
+const goPrivacy = () => {
+  uni.navigateTo({ url: '/pages/agreement/privacy' });
 };
 
 const goBack = () => {
@@ -233,5 +258,49 @@ const goBack = () => {
 .loading-text {
   font-size: 13px;
   color: #6b7280;
+}
+
+/* 条款勾选 */
+.agree-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 14px;
+  margin-bottom: 6px;
+}
+
+.agree-check {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #9CA3AF;
+  border-radius: 3px;
+  margin-right: 8px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agree-check.checked {
+  background: #1E3A5F;
+  border-color: #1E3A5F;
+}
+
+.agree-check-icon {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agree-text {
+  font-size: 12px;
+  color: #6B7280;
+  line-height: 1.6;
+}
+
+.agree-link {
+  color: #3B82F6;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 </style>

@@ -53,6 +53,18 @@
             <text v-if="!loading">登 录</text>
             <text v-else>登录中...</text>
           </view>
+          <!-- 条款勾选 -->
+          <view class="agree-row">
+            <view class="agree-check" :class="{ checked: agreed }" @click="agreed = !agreed">
+              <text v-if="agreed" class="agree-check-icon">✓</text>
+            </view>
+            <text class="agree-text">
+              我已阅读并同意
+              <text class="agree-link" @click.stop="goService">《用户服务协议》</text>
+              和
+              <text class="agree-link" @click.stop="goPrivacy">《隐私政策》</text>
+            </text>
+          </view>
           <!-- #ifdef MP-WEIXIN -->
           <!-- 员工微信绑定入口：管理员在 PC 员工列表生成小程序码，扫码直达；
                扫不了时从这里手动输入绑定码。绑过之后就不用再输账号密码。 -->
@@ -100,6 +112,18 @@
             <text v-if="!loading">登 录</text>
             <text v-else>登录中...</text>
           </view>
+          <!-- 条款勾选 -->
+          <view class="agree-row">
+            <view class="agree-check" :class="{ checked: agreed }" @click="agreed = !agreed">
+              <text v-if="agreed" class="agree-check-icon">✓</text>
+            </view>
+            <text class="agree-text">
+              我已阅读并同意
+              <text class="agree-link" @click.stop="goService">《用户服务协议》</text>
+              和
+              <text class="agree-link" @click.stop="goPrivacy">《隐私政策》</text>
+            </text>
+          </view>
         </template>
       </view>
 
@@ -121,10 +145,10 @@ import { onLoad } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { bindOpenidQuietly } from "@/utils/wechat";
 
-// 默认「客户登录」：业主是主要使用者，进页面就能看到微信一键登录；
-// 员工从落地页「员工登录」进入时会带 ?type=employee 自动切回员工 tab。
+// 默认「客户登录」
 const loginType = ref('customer');
 const loading = ref(false);
+const agreed = ref(false);
 
 // 支持从落地页带身份进入：?type=customer / ?type=employee
 onLoad((opt) => {
@@ -133,7 +157,7 @@ onLoad((opt) => {
   }
 });
 
-// 版本号由 vite.config.ts 的 define 在构建时注入（来源：package.json 的 version）
+// 版本号由 vite.config.ts 的 define 在构建时注入
 const APP_VERSION = __APP_VERSION__;
 
 const empForm = reactive({
@@ -146,8 +170,18 @@ const custForm = reactive({
   name: '',
 });
 
+// 校验是否已同意条款
+const checkAgreed = () => {
+  if (!agreed.value) {
+    uni.showToast({ title: '请先阅读并同意用户服务协议和隐私政策', icon: 'none', duration: 2000 });
+    return false;
+  }
+  return true;
+};
+
 // 员工登录
 const handleEmployeeLogin = async () => {
+  if (!checkAgreed()) return;
   if (!empForm.username.trim() || !empForm.password.trim()) {
     uni.showToast({ title: '请输入用户名和密码', icon: 'none' });
     return;
@@ -186,6 +220,7 @@ const goEmployeeBind = () => {
 
 // 客户登录
 const handleCustomerLogin = async () => {
+  if (!checkAgreed()) return;
   if (!custForm.phone.trim()) {
     uni.showToast({ title: '请输入手机号', icon: 'none' });
     return;
@@ -237,7 +272,16 @@ const handleCustomerLogin = async () => {
 
 // 微信一键登录：跳绑定页（该页会先静默登录，已绑定直接进工地，未绑定才要手机号）
 const goWxLogin = () => {
+  if (!checkAgreed()) return;
   uni.navigateTo({ url: '/pages/bind/index' });
+};
+
+const goService = () => {
+  uni.navigateTo({ url: '/pages/agreement/service' });
+};
+
+const goPrivacy = () => {
+  uni.navigateTo({ url: '/pages/agreement/privacy' });
 };
 
 const goBack = () => {
@@ -495,5 +539,49 @@ const goBack = () => {
 
 .nav-placeholder {
   width: 40px;
+}
+
+/* 条款勾选 */
+.agree-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 0 4px;
+}
+
+.agree-check {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #9CA3AF;
+  border-radius: 3px;
+  margin-right: 8px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agree-check.checked {
+  background: #1E3A5F;
+  border-color: #1E3A5F;
+}
+
+.agree-check-icon {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.agree-text {
+  font-size: 12px;
+  color: #6B7280;
+  line-height: 1.6;
+}
+
+.agree-link {
+  color: #3B82F6;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 </style>

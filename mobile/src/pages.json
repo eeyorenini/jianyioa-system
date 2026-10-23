@@ -519,6 +519,20 @@
       }
     },
     {
+      "path": "pages/agreement/service",
+      "style": {
+        "navigationBarTitleText": "用户服务协议",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/agreement/privacy",
+      "style": {
+        "navigationBarTitleText": "隐私政策",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/files/review",
       "style": {
         "navigationBarTitleText": "审核文件",
