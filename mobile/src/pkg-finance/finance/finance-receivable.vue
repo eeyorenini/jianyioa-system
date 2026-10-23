@@ -12,8 +12,16 @@
       📁 {{ projectName }}
     </view>
 
+    <!-- 未指定项目：给明确提示，不静默显示 0 -->
+    <view v-if="!projectId" class="empty-state">
+      <text class="empty-icon">📊</text>
+      <text class="empty-title">未指定项目</text>
+      <text class="empty-desc">本页按项目核算应收，请从项目详情或财务消息进入</text>
+      <view class="empty-btn" @click="goBack">返回</view>
+    </view>
+
     <!-- 加载状态 -->
-    <view v-if="loading" class="loading-state">
+    <view v-else-if="loading" class="loading-state">
       <text>加载中...</text>
     </view>
 
@@ -42,12 +50,26 @@
         <view class="card-label">实际应收</view>
         <view class="card-value highlight">¥{{ formatAmount(actualReceivable) }}</view>
       </view>
+
+      <!-- 已收款 -->
+      <view class="summary-card collected">
+        <view class="card-label">已收款</view>
+        <view class="card-value">¥{{ formatAmount(summary.collected) }}</view>
+      </view>
+
+      <!-- 剩余应收（重点） -->
+      <view class="summary-card balance" :class="{ settled: remaining <= 0 }">
+        <view class="card-label">剩余应收</view>
+        <view class="card-value">¥{{ formatAmount(remaining) }}</view>
+        <view class="card-sub" v-if="remaining <= 0 && actualReceivable > 0">已结清</view>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 
 const projectId = ref('')
 const projectName = ref('')
@@ -57,27 +79,33 @@ const summary = ref({
   contract_amount: 0,
   increase_total: 0,
   decrease_total: 0,
+  collected: 0,
 })
 
+/** 实际应收 = 合同 + 增项 - 减项 */
 const actualReceivable = computed(() => {
   return (summary.value.contract_amount || 0)
     + (summary.value.increase_total || 0)
     - (summary.value.decrease_total || 0)
 })
 
-onMounted(() => {
-  const pages = getCurrentPages()
-  const current = pages[pages.length - 1]
-  const options = current.options || {}
-
-  if (options.projectId) {
-    projectId.value = options.projectId
+/** 剩余应收 = 实际应收 - 已收款；后端有 balance 就用后端的，口径以后端为准 */
+const remaining = computed(() => {
+  if (summary.value.balance !== undefined && summary.value.balance !== null) {
+    return summary.value.balance
   }
-  if (options.projectName) {
-    projectName.value = decodeURIComponent(options.projectName)
-  }
+  return actualReceivable.value - (summary.value.collected || 0)
+})
 
-  loadSummary()
+// ⚠️ 必须用 onLoad 取参：H5 首屏 mounted 阶段页面栈还没就绪，
+//    用 getCurrentPages().options 会拿到空对象 → projectId 为空 → 全显示 0。
+onLoad((options) => {
+  const opts = options || {}
+  projectId.value = opts.projectId || opts.project_id || ''
+  if (opts.projectName) {
+    try { projectName.value = decodeURIComponent(opts.projectName) } catch (e) { projectName.value = opts.projectName }
+  }
+  if (projectId.value) loadSummary()
 })
 
 function loadSummary() {
@@ -88,15 +116,17 @@ function loadSummary() {
     url: '/api/finance/summary?project_id=' + projectId.value,
     success: (res) => {
       loading.value = false
-      if (res.data.code === 0 || res.statusCode === 200) {
+      if (res.statusCode === 200 && res.data && !res.data.error) {
         const data = res.data.data || res.data || {}
         summary.value = {
-          contract_amount: data.contract_amount || 0,
-          increase_total: data.increase_total || 0,
-          decrease_total: data.decrease_total || 0,
+          contract_amount: Number(data.contract_amount) || 0,
+          increase_total: Number(data.increase_total) || 0,
+          decrease_total: Number(data.decrease_total) || 0,
+          collected: Number(data.collected) || 0,
+          balance: data.balance !== undefined && data.balance !== null ? Number(data.balance) || 0 : undefined,
         }
       } else {
-        uni.showToast({ title: res.data.msg || '加载失败', icon: 'none' })
+        uni.showToast({ title: (res.data && (res.data.error || res.data.msg)) || '加载失败', icon: 'none' })
       }
     },
     fail: () => {
@@ -107,8 +137,9 @@ function loadSummary() {
 }
 
 function formatAmount(val) {
-  if (!val && val !== 0) return '0.00'
-  return parseFloat(val).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const n = Number(val)
+  if (!isFinite(n)) return '0.00'
+  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function goBack() {
@@ -143,6 +174,18 @@ function goBack() {
   font-size: 28rpx;
 }
 
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 140rpx 40rpx 0;
+}
+.empty-icon { font-size: 72rpx; margin-bottom: 24rpx; }
+.empty-title { font-size: 32rpx; font-weight: 600; color: #333; margin-bottom: 12rpx; }
+.empty-desc { font-size: 26rpx; color: #999; text-align: center; line-height: 1.6; }
+.empty-btn {
+  margin-top: 40rpx; padding: 16rpx 64rpx;
+  background: #1E3A5F; color: #fff; border-radius: 40rpx; font-size: 28rpx;
+}
+
 .summary-container {
   padding: 20rpx;
   display: grid;
@@ -168,7 +211,8 @@ function goBack() {
   margin-bottom: 16rpx;
 }
 
-.summary-card.total .card-label {
+.summary-card.total .card-label,
+.summary-card.balance .card-label {
   color: rgba(255, 255, 255, 0.8);
 }
 
@@ -189,5 +233,24 @@ function goBack() {
 .card-value.highlight {
   color: #fff;
   font-size: 44rpx;
+}
+
+/* 已收款：绿色系（已到账） */
+.summary-card.collected {
+  background: #ECFDF5;
+}
+.summary-card.collected .card-value { color: #065F46; }
+
+/* 剩余应收：橙红强调（还要收的钱） */
+.summary-card.balance {
+  background: #B45309;
+}
+.summary-card.balance .card-value { color: #fff; font-size: 44rpx; }
+.summary-card.balance.settled { background: #059669; }
+
+.card-sub {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, 0.85);
 }
 </style>

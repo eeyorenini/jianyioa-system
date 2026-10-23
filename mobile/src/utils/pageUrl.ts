@@ -65,10 +65,12 @@ export interface MessageTarget {
   label: string
   /** 该实体是否必须带 id 才有意义 */
   needId: boolean
+  /** 附加查询串（不含 ?）；由 openMessageTarget 拼在归一化后的路径后面 */
+  query?: string
 }
 
 /** 实体类型（source_type）→ 目标页面构造器 */
-const BY_SOURCE_TYPE: Record<string, (id: string) => MessageTarget> = {
+const BY_SOURCE_TYPE: Record<string, (id: string, msg?: any) => MessageTarget> = {
   project: (id) => ({ path: `/pages/projects/detail?id=${id}`, label: '查看项目', needId: true }),
   node: (id) => ({ path: `/pages/projects/node?id=${id}`, label: '查看项目节点', needId: true }),
   project_log: (id) => ({ path: `/pages/projects/log-detail?id=${id}`, label: '查看施工日志', needId: true }),
@@ -79,13 +81,24 @@ const BY_SOURCE_TYPE: Record<string, (id: string) => MessageTarget> = {
   // 移动端「巡检」写的是 rectification_issues，详情页即整改详情
   rectification_issue: (id) => ({ path: `/pages/inspection/detail?id=${id}`, label: '查看整改详情', needId: true }),
   acceptance: (id) => ({ path: `/pages/acceptance/detail?id=${id}`, label: '查看验收', needId: true }),
+  // v2.4.1 主材验收（工长进场材料逐项验收）
+  material_acceptance: (id) => ({ path: `/pages/material-accept/detail?id=${id}`, label: '查看材料验收', needId: true }),
   purchase: (id) => ({ path: `/pages/purchase/detail?id=${id}`, label: '查看采购', needId: true }),
   purchase_request: (id) => ({ path: `/pages/purchase/detail?id=${id}`, label: '查看采购', needId: true }),
   project_file: (id) => ({ path: `/pages/files/detail?id=${id}`, label: '查看项目文件', needId: true }),
   approval: (id) => ({ path: `/pages/approval/detail?id=${id}`, label: '查看审批', needId: true }),
   customer: (id) => ({ path: `/pages/customers/customers?id=${id}`, label: '查看客户', needId: false }),
   notice: (id) => ({ path: `/pages/notices/notices?id=${id}`, label: '查看公告', needId: false }),
-  collection: () => ({ path: `/pages/finance/finance-receivable`, label: '查看应收', needId: false }),
+  // ⚠️ 应收统计页必须带 projectId，否则页面只能显示 ¥0.00。
+  //    messages / notifications 表本身没有 project_id 列，
+  //    由后端 /api/messages 的 attachProjectInfo() 按 collection_records 反查后补上。
+  collection: (id, msg) => {
+    const pid = parseInt(msg && msg.project_id) || 0
+    const query = pid
+      ? `projectId=${pid}` + (msg && msg.project_name ? `&projectName=${encodeURIComponent(msg.project_name)}` : '')
+      : ''
+    return { path: `/pages/finance/finance-receivable`, label: '查看应收', needId: false, query }
+  },
   invoice: () => ({ path: `/pages/finance/list`, label: '查看收支', needId: false }),
   finance: () => ({ path: `/pages/finance/list`, label: '查看收支', needId: false }),
 }
@@ -106,7 +119,11 @@ const TYPE_TO_SOURCE: Record<string, string> = {
   node_in_progress: 'node',
   node_completed: 'node',
   inspection_submit: 'rectification_issue',
+  // 2026-10-23 整改到期提醒（定时器推送）：source_type 正常会命中实体，
+  // 但历史脏数据可能缺 source_type，这里兜底
+  inspection_due: 'rectification_issue',
   acceptance_submit: 'acceptance',
+  material_acceptance_submit: 'material_acceptance',
   dispatch_created: 'dispatch',
   dispatch_status_changed: 'dispatch',
   approval_submit: 'approval',
@@ -135,7 +152,7 @@ export function resolveMessageTarget(msg: any): MessageTarget | null {
   const build = BY_SOURCE_TYPE[st]
   if (!build) return null
 
-  const target = build(id)
+  const target = build(id, msg)
   if (target.needId && (!id || id === '0' || id === 'null')) return null
   return target
 }
@@ -146,7 +163,12 @@ export function openMessageTarget(target: MessageTarget | null) {
     uni.showToast({ title: '该消息暂无关联页面', icon: 'none' })
     return
   }
-  const url = resolvePageUrl(target.path)
+  const base = resolvePageUrl(target.path)
+  // query 要拼在**归一化之后**：resolvePageUrl 只改 path，
+  // 若先拼再归一化，映射表里的键会带上 ?xx=1 而匹配不到分包
+  const url = target.query
+    ? base + (base.indexOf('?') === -1 ? '?' : '&') + target.query
+    : base
   const fail = () => uni.showToast({ title: '页面暂不可用', icon: 'none' })
   if (isTabBarPage(target.path)) {
     uni.switchTab({ url, fail })

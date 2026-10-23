@@ -43,6 +43,8 @@ export const PAGE_DIR_TO_PKG: Record<string, string> = {
   change: 'pkg-inspect',
   purchase: 'pkg-purchase',
   material: 'pkg-purchase',
+  // v2.4.1 主材验收：跟 material 同包，现场验收常从台账/采购页跳转，同包免下载
+  'material-accept': 'pkg-purchase',
   finance: 'pkg-finance',
   contract: 'pkg-finance',
   contracts: 'pkg-finance',

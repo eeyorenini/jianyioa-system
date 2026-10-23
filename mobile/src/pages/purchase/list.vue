@@ -7,8 +7,8 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <!-- Tab切换 -->
-    <view class="tab-bar">
+    <!-- Tab切换：只有 1 个 tab 时整条隐藏，避免一条 tab 占满整行 -->
+    <view v-if="tabs.length > 1" class="tab-bar">
       <view
         v-for="tab in tabs"
         :key="tab.key"
@@ -16,8 +16,8 @@
         :class="{ active: activeTab === tab.key }"
         @click="switchTab(tab.key)"
       >
-        {{ tab.label }}
-        <view v-if="tab.badge" class="tab-badge">{{ tab.badge }}</view>
+        <text class="tab-text">{{ tab.label }}</text>
+        <text v-if="tab.badge" class="tab-badge">{{ tab.badge > 99 ? '99+' : tab.badge }}</text>
       </view>
     </view>
 
@@ -30,115 +30,140 @@
       :refresher-triggered="refreshing"
       @refresherrefresh="onRefresh"
     >
-      <view v-if="loading && list.length === 0" class="empty-state">
-        <text class="loading-icon">⟳</text>
+      <!-- 汇总条 -->
+      <view v-if="list.length" class="summary-bar">
+        <text class="summary-count">共 {{ total }} 单</text>
+        <text v-if="noMore" class="summary-amount">合计 ¥{{ fmtMoney(sumAmount) }}</text>
       </view>
-      <view v-else-if="list.length === 0" class="empty-state">
-        <text class="empty-icon">📋</text>
+
+      <!-- 首次加载 -->
+      <view v-if="loading && list.length === 0" class="state-state">
+        <view class="spin"></view>
+        <text class="state-text">加载中...</text>
+      </view>
+
+      <!-- 空态 -->
+      <view v-else-if="list.length === 0" class="state-state">
+        <text class="empty-icon">🧾</text>
         <text class="empty-text">{{ emptyText }}</text>
+        <text v-if="activeTab === 'my'" class="empty-hint">点右下角 + 提交采购申请</text>
       </view>
-      <view v-else>
+
+      <view v-else class="card-list">
         <view
           v-for="item in list"
           :key="item.id"
           class="card"
           @click="goDetail(item)"
         >
-          <view class="card-header">
-            <text class="card-title">{{ item.material_name }}</text>
-            <view class="status-tag" :style="{ background: statusBg(item.status), color: statusColor(item.status) }">
+          <!-- 标题 + 状态 -->
+          <view class="card-head">
+            <text class="card-title">{{ item.material_name || '采购申请' }}</text>
+            <text class="status-pill" :class="'st-' + (item.status || 'default')">
               {{ statusLabel(item.status) }}
+            </text>
+          </view>
+
+          <!-- 金额 / 数量 -->
+          <view class="card-amount-row">
+            <text class="card-amount">¥{{ fmtMoney(item.total_amount) }}</text>
+            <text v-if="item.quantity" class="card-qty">{{ fmtQty(item.quantity) }}{{ item.unit || '' }}</text>
+          </view>
+
+          <!-- 当前环节提示 -->
+          <view v-if="flowHint(item) && activeTab === 'my'" class="flow-hint">
+            <text class="flow-text">{{ flowHint(item) }}</text>
+          </view>
+
+          <!-- 单据信息 -->
+          <view class="card-meta">
+            <view v-if="item.project_name" class="meta-row">
+              <text class="meta-k">项目</text>
+              <text class="meta-v">{{ item.project_name }}</text>
+            </view>
+            <view v-if="item.supplier_name" class="meta-row">
+              <text class="meta-k">供应商</text>
+              <text class="meta-v">{{ item.supplier_name }}</text>
+            </view>
+            <view class="meta-row">
+              <text class="meta-k">申请人</text>
+              <text class="meta-v">
+                {{ item.applicant_name || '—' }}
+                <text class="meta-dot">·</text>
+                <text class="meta-time">{{ fmtTime(item.created_at) }}</text>
+              </text>
             </view>
           </view>
-          <view v-if="flowHint(item) && activeTab === 'my'" class="flow-hint">{{ flowHint(item) }}</view>
-          <view class="card-info">
-            <view class="info-row">
-              <text class="info-label">项目</text>
-              <text class="info-value">{{ item.project_name }}</text>
-            </view>
-            <view class="info-row">
-              <text class="info-label">供应商</text>
-              <text class="info-value">{{ item.supplier_name }}</text>
-            </view>
-            <view class="info-row">
-              <text class="info-label">数量</text>
-              <text class="info-value">{{ item.quantity }}{{ item.unit }}</text>
-            </view>
-            <view class="info-row">
-              <text class="info-label">金额</text>
-              <text class="info-value amount">¥{{ item.total_amount || 0 }}</text>
-            </view>
-            <view class="info-row">
-              <text class="info-label">申请人</text>
-              <text class="info-value">{{ item.applicant_name }}</text>
-            </view>
-            <view class="info-row">
-              <text class="info-label">时间</text>
-              <text class="info-value">{{ item.created_at }}</text>
-            </view>
-            <!-- 图片缩略图（申请时） -->
-            <view v-if="getImages(item.images).length" class="info-row image-row">
-              <text class="info-label">图片</text>
+
+          <!-- 附件 / 凭证 -->
+          <view v-if="imagesOf(item).length || reimburseImagesOf(item).length" class="card-media">
+            <view v-if="imagesOf(item).length" class="media-group">
+              <text class="media-label">申请附件</text>
               <view class="thumb-list">
                 <image
-                  v-for="(img, idx) in getImages(item.images)"
-                  :key="idx"
+                  v-for="(img, idx) in imagesOf(item)"
+                  :key="'a' + idx"
                   class="thumb-img"
-                  :src="getImgUrl(img)"
+                  :src="img"
                   mode="aspectFill"
-                  @click.stop="previewImage(img, getImages(item.images))"
+                  @click.stop="previewImage(img, imagesOf(item))"
                 />
               </view>
             </view>
-            <!-- 报销凭证缩略图（已上传报销后显示） -->
-            <view v-if="reimburseImagesOf(item).length" class="info-row image-row">
-              <text class="info-label">凭证</text>
+            <view v-if="reimburseImagesOf(item).length" class="media-group">
+              <text class="media-label">报销凭证</text>
               <view class="thumb-list">
                 <image
                   v-for="(img, idx) in reimburseImagesOf(item)"
                   :key="'r' + idx"
                   class="thumb-img"
-                  :src="getImgUrl(img)"
+                  :src="img"
                   mode="aspectFill"
                   @click.stop="previewImage(img, reimburseImagesOf(item))"
                 />
               </view>
             </view>
           </view>
-          <!-- 我的申请：待审核/已驳回显示删除；已通过显示"上传报销"和"反审核" -->
+
+          <!-- 我的申请：待审核/已驳回 → 删除 -->
           <view v-if="activeTab === 'my' && (item.status === 'pending' || item.status === 'rejected')" class="card-actions" @click.stop>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
           </view>
+          <!-- 我的申请：已通过无报销 → 上传报销 / 反审核 / 删除 -->
           <view v-else-if="activeTab === 'my' && item.status === 'approved' && !hasReimbursement(item)" class="card-actions" @click.stop>
-            <view class="action-btn approve" @click="goReimburseDetail(item)">上传报销</view>
-            <view class="action-btn warn" @click="handleUnapprove(item)">反审核</view>
             <view class="action-btn danger" @click="handleDelete(item)">删除</view>
+            <view class="action-btn warn" @click="handleUnapprove(item)">反审核</view>
+            <view class="action-btn approve" @click="goReimburseDetail(item)">上传报销</view>
           </view>
           <view v-else-if="activeTab === 'my' && item.status === 'approved' && hasReimbursement(item)" class="card-actions" @click.stop>
-            <view class="action-btn" @click="goReimburseDetail(item)">查看报销</view>
+            <view class="action-btn ghost" @click="goReimburseDetail(item)">查看报销</view>
           </view>
-          <!-- 待我审核 显示操作按钮 -->
+          <!-- 待我审核 -->
           <view v-else-if="activeTab === 'pending' && item.status === 'pending'" class="card-actions" @click.stop>
             <view class="action-btn reject" @click="handleReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleApprove(item)">通过</view>
           </view>
-          <!-- 待报销（申请人视角 status=approved 且无 reimbursement）显示"上传报销" -->
+          <!-- 待报销：申请人上传 -->
           <view v-else-if="activeTab === 'reimburse' && item.status === 'approved' && !hasReimbursement(item)" class="card-actions" @click.stop>
             <view class="action-btn approve" @click="goReimburseDetail(item)">上传报销</view>
           </view>
-          <!-- 待报销（财务视角 status=reimbursing）显示确认/驳回按钮 -->
+          <!-- 待报销：财务受理 -->
           <view v-else-if="activeTab === 'reimburse' && item.status === 'reimbursing'" class="card-actions" @click.stop>
             <view class="action-btn reject" @click="handleFinanceReject(item)">驳回</view>
             <view class="action-btn approve" @click="handleFinanceConfirm(item)">确认</view>
           </view>
-          <!-- 财务确认tab：finance_confirmed 状态跳上传回执页 -->
+          <!-- 财务确认：上传回执 -->
           <view v-else-if="activeTab === 'finance' && item.status === 'finance_confirmed'" class="card-actions" @click.stop>
             <view class="action-btn approve" @click="goFinanceConfirm(item)">上传回执</view>
           </view>
         </view>
       </view>
+
       <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-      <view v-else-if="noMore && list.length > 0" class="loading-more"><text class="loading-text">没有更多了</text></view>
+      <view v-else-if="noMore && list.length > 3" class="loading-more"><text class="loading-text">没有更多了</text></view>
+
+      <!-- 给底部 tabBar 与 FAB 留出空间 -->
+      <view class="bottom-pad"></view>
     </scroll-view>
 
     <!-- 新建按钮 -->
@@ -149,7 +174,7 @@
     <!-- 审批弹窗 -->
     <view v-if="showDialog" class="dialog-mask" @click="showDialog = false">
       <view class="dialog-content" @click.stop>
-        <view class="dialog-header">{{ dialogAction === 'approve' ? '通过申请' : '驳回申请' }}</view>
+        <view class="dialog-header">{{ dialogTitle }}</view>
         <view class="dialog-body">
           <textarea
             class="comment-input"
@@ -202,13 +227,14 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { absAsset } from "@/utils/api";
+import { absAsset } from '@/utils/api'
 import { useUserStore } from '@/stores/user'
 import { guardTab } from '@/utils/permission'
 
 const userStore = useUserStore()
 const activeTab = ref('my')
 const list = ref([])
+const total = ref(0)
 const loading = ref(false)
 const refreshing = ref(false)
 const loadingMore = ref(false)
@@ -218,15 +244,13 @@ const noMore = ref(false)
 const pendingCount = ref(0)
 const reimburseCount = ref(0)
 const showDialog = ref(false)
-const reimburseDialogVisible = ref(false)  // 2026-10-10
-const reimburseForm = ref({ actual_amount: '', financial_notes: '', images: [] })  // 2026-10-10
-const dialogAction = ref('approve') // 'approve' | 'reject'
+const reimburseDialogVisible = ref(false)
+const reimburseForm = ref({ actual_amount: '', financial_notes: '', images: [] })
+const dialogAction = ref('approve') // 'approve' | 'reject' | 'finance_reject'
 const dialogComment = ref('')
 const currentItem = ref(null)
 
 // 权限判定统一走 store（由服务端 /api/me 同步；借权切换后随之变化）
-const userPerms = () => userStore.permissionList()
-const isAdminUser = () => userStore.isAdminUser()
 const can = (perm) => userStore.can(perm)
 const isFinanceView = () => {
   const info = uni.getStorageSync('userInfo') || {}
@@ -235,17 +259,17 @@ const isFinanceView = () => {
 
 // tab 按权限渲染：一个页面，各角色只看到自己该处理的
 const tabs = computed(() => {
-  const list = [{ key: 'my', label: '我的申请', badge: null }]
+  const arr = [{ key: 'my', label: '我的申请', badge: null }]
   if (can('purchase:approve')) {
-    list.push({ key: 'pending', label: '待审核', badge: pendingCount.value || null })
+    arr.push({ key: 'pending', label: '待审核', badge: pendingCount.value || null })
   }
   if (can('purchase:write') || can('purchase:finance')) {
-    list.push({ key: 'reimburse', label: '待报销', badge: reimburseCount.value || null })
+    arr.push({ key: 'reimburse', label: '待报销', badge: reimburseCount.value || null })
   }
   if (can('purchase:finance')) {
-    list.push({ key: 'finance', label: '财务确认', badge: null })
+    arr.push({ key: 'finance', label: '财务确认', badge: null })
   }
-  return list
+  return arr
 })
 
 const emptyText = computed(() => {
@@ -254,10 +278,19 @@ const emptyText = computed(() => {
     pending: '暂无待审核申请',
     reimburse: '暂无待报销申请',
     finance: '暂无待财务确认',
-    finance_confirmed: '暂无受理中单据',
   }
   return map[activeTab.value] || '暂无数据'
 })
+
+const dialogTitle = computed(() => {
+  if (dialogAction.value === 'approve') return '通过申请'
+  if (dialogAction.value === 'finance_reject') return '驳回报销'
+  return '驳回申请'
+})
+
+const sumAmount = computed(() =>
+  list.value.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
+)
 
 function statusLabel(s) {
   const map = {
@@ -268,68 +301,86 @@ function statusLabel(s) {
     finance_confirmed: '受理中',
     reimbursed: '已完结',
   }
-  return map[s] || s
+  return map[s] || s || '未知'
 }
 
-function statusBg(s) {
-  const map = {
-    pending: '#fff3e0',
-    approved: '#e8f5e9',
-    rejected: '#ffebee',
-    reimbursing: '#fff3e0',
-    finance_confirmed: '#e3f2fd',
-    reimbursed: '#e8f5e9',
-  }
-  return map[s] || '#f5f5f5'
+// 金额千分位两位小数
+function fmtMoney(v) {
+  const n = Number(v)
+  if (!isFinite(n)) return '0.00'
+  return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function statusColor(s) {
-  const map = {
-    pending: '#ff9800',
-    approved: '#4caf50',
-    rejected: '#f44336',
-    reimbursing: '#ff9800',
-    finance_confirmed: '#2196f3',
-    reimbursed: '#4caf50',
-  }
-  return map[s] || '#999'
+// 数量去掉无意义的尾随 0：1.00 → 1，2.50 → 2.5
+function fmtQty(v) {
+  const n = Number(v)
+  if (!isFinite(n)) return v
+  return String(parseFloat(n.toFixed(2)))
+}
+
+// 时间只取「月-日 时:分」，列表里不需要年份和秒
+function fmtTime(s) {
+  if (!s) return ''
+  const str = String(s)
+  // 形如 2026-10-09 22:25:16 / 2026-10-09T22:25:16
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/)
+  if (m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`
+  return str
 }
 
 // 当前所处环节提示：让申请人清楚「现在轮到谁处理」
 function flowHint(item) {
   const s = item && item.status
-  if (s === 'reimbursing') return '⏳ 已上传凭证，等待财务受理'
-  if (s === 'finance_confirmed') return '🏦 财务已受理，等待上传报销回执'
-  if (s === 'approved') return '📤 待您上传报销凭证'
+  if (s === 'reimbursing') return '已上传凭证，等待财务受理'
+  if (s === 'finance_confirmed') return '财务已受理，等待上传报销回执'
+  if (s === 'approved') return '待您上传报销凭证'
   return ''
 }
 
-const getImages = (imgField) => {
+/**
+ * 图片字段兼容三种形态：
+ *   字符串 JSON 数组 ["/uploads/a.png"]
+ *   对象数组 [{id,url,status}]  ← 采购申请 images 就是这种
+ *   已是数组本身
+ * 统一返回可用的 url 数组（过滤空值与无法识别的项）。
+ * 之前直接把对象传给 absAsset()，得到 "[object Object]"，列表全是裂图。
+ */
+function getImages(imgField) {
   if (!imgField) return []
-  if (Array.isArray(imgField)) return imgField
-  try { return JSON.parse(imgField) } catch { return [] }
+  let arr = imgField
+  if (typeof arr === 'string') {
+    try { arr = JSON.parse(arr) } catch { return [] }
+  }
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map((it) => {
+      if (typeof it === 'string') return it
+      if (it && typeof it === 'object') return it.url || it.path || ''
+      return ''
+    })
+    .filter(Boolean)
 }
 
-// 2026-10-10：报销凭证图片（来自 purchase_reimbursements.images）
-const reimburseImagesOf = (item) => {
+function imagesOf(item) {
+  return getImages(item && item.images).map(absAsset)
+}
+
+// 报销凭证图片（来自 purchase_reimbursements.images）
+function reimburseImagesOf(item) {
   if (!item || !item.reimbursement) return []
-  return getImages(item.reimbursement.images)
+  return getImages(item.reimbursement.images).map(absAsset)
 }
 
-const getImgUrl = (path) => absAsset(path)
-
-const previewImage = (current, list) => {
-  uni.previewImage({ current, urls: list })
+const previewImage = (current, urls) => {
+  uni.previewImage({ current, urls })
 }
 
 function goBack() { uni.navigateBack() }
 
+// 切 tab 只在这里改状态，加载交给 watch（避免重复请求）
 function switchTab(key) {
+  if (key === activeTab.value) return
   activeTab.value = key
-  page.value = 1
-  list.value = []
-  noMore.value = false
-  loadData()
 }
 
 function onRefresh() {
@@ -340,7 +391,7 @@ function onRefresh() {
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return
+  if (loadingMore.value || noMore.value || loading.value) return
   page.value++
   loadData(true)
 }
@@ -348,10 +399,11 @@ function loadMore() {
 function loadData(isMore = false) {
   if (loading.value) return
   loading.value = true
+  if (!isMore) noMore.value = false
 
   const userInfo = uni.getStorageSync('userInfo') || {}
   let url = ''
-  let data = { page: page.value, page_size: pageSize }
+  const data = { page: page.value, page_size: pageSize }
 
   if (activeTab.value === 'my') {
     url = '/api/purchase-requests/my'
@@ -359,12 +411,7 @@ function loadData(isMore = false) {
   } else if (activeTab.value === 'pending') {
     url = '/api/purchase-requests/pending'
   } else if (activeTab.value === 'reimburse') {
-    // 2026-10-10：申请人视角查 to-reimburse；财务视角查 reimburse
-    if (isFinanceView()) {
-      url = '/api/purchase-requests/reimburse'
-    } else {
-      url = '/api/purchase-requests/to-reimburse'
-    }
+    url = isFinanceView() ? '/api/purchase-requests/reimburse' : '/api/purchase-requests/to-reimburse'
   } else if (activeTab.value === 'finance') {
     url = '/api/purchase-requests/finance'
   }
@@ -380,12 +427,15 @@ function loadData(isMore = false) {
         } else {
           list.value = arr
         }
+        const t = Number(res.data.total)
+        if (isFinite(t)) total.value = t
+        else if (!isMore) total.value = arr.length
         noMore.value = arr.length < pageSize
       } else {
-        if (!isMore) list.value = []
+        if (!isMore) { list.value = []; total.value = 0 }
       }
     },
-    fail: () => { if (!isMore) list.value = [] },
+    fail: () => { if (!isMore) { list.value = []; total.value = 0 } },
     complete: () => {
       loading.value = false
       refreshing.value = false
@@ -460,7 +510,6 @@ function handleDelete(item) {
         method: 'DELETE',
         header: { 'x-user-id': String(userInfo.id || '') },
         success: (res) => {
-          // 严格判断：必须 statusCode=200 且 res.data.message 表明成功
           if (res.statusCode === 200 && res.data && res.data.message) {
             uni.showToast({ title: '已删除', icon: 'success' })
             page.value = 1
@@ -481,26 +530,21 @@ function handleFinanceConfirm(item) {
   uni.navigateTo({ url: `/pages/purchase/finance-accept?id=${item.id}` })
 }
 
-// 2026-10-10：上传报销单（申请人）— 走弹窗快速报销
+// 上传报销单（申请人）— 弹窗快速报销
 function showReimburseDialog(item) {
   currentItem.value = item
   reimburseForm.value = { actual_amount: item.total_amount || '', financial_notes: '', images: [] }
   reimburseDialogVisible.value = true
 }
 
-// 2026-10-10：从 list 进入报销 detail 页面（用于"查看报销"按钮）
 function goReimburseDetail(item) {
-  // 弹窗快速上传；如果想进 detail 完整页面，把下面注释打开
   showReimburseDialog(item)
-  // uni.navigateTo({ url: `/pages/purchase/detail?id=${item.id}` })
 }
 
-// 2026-10-10：判断列表项是否已有报销记录
 function hasReimbursement(item) {
   return !!(item && (item.reimbursement || item._hasReimbursement))
 }
 
-// 2026-10-10：选报销凭证图片（最多 9 张）
 function chooseReimburseImages() {
   uni.chooseImage({
     count: 9 - reimburseForm.value.images.length,
@@ -528,7 +572,7 @@ function closeReimburseDialog() {
   reimburseDialogVisible.value = false
 }
 
-// 2026-10-10：反审核
+// 反审核
 function handleUnapprove(item) {
   uni.showModal({
     title: '确认反审核',
@@ -606,7 +650,6 @@ function submitReimburse() {
       uni.showToast({ title: '凭证上传失败', icon: 'none' })
       return
     }
-    // 提交报销
     uni.request({
       url: `/api/purchase-requests/${id}/reimburse`,
       method: 'POST',
@@ -712,146 +755,250 @@ onMounted(() => {
   loadCounts()
 })
 
-// 切换 tab 时重新加载数据
+// 切 tab 时重置分页再加载
 watch(activeTab, () => {
+  page.value = 1
+  list.value = []
+  noMore.value = false
+  total.value = 0
   loadData()
 })
 </script>
 
 <style lang="scss" scoped>
-.page { min-height: 100vh; background: #f5f5f5; }
+.page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #F5F7FA;
+  box-sizing: border-box;
+}
+
+/* ---------- 导航 ---------- */
 .nav-bar {
   display: flex; align-items: center; justify-content: space-between;
   background: #1E3A5F; color: #fff; padding: 12px 16px;
   padding-top: max(12px, env(safe-area-inset-top));
-  position: sticky; top: 0; z-index: 100;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 100;
 }
-.nav-back { font-size: 28px; font-weight: 300; width: 40px; }
+.nav-back { font-size: 28px; font-weight: 300; width: 40px; line-height: 1; }
 .nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
 .nav-placeholder { width: 40px; }
 
+/* ---------- Tab ---------- */
 .tab-bar {
-  display: flex; background: #fff;
-  border-bottom: 1px solid #eee;
+  display: flex; background: #fff; flex-shrink: 0;
+  padding: 0 6px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
 }
 .tab-item {
-  flex: 1; text-align: center; padding: 12px 0;
-  font-size: 13px; color: #666; position: relative;
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 13px 4px; position: relative;
 }
-.tab-item.active { color: #1E3A5F; font-weight: bold; }
+.tab-text { font-size: 13px; color: #6B7280; }
+.tab-item.active .tab-text { color: #1E3A5F; font-weight: 600; }
 .tab-item.active::after {
   content: ''; position: absolute; bottom: 0; left: 50%;
-  transform: translateX(-50%); width: 40px; height: 2px; background: #1E3A5F;
+  transform: translateX(-50%); width: 24px; height: 3px;
+  border-radius: 2px; background: #1E3A5F;
 }
 .tab-badge {
-  position: absolute; top: 4px; right: calc(50% - 18px);
-  background: #ff4d4f; color: #fff; border-radius: 10px;
-  font-size: 10px; padding: 0 5px; min-width: 16px; text-align: center;
+  position: absolute; top: 6px; right: 12px;
+  background: #EF4444; color: #fff; border-radius: 9px;
+  font-size: 10px; line-height: 15px; padding: 0 5px;
+  min-width: 15px; text-align: center;
 }
 
-.list-container { height: calc(100vh - 100px); padding: 12px; }
-.empty-state {
-  display: flex; flex-direction: column; align-items: center;
-  justify-content: center; padding: 80px 0;
+/* ---------- 列表容器 ---------- */
+.list-container {
+  flex: 1;
+  height: 0;              /* flex 子项允许收缩，否则 scroll-view 撑破页面 */
+  padding: 12px 12px 0;
+  box-sizing: border-box;
 }
-.loading-icon, .empty-icon { font-size: 48px; }
-.empty-text { color: #999; font-size: 14px; margin-top: 10px; }
+.bottom-pad { height: 96px; }
 
+/* ---------- 汇总 ---------- */
+.summary-bar {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 2px 4px 10px;
+}
+.summary-count { font-size: 12px; color: #8A93A3; }
+.summary-amount { font-size: 12px; color: #1E3A5F; font-weight: 600; }
+
+/* ---------- 空/加载态 ---------- */
+.state-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 90px 0;
+}
+.spin {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #E5E7EB; border-top-color: #1E3A5F;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 12px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.state-text { font-size: 13px; color: #9CA3AF; }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-text { font-size: 14px; color: #6B7280; }
+.empty-hint {
+  font-size: 12px; color: #B0B7C3; margin-top: 8px;
+  background: #EEF2F7; padding: 6px 14px; border-radius: 12px;
+}
+
+/* ---------- 卡片 ---------- */
+.card-list { padding-bottom: 4px; }
 .card {
-  background: #fff; border-radius: 12px; padding: 16px;
-  margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-}
-.card-header {
-  display: flex; justify-content: space-between; align-items: center;
+  background: #fff; border-radius: 14px; padding: 14px;
   margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
 }
+
+.card-head { display: flex; align-items: center; justify-content: space-between; }
 .card-title {
-  font-size: 15px; font-weight: bold; color: #333;
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px; font-weight: 600; color: #1A1F36;
+  flex: 1; margin-right: 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.status-tag {
-  font-size: 12px; padding: 2px 8px; border-radius: 4px; margin-left: 8px;
+.status-pill {
+  font-size: 11px; line-height: 1; padding: 5px 9px; border-radius: 10px;
+  color: #fff; background: #9CA3AF; flex-shrink: 0;
 }
+.status-pill.st-pending { background: #F59E0B; }
+.status-pill.st-approved { background: #0E9F6E; }
+.status-pill.st-rejected { background: #DC2626; }
+.status-pill.st-reimbursing { background: #2563EB; }
+.status-pill.st-finance_confirmed { background: #7C3AED; }
+.status-pill.st-reimbursed { background: #64748B; }
+.status-pill.st-default { background: #9CA3AF; }
+
+.card-amount-row {
+  display: flex; align-items: baseline; margin-top: 8px;
+}
+.card-amount {
+  font-size: 20px; font-weight: 700; color: #1E3A5F; letter-spacing: -0.3px;
+}
+.card-qty { font-size: 12px; color: #8A93A3; margin-left: 10px; }
+
 .flow-hint {
-  font-size: 12px; color: #ff9800; margin: 6px 0 8px;
+  margin-top: 10px; padding: 7px 10px;
+  background: #FFF7E6; border-radius: 8px;
 }
-.card-info { display: flex; flex-direction: column; gap: 6px; }
-.info-row { display: flex; font-size: 13px; }
-.info-label { color: #999; width: 60px; flex-shrink: 0; }
-.info-value { color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.amount { color: #ff6b00; font-weight: 600; }
+.flow-text { font-size: 12px; color: #B45309; }
 
-.image-row { align-items: flex-start; }
-.thumb-list { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.card-meta {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid #F1F3F7;
+}
+.meta-row { display: flex; margin-bottom: 5px; }
+.meta-row:last-child { margin-bottom: 0; }
+.meta-k {
+  font-size: 12px; color: #9CA3AF; width: 52px; flex-shrink: 0;
+}
+.meta-v {
+  font-size: 12px; color: #4B5563; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.meta-dot { color: #D1D5DB; margin: 0 6px; }
+.meta-time { color: #9CA3AF; }
+
+/* ---------- 图片 ---------- */
+.card-media {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid #F1F3F7;
+}
+.media-group { margin-bottom: 8px; }
+.media-group:last-child { margin-bottom: 0; }
+.media-label { font-size: 11px; color: #9CA3AF; display: block; margin-bottom: 6px; }
+.thumb-list { display: flex; flex-wrap: wrap; }
 .thumb-img {
-  width: 50px; height: 50px; border-radius: 4px;
-  border: 1rpx solid #eee; flex-shrink: 0;
+  width: 56px; height: 56px; border-radius: 8px;
+  margin: 0 8px 8px 0; background: #F3F4F6;
+  flex-shrink: 0;
 }
 
+/* ---------- 操作 ---------- */
 .card-actions {
-  display: flex; gap: 10px; margin-top: 12px;
-  padding-top: 12px; border-top: 1px solid #f0f0f0; justify-content: flex-end;
+  display: flex; align-items: center; justify-content: flex-end;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid #F1F3F7;
 }
-.action-btn { padding: 6px 16px; border-radius: 4px; font-size: 13px; }
-.action-btn.reject { background: #fff; color: #f44336; border: 1px solid #f44336; }
+.action-btn {
+  font-size: 13px; line-height: 1; padding: 9px 16px;
+  border-radius: 8px; margin-left: 8px;
+  border: 1px solid transparent;
+}
 .action-btn.approve { background: #1E3A5F; color: #fff; }
-.action-btn.danger { background: #fff; color: #f44336; border: 1px solid #f44336; }
-.action-btn.warn { background: #fff; color: #ff9800; border: 1px solid #ff9800; }
+.action-btn.reject { background: #fff; color: #DC2626; border-color: #FCA5A5; }
+.action-btn.danger { background: #fff; color: #9CA3AF; border-color: #E5E7EB; }
+.action-btn.warn { background: #fff; color: #D97706; border-color: #FCD34D; }
+.action-btn.ghost { background: #F3F4F6; color: #4B5563; }
 
-.form-row { display: flex; flex-direction: column; margin-bottom: 16px; }
-.form-label { font-size: 13px; color: #333; margin-bottom: 6px; }
-.form-input {
-  border: 1px solid #eee; border-radius: 8px; padding: 10px;
-  font-size: 14px; box-sizing: border-box;
-}
-.img-uploader {
-  display: flex; flex-wrap: wrap; gap: 10px;
-}
-.img-thumb-wrap { position: relative; width: 80px; height: 80px; }
-.img-thumb { width: 80px; height: 80px; border-radius: 6px; border: 1rpx solid #eee; }
-.img-remove {
-  position: absolute; top: -8px; right: -8px;
-  width: 20px; height: 20px; line-height: 18px; text-align: center;
-  background: #f44336; color: #fff; border-radius: 50%; font-size: 14px;
-}
-.img-add {
-  width: 80px; height: 80px; border-radius: 6px;
-  border: 1rpx dashed #ccc; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; color: #999;
-}
-.img-add-icon { font-size: 26px; line-height: 1; }
-.img-add-text { font-size: 11px; margin-top: 4px; }
-
-.loading-more { text-align: center; padding: 20px; }
-.loading-text { font-size: 24rpx; color: #999; }
+/* ---------- 底部 ---------- */
+.loading-more { text-align: center; padding: 14px 0 4px; }
+.loading-text { font-size: 12px; color: #B0B7C3; }
 
 .fab {
-  position: fixed; right: 20px; bottom: 30px;
-  width: 50px; height: 50px; background: #1E3A5F; border-radius: 25px;
+  position: fixed;
+  right: 18px;
+  /* 主包 tabBar 约 50px 高，FAB 必须抬高，否则被压住一半 */
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  width: 52px; height: 52px; border-radius: 26px;
+  background: #1E3A5F; color: #fff; font-size: 28px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 12px rgba(30,58,95,0.4);
+  box-shadow: 0 6px 16px rgba(30, 58, 95, 0.32);
+  z-index: 90;
 }
 .fab-icon { font-size: 28px; color: #fff; line-height: 1; }
 
+/* ---------- 弹窗 ---------- */
 .dialog-mask {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; z-index: 999;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex; align-items: flex-end; z-index: 999;
 }
 .dialog-content {
-  background: #fff; width: 100%; border-radius: 12px 12px 0 0;
+  background: #fff; width: 100%; border-radius: 16px 16px 0 0;
   padding-bottom: env(safe-area-inset-bottom);
 }
 .dialog-header {
-  text-align: center; padding: 15px; font-size: 16px; font-weight: bold;
-  border-bottom: 1px solid #eee;
+  text-align: center; padding: 16px; font-size: 16px; font-weight: 600;
+  color: #1A1F36; border-bottom: 1px solid #F1F3F7;
 }
-.dialog-body { padding: 20px 15px; }
-.comment-input {
-  width: 100%; border: 1px solid #eee; border-radius: 8px;
-  padding: 10px; font-size: 14px; min-height: 80px; box-sizing: border-box;
-}
-.dialog-footer { display: flex; border-top: 1px solid #eee; }
+.dialog-body { padding: 18px 16px; }
+.dialog-footer { display: flex; border-top: 1px solid #F1F3F7; }
 .dialog-btn { flex: 1; text-align: center; padding: 15px; font-size: 15px; }
-.dialog-btn.cancel { color: #666; border-right: 1px solid #eee; }
-.dialog-btn.confirm { color: #1E3A5F; font-weight: bold; }
+.dialog-btn.cancel { color: #6B7280; border-right: 1px solid #F1F3F7; }
+.dialog-btn.confirm { color: #1E3A5F; font-weight: 600; }
+
+.form-row { display: flex; flex-direction: column; margin-bottom: 16px; }
+.form-row:last-child { margin-bottom: 0; }
+.form-label { font-size: 13px; color: #374151; margin-bottom: 8px; }
+.form-input {
+  border: 1px solid #E5E7EB; border-radius: 10px; padding: 11px 12px;
+  font-size: 14px; box-sizing: border-box; background: #FAFBFC;
+}
+.comment-input {
+  width: 100%; border: 1px solid #E5E7EB; border-radius: 10px;
+  padding: 11px 12px; font-size: 14px; min-height: 80px;
+  box-sizing: border-box; background: #FAFBFC;
+}
+.img-uploader { display: flex; flex-wrap: wrap; }
+.img-thumb-wrap { position: relative; width: 78px; height: 78px; margin: 0 10px 10px 0; }
+.img-thumb { width: 78px; height: 78px; border-radius: 10px; background: #F3F4F6; }
+.img-remove {
+  position: absolute; top: -7px; right: -7px;
+  width: 20px; height: 20px; line-height: 18px; text-align: center;
+  background: #EF4444; color: #fff; border-radius: 50%; font-size: 14px;
+}
+.img-add {
+  width: 78px; height: 78px; border-radius: 10px; margin-bottom: 10px;
+  border: 1px dashed #D1D5DB; background: #FAFBFC;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #9CA3AF;
+}
+.img-add-icon { font-size: 24px; line-height: 1; }
+.img-add-text { font-size: 11px; margin-top: 4px; }
 </style>

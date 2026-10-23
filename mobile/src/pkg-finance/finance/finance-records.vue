@@ -66,7 +66,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
+import { onLoad } from '@dcloudio/uni-app'
 
 const projectId = ref('')
 const projectName = ref('')
@@ -99,19 +100,13 @@ const filteredRecords = computed(() => {
   return records.value.filter(r => r.type === filterType.value)
 })
 
-onMounted(() => {
-  const pages = getCurrentPages()
-  const current = pages[pages.length - 1]
-  const options = current.options || {}
-
-  if (options.projectId) {
-    projectId.value = options.projectId
+onLoad((options) => {
+  const opts = options || {}
+  projectId.value = opts.projectId || opts.project_id || ''
+  if (opts.projectName) {
+    try { projectName.value = decodeURIComponent(opts.projectName) } catch (e) { projectName.value = opts.projectName }
   }
-  if (options.projectName) {
-    projectName.value = decodeURIComponent(options.projectName)
-  }
-
-  loadRecords()
+  if (projectId.value) loadRecords()
 })
 
 function loadRecords() {

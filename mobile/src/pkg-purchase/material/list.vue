@@ -77,11 +77,10 @@
       <view class="m-action" @click="goPage('/pages/material/purchase')">
         <text>📦</text> 采购申请
       </view>
-      <view class="m-action" @click="goPage('/pages/material/inbound')">
-        <text>🚚</text> 到货验收
-      </view>
-      <view class="m-action" @click="goPage('/pages/material/outbound')">
-        <text>📤</text> 领用记录
+      <!-- v2.4.1：原「到货验收」指向的 material/inbound.vue 调的是 /api/material/inbound（后端无此路由）
+           已废弃，改为进主材验收（材料进场的正式验收单，走 material_acceptance 模块） -->
+      <view class="m-action" @click="goMatAccept">
+        <text>✅</text> 材料验收
       </view>
     </view>
   </view>
@@ -141,6 +140,9 @@ const goPage = (url) => {
   }
   uni.navigateTo({ url });
 };
+
+// 主材验收：台账页已经绑定了项目，直接带参进去（不再让用户选一次）
+const goMatAccept = () => goPage('/pages/material-accept/list');
 
 const goBack = () => {
   uni.navigateBack();

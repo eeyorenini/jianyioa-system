@@ -351,15 +351,59 @@
         </view>
       </view>
 
-      <!-- 材料 -->
+      <!-- 主材验收（v2.4.1：原「材料」tab 是空壳，materials 从未赋值 → 永远空态。
+           现在接 material_acceptance 模块，从项目内进入自动绑定项目，不再让用户选项目） -->
       <view v-if="curTab === 'material'" class="tab-panel">
         <view class="panel-toolbar">
-          <text class="panel-title">材料台账</text>
-          <text class="tool-btn" @click="goMaterial">查看全部</text>
+          <text class="panel-title">主材验收</text>
+          <text class="tool-btn" @click="goMatAcceptAdd">+ 新建验收</text>
         </view>
-        <view class="empty-state" v-if="materials.length === 0">
-          <text class="empty-icon">🧱</text>
-          <text class="empty-text">暂无材料记录</text>
+
+        <view class="loading-state" v-if="matAcceptsLoading">
+          <text>加载中...</text>
+        </view>
+        <view class="log-list" v-else-if="matAccepts.length">
+          <view class="log-item" v-for="m in matAccepts" :key="m.id" @click="goMatAcceptDetail(m)">
+            <view class="log-row log-row-first">
+              <view class="log-date-bar">
+                <text class="log-date-day">{{ formatDay(m.accept_date || m.created_at) }}</text>
+                <text class="log-date-month">{{ formatMonth(m.accept_date || m.created_at) }}</text>
+              </view>
+              <view class="log-user-info">
+                <view class="log-user-line">
+                  <text class="log-operator">📦 {{ m.stage || '材料进场' }}</text>
+                  <text class="log-time">{{ m.accept_no || '' }}</text>
+                </view>
+                <view class="log-tags-row">
+                  <text class="log-tag-icon status-tag">{{ m.result || '未填结论' }}</text>
+                  <text class="log-tag-icon">共 {{ m.item_count || 0 }} 项</text>
+                  <text class="log-tag-icon" v-if="m.fail_count">不合格 {{ m.fail_count }}</text>
+                </view>
+              </view>
+            </view>
+
+            <view class="log-content-area" v-if="m.supplier_name">
+              <view class="log-content-row">
+                <view class="log-tag-box">供应商</view>
+                <view class="log-content-text">{{ m.supplier_name }}</view>
+              </view>
+            </view>
+
+            <view class="log-photos" v-if="getMatPhotos(m).length">
+              <view
+                class="log-photo"
+                v-for="(photo, idx) in getMatPhotos(m)"
+                :key="idx"
+                @click.stop="previewMatPhoto(m, idx)"
+              >
+                <image class="log-photo-img" :src="photo" mode="aspectFill" />
+              </view>
+            </view>
+          </view>
+        </view>
+        <view class="empty-state" v-else>
+          <text class="empty-icon">📦</text>
+          <text class="empty-text">暂无材料验收记录</text>
         </view>
       </view>
 
@@ -779,8 +823,9 @@
       <view class="action-quick" @click="goInspectAdd">
         <text>🔍 巡检</text>
       </view>
-      <view class="action-quick" @click="goMaterial">
-        <text>🧱 主材</text>
+      <!-- v2.4.1：原「🧱 主材」跳主材台账（用户确认台账暂无实际用途），改为切到主材验收 tab -->
+      <view class="action-quick" @click="curTab = 'material'">
+        <text>📦 验收</text>
       </view>
       <view class="action-primary" @click="goDispatchAdd">
         <text>+ 派工</text>
@@ -828,7 +873,7 @@ const TAB_DEFS = [
   { key: 'inspect', label: '巡检', perms: ['inspection:read'] },
   { key: 'accept', label: '验收', perms: ['acceptance:read'] },
   { key: 'dispatch', label: '派工', perms: ['dispatch:read'] },
-  { key: 'material', label: '材料', perms: ['material:read'] },
+  { key: 'material', label: '主材验收', perms: ['material_acceptance:read'] },
   { key: 'purchase', label: '采购', perms: ['purchase:read'] },
   { key: 'contract', label: '合同', perms: ['contract:read', 'contract_change:read'] },
   { key: 'finance', label: '财务', perms: ['finance:read', 'collection:read'] },
@@ -849,6 +894,7 @@ const tabs = computed(() =>
       def.key === 'logs' ? logs.value.length || null
       : def.key === 'inspect' ? issues.value.length || null
       : def.key === 'accept' ? acceptances.value.length || null
+      : def.key === 'material' ? matAccepts.value.length || null
       : def.key === 'dispatch' ? dispatches.value.length || null
       : def.key === 'finance' ? collectionRecords.value.filter((r) => r.status !== 'confirmed').length || null
       : null,
@@ -884,7 +930,9 @@ const acceptances = ref([]);
 const acceptancesLoading = ref(false);
 
 const dispatches = ref([]);
-const materials = ref([]);
+// 主材验收记录（v2.4.1，替代原来那个从未赋值的 materials 空壳）
+const matAccepts = ref([]);
+const matAcceptsLoading = ref(false);
 const purchaseList = ref([]);
 const contractList = ref([]);
 const changeList = ref([]);
@@ -1207,14 +1255,14 @@ const previewIssuePhoto = (issue, idx) => {
   uni.previewImage({ urls: photos, current: idx });
 };
 
-// 巡检状态文字
+// 巡检状态文字（口径与业务流程统一：待处理 → 处理中 → 已完成）
 const getIssueStatusText = (issue) => {
   const s = issue.rectify_status || issue.status || '';
-  if (s === '待处理' || s === '待整改') return '⏳ 待整改';
-  if (s === '整改中') return '🔧 整改中';
+  if (s === '待处理' || s === '待整改') return '⏳ 待处理';
+  if (s === '处理中' || s === '整改中') return '🔧 处理中';
   if (s === '待验收') return '👀 待验收';
   if (s === '已完成') return '✅ 已完成';
-  return '⏳ 待整改';
+  return '⏳ 待处理';
 };
 
 // 状态 → ASCII 类名后缀
@@ -1224,7 +1272,7 @@ const statusSlug = (issue) => {
   const s = (issue && (issue.rectify_status || issue.status)) || '';
   const map = {
     '待整改': 'pending', '待处理': 'pending', pending: 'pending',
-    '整改中': 'fixing',
+    '整改中': 'fixing', '处理中': 'fixing', fixing: 'fixing',
     '待验收': 'review',
     '已完成': 'done', completed: 'done',
   };
@@ -1247,9 +1295,8 @@ const goDispatchAdd = () => {
   uni.navigateTo({ url: `/pages/dispatch/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}&projectAddress=${encodeURIComponent(project.value.customer_address || project.value.address || '')}` });
 };
 
-const goMaterial = () => {
-  uni.navigateTo({ url: `/pages/material/list?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
-};
+// v2.4.1：material/list（主材台账）在项目内已无入口，用户确认暂无实际用途。
+// 台账仍可从首页「主材管理 → 采购申请列表」/ PC 端进入，这里不再保留跳转函数。
 
 const goFinance = () => {
   uni.navigateTo({ url: `/pages/finance/add?projectId=${projectId.value}` });
@@ -1731,7 +1778,7 @@ const applyNodeStatus = async (node, status) => {
       uni.showToast({ title: '状态已更新', icon: 'success' });
     }
 
-    // 写项目日志
+    // 写项目日志（后端按 action_type=node_* 判定，不再额外推「项目新进展」消息）
     try {
       await uni.request({
         url: '/api/project-logs',
@@ -1741,7 +1788,7 @@ const applyNodeStatus = async (node, status) => {
           project_id: projectId.value,
           stage_id: node.id,
           action_type: status === 'completed' ? 'node_completed' : 'node_updated',
-          description: `节点「${node.node_name || node.stage_name}」状态变更为「${getNodeStatusText(status)}」${sendSms ? '（已发短信）' : ''}`,
+          content: `节点「${node.node_name || node.stage_name}」状态变更为「${getNodeStatusText(status)}」${sendSms ? '（已发短信）' : ''}`,
         },
       });
     } catch (logErr) {}
@@ -1934,6 +1981,52 @@ const goAcceptDetail = (a) => {
   uni.navigateTo({ url: `/pages/acceptance/detail?id=${a.id}` });
 };
 
+// ===== 主材验收（v2.4.1）=====
+const fetchMatAccepts = async () => {
+  if (!projectId.value) return;
+  matAcceptsLoading.value = true;
+  try {
+    const res = await uni.request({
+      url: `/api/material-acceptances?project_id=${projectId.value}`,
+      header: { Authorization: uni.getStorageSync("token") },
+    });
+    const d = res.data || {};
+    const rows = Array.isArray(d) ? d : (Array.isArray(d.list) ? d.list : []);
+    matAccepts.value = rows;
+  } catch (e) {
+    console.error('加载主材验收失败:', e);
+    matAccepts.value = [];
+  } finally {
+    matAcceptsLoading.value = false;
+  }
+};
+
+// 照片字段是 JSON 字符串数组，且要过 absAsset（小程序/App 补域名）
+const getMatPhotos = (m) => {
+  if (!m || !m.photos) return [];
+  try {
+    let p = m.photos;
+    if (typeof p === 'string') p = JSON.parse(p);
+    if (typeof p === 'string') p = JSON.parse(p);
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()).map(absAsset) : [];
+  } catch { return []; }
+};
+
+const previewMatPhoto = (m, idx) => {
+  const photos = getMatPhotos(m);
+  uni.previewImage({ urls: photos, current: photos[idx] });
+};
+
+const goMatAcceptAdd = () => {
+  uni.navigateTo({
+    url: `/pages/material-accept/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}`,
+  });
+};
+
+const goMatAcceptDetail = (m) => {
+  uni.navigateTo({ url: `/pages/material-accept/detail?id=${m.id}` });
+};
+
 // 加载派工单
 const loadDispatches = async () => {
   if (!projectId.value) return;
@@ -1960,6 +2053,10 @@ onMounted(() => {
   const current = pages[pages.length - 1];
   const options = (current).options || {};
   projectId.value = parseInt(options.id || '0');
+  // 2026-10-23：支持 ?tab=xxx 直达指定 tab —— 待办中心「催收未确认收款」点进来
+  //   直接落到财务收支（待确认催收列表），不用用户自己再找。
+  //   若该 tab 被权限过滤掉，上面 onMounted 注册的 tabs watch 会自动回落到第一个可见 tab。
+  if (options.tab) curTab.value = String(options.tab);
   if (projectId.value) {
     fetchDetail();
     loadContracts();
@@ -2006,6 +2103,9 @@ watch(curTab, (val) => {
   }
   if (val === 'accept' && projectId.value) {
     fetchAcceptances();
+  }
+  if (val === 'material' && projectId.value) {
+    fetchMatAccepts();
   }
   if (val === 'files' && projectId.value) {
     loadProjectFiles();

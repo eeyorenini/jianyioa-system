@@ -1,9 +1,9 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyle">
+    <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
-      <text class="nav-title">验收管理</text>
+      <text class="nav-title">进度验收</text>
       <view class="nav-placeholder"></view>
     </view>
 

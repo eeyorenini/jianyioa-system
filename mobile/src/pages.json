@@ -347,6 +347,27 @@
           }
         },
         {
+          "path": "material-accept/list",
+          "style": {
+            "navigationBarTitleText": "主材验收",
+            "navigationStyle": "custom"
+          }
+        },
+        {
+          "path": "material-accept/add",
+          "style": {
+            "navigationBarTitleText": "新增主材验收",
+            "navigationStyle": "custom"
+          }
+        },
+        {
+          "path": "material-accept/detail",
+          "style": {
+            "navigationBarTitleText": "验收详情",
+            "navigationStyle": "custom"
+          }
+        },
+        {
           "path": "purchase/add",
           "style": {
             "navigationBarTitleText": "新建采购",

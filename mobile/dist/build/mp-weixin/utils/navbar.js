@@ -1,0 +1,1 @@
+"use strict";const t=require("../common/vendor.js");let n=-1;exports.navBarStyle=function(){const e=function(){if(n>=0)return n;let e=0;try{const n=t.index,o="function"==typeof n.getWindowInfo?n.getWindowInfo():t.index.getSystemInfoSync();e=o&&o.statusBarHeight||0}catch(o){e=0}return n=e,n}();return e?{paddingTop:`${e+12}px`}:{}};

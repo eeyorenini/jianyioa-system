@@ -1,0 +1,184 @@
+{
+  "pages": [
+    "pages/landing/index",
+    "pages/showcase/index",
+    "pages/login/login",
+    "pages/bind/index",
+    "pages/bind/phone",
+    "pages/bind/scan",
+    "pages/home/index",
+    "pages/customer/home",
+    "pages/customer/projects",
+    "pages/customer/messages",
+    "pages/customer/mine",
+    "pages/customer/logs",
+    "pages/customer/project-detail",
+    "pages/customer/family",
+    "pages/projects/list",
+    "pages/inspection/list",
+    "pages/purchase/list",
+    "pages/mine/index",
+    "pages/agreement/service",
+    "pages/agreement/privacy"
+  ],
+  "subPackages": [
+    {
+      "root": "pkg-project",
+      "pages": [
+        "projects/add",
+        "projects/detail",
+        "projects/nodeManage",
+        "projects/gantt",
+        "projects/node",
+        "projects/logs",
+        "projects/log-add",
+        "projects/log-detail"
+      ]
+    },
+    {
+      "root": "pkg-inspect",
+      "pages": [
+        "inspection/add",
+        "inspection/detail",
+        "dispatch/list",
+        "dispatch/add",
+        "dispatch/detail",
+        "acceptance/list",
+        "acceptance/add",
+        "acceptance/detail",
+        "change/list",
+        "change/add"
+      ]
+    },
+    {
+      "root": "pkg-purchase",
+      "pages": [
+        "material/list",
+        "material/purchase",
+        "material/inbound",
+        "material-accept/list",
+        "material-accept/add",
+        "material-accept/detail",
+        "purchase/add",
+        "purchase/detail",
+        "purchase/finance-accept",
+        "purchase/finance-confirm"
+      ]
+    },
+    {
+      "root": "pkg-finance",
+      "pages": [
+        "contract/list",
+        "contract/detail",
+        "finance/list",
+        "finance/dashboard",
+        "finance/add",
+        "finance/finance-records",
+        "finance/finance-receivable",
+        "finance/finance-collected",
+        "contracts/contract-upload",
+        "contracts/contract-change-add",
+        "contracts/approval",
+        "contracts/collection-add",
+        "report/index",
+        "contracts/contracts"
+      ]
+    },
+    {
+      "root": "pkg-misc",
+      "pages": [
+        "todo/index",
+        "gallery/index",
+        "approval/list",
+        "approval/apply",
+        "approval/detail",
+        "message/list",
+        "message/detail",
+        "mine/my-logs",
+        "mine/my-inspections",
+        "notices/notices",
+        "addressbook/addressbook",
+        "customers/customers",
+        "customers/add",
+        "settings/settings",
+        "files/list",
+        "files/upload",
+        "files/detail",
+        "files/review"
+      ]
+    }
+  ],
+  "window": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "简逸装饰",
+    "navigationBarBackgroundColor": "#1E3A5F",
+    "backgroundColor": "#F5F7FA"
+  },
+  "tabBar": {
+    "color": "#8E9BBA",
+    "selectedColor": "#1E3A5F",
+    "borderStyle": "white",
+    "backgroundColor": "#FFFFFF",
+    "list": [
+      {
+        "pagePath": "pages/home/index",
+        "text": "首页",
+        "iconPath": "static/tab-home.png",
+        "selectedIconPath": "static/tab-home-active.png"
+      },
+      {
+        "pagePath": "pages/projects/list",
+        "text": "项目",
+        "iconPath": "static/tab-project.png",
+        "selectedIconPath": "static/tab-project-active.png"
+      },
+      {
+        "pagePath": "pages/inspection/list",
+        "text": "巡检",
+        "iconPath": "static/tab-inspect.png",
+        "selectedIconPath": "static/tab-inspect-active.png"
+      },
+      {
+        "pagePath": "pages/purchase/list",
+        "text": "采购",
+        "iconPath": "static/tab-purchase.png",
+        "selectedIconPath": "static/tab-purchase-active.png"
+      },
+      {
+        "pagePath": "pages/mine/index",
+        "text": "我的",
+        "iconPath": "static/tab-mine.png",
+        "selectedIconPath": "static/tab-mine-active.png"
+      }
+    ]
+  },
+  "preloadRule": {
+    "pages/home/index": {
+      "network": "all",
+      "packages": [
+        "pkg-project",
+        "pkg-inspect"
+      ]
+    },
+    "pages/projects/list": {
+      "network": "all",
+      "packages": [
+        "pkg-project"
+      ]
+    },
+    "pages/purchase/list": {
+      "network": "all",
+      "packages": [
+        "pkg-purchase"
+      ]
+    },
+    "pages/inspection/list": {
+      "network": "all",
+      "packages": [
+        "pkg-inspect"
+      ]
+    }
+  },
+  "lazyCodeLoading": "requiredComponents",
+  "usingComponents": {}
+}

@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "项目节点",
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "bottom-picker": "../../components/bottom-picker"
+  }
+}

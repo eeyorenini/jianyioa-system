@@ -13,16 +13,44 @@
 
 let origin = '';
 
+/**
+ * 解析小程序 / App 的后端地址。
+ *
+ * 默认返回生产域名。开发者工具联调本机后端时，可在调试器 Console 里临时覆盖：
+ *   wx.setStorageSync('__api_origin_override', 'http://192.168.1.32:3002')
+ *   wx.removeStorageSync('__api_origin_override')   // 恢复生产域名
+ *
+ * 说明：
+ *  - 覆盖值只存在调试工具的本地 Storage 里，不随代码打包，线上用户永远不会命中；
+ *  - 仅在模块加载时读一次，改完需要重新编译 / 重启小程序；
+ *  - 用 http + IP 联调时，微信开发者工具必须勾选「不校验合法域名、TLS 版本以及 HTTPS 证书」。
+ */
+function resolveApiOrigin(fallback: string): string {
+  try {
+    const v = uni.getStorageSync('__api_origin_override');
+    if (v && typeof v === 'string') {
+      const t = v.trim().replace(/\/+$/, '');
+      if (/^https?:\/\//i.test(t)) {
+        console.warn('[api] 后端地址已被本地 Storage 覆盖：', t, '（生产值', fallback + '）');
+        return t;
+      }
+    }
+  } catch (e) {
+    /* Storage 不可用时静默回退生产域名 */
+  }
+  return fallback;
+}
+
 // #ifdef MP-WEIXIN
-origin = 'https://erp.fujinwanjia.com';
+origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 // #endif
 
 // #ifdef APP-PLUS
-origin = 'https://erp.fujinwanjia.com';
+origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 // #endif
 
 // #ifdef MP-ALIPAY
-origin = 'https://erp.fujinwanjia.com';
+origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 // #endif
 
 /** 后端根地址；H5 下为空串（保持同源相对路径） */
