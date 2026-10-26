@@ -6,6 +6,7 @@
     "pages/bind/index",
     "pages/bind/phone",
     "pages/bind/scan",
+    "pages/identity/select",
     "pages/home/index",
     "pages/customer/home",
     "pages/customer/projects",
@@ -110,7 +111,7 @@
   ],
   "window": {
     "navigationBarTextStyle": "white",
-    "navigationBarTitleText": "简逸装饰",
+    "navigationBarTitleText": "简逸ERP",
     "navigationBarBackgroundColor": "#1E3A5F",
     "backgroundColor": "#F5F7FA"
   },
