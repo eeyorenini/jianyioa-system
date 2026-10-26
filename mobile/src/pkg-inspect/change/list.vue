@@ -22,7 +22,14 @@
     </view>
 
     <!-- 列表 -->
-    <scroll-view class="list-area" scroll-y @scrolltolower="loadMore">
+    <scroll-view
+      class="list-area"
+      scroll-y
+      @scrolltolower="loadMore"
+      :refresher-enabled="true"
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+    >
       <view v-if="loading && list.length === 0" class="empty-state">
         <text class="empty-text">加载中...</text>
       </view>
@@ -31,7 +38,7 @@
         <text class="empty-text">暂无变更单</text>
       </view>
       <view v-else>
-        <view class="record-card" v-for="item in filteredList" :key="item.id" @click="goDetail(item)">
+        <view class="record-card" v-for="item in visible" :key="item.id" @click="goDetail(item)">
           <view class="card-top">
             <view class="card-title">{{ item.title || item.change_title || '变更申请' }}</view>
             <view class="status-pill" :class="getStatusClass(item.status)">{{ item.statusText }}</view>
@@ -45,8 +52,7 @@
             📁 {{ item.project_name }}
           </view>
         </view>
-        <view v-if="loadingMore" class="loading-more"><text>加载中...</text></view>
-        <view v-else-if="noMore && list.length > 5" class="loading-more"><text>没有更多了</text></view>
+        <view v-if="noMore && list.length > 5" class="loading-more"><text>没有更多了</text></view>
       </view>
     </scroll-view>
 
@@ -59,16 +65,24 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
+import { useListPager } from "@/utils/listPager";
 
 const projectId = ref(0);
 const projectName = ref('');
 const curStatus = ref('');
 const list = ref([]);
 const loading = ref(false);
-const loadingMore = ref(false);
+const refreshing = ref(false);
 const page = ref(1);
 const pageSize = 20;
-const noMore = ref(false);
+
+// 上拉加载：/api/change-orders/list 忽略 page/page_size（返回全量），
+// 旧实现 page+1 再请求会把同一批变更单再 append 一遍 → 列表重复。改为前端切片。
+const pager = useListPager(() => filteredList.value, pageSize);
+const visible = pager.visible;
+const hasMore = pager.hasMore;
+const reset = pager.reset;
+const noMore = computed(() => !hasMore.value);
 
 const filteredList = computed(() => {
   if (!curStatus.value) return list.value;
@@ -89,7 +103,7 @@ const formatDate = (str) => {
 const fetchList = async () => {
   loading.value = true;
   page.value = 1;
-  noMore.value = false;
+  reset();
   try {
     const token = uni.getStorageSync('token');
     const res = await uni.request({
@@ -107,26 +121,16 @@ const fetchList = async () => {
   }
 };
 
-const loadMore = async () => {
-  if (loadingMore.value || noMore.value) return;
-  loadingMore.value = true;
-  page.value++;
-  try {
-    const token = uni.getStorageSync('token');
-    const res = await uni.request({
-      url: '/api/change-orders/list',
-      data: { project_id: projectId.value, page: page.value, page_size: pageSize },
-      header: { Authorization: token },
-    });
-    const data = res.data;
-    const arr = Array.isArray(data) ? data : (data.list || []);
-    list.value = [...list.value, ...arr];
-    if (arr.length < pageSize) noMore.value = true;
-  } catch (e) {
-    noMore.value = true;
-  } finally {
-    loadingMore.value = false;
-  }
+const loadMore = () => {
+  // 前端切片，不再重复请求（接口没有分页能力）
+  pager.loadMore();
+};
+
+const onRefresh = () => {
+  refreshing.value = true;
+  fetchList();
+  // scroll-view 的 refresher 必须手动复位
+  setTimeout(() => { refreshing.value = false; }, 500);
 };
 
 const goDetail = (item) => {

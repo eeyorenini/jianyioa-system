@@ -443,20 +443,25 @@ const goBack = () => {
 }
 
 /* 微信一键登录（仅小程序端出现） */
+/* 2026-10-26 改版：原来是整宽 48px 高的大色块，大而拙。
+   改成居中胶囊小按钮（190x42），视觉更轻，点击区域仍够手指用。 */
 .wx-login-btn {
-  background: #07C160;
-  border-radius: 10px;
-  padding: 14px 0;
-  text-align: center;
-  min-height: 48px;
-  box-shadow: 0 4px 12px rgba(7, 193, 96, 0.22);
+  width: 190px;
+  height: 42px;
+  margin: 2px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #12D06E 0%, #07C160 100%);
+  border-radius: 21px;
+  box-shadow: 0 2px 8px rgba(7, 193, 96, 0.24);
 }
 
 .wx-login-text {
   color: #fff;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 1px;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }
 
 .wx-split {

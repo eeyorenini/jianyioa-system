@@ -1,5 +1,10 @@
 {
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "onReachBottomDistance": 80,
   "navigationBarTitleText": "项目管理",
   "navigationStyle": "custom",
-  "usingComponents": {}
+  "usingComponents": {
+    "list-footer": "../../components/list-footer"
+  }
 }

@@ -52,6 +52,9 @@
     {
       "path": "pages/home/index",
       "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
         "navigationBarTitleText": "首页",
         "navigationStyle": "custom"
       }
@@ -108,6 +111,9 @@
     {
       "path": "pages/projects/list",
       "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
         "navigationBarTitleText": "项目管理",
         "navigationStyle": "custom"
       }
@@ -115,6 +121,9 @@
     {
       "path": "pages/inspection/list",
       "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
         "navigationBarTitleText": "质量巡检",
         "navigationStyle": "custom"
       }
@@ -129,6 +138,9 @@
     {
       "path": "pages/mine/index",
       "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
         "navigationBarTitleText": "我的",
         "navigationStyle": "custom"
       }
@@ -295,6 +307,9 @@
         {
           "path": "acceptance/list",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "验收管理",
             "navigationStyle": "custom"
           }
@@ -335,6 +350,9 @@
         {
           "path": "material/list",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "材料管理",
             "navigationStyle": "custom"
           }
@@ -576,6 +594,9 @@
         {
           "path": "notices/notices",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "公告通知",
             "navigationStyle": "custom"
           }
@@ -583,6 +604,9 @@
         {
           "path": "addressbook/addressbook",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "通讯录",
             "navigationStyle": "custom"
           }
@@ -590,6 +614,9 @@
         {
           "path": "customers/customers",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "客户管理",
             "navigationStyle": "custom"
           }
@@ -611,6 +638,9 @@
         {
           "path": "files/list",
           "style": {
+        "enablePullDownRefresh": true,
+        "backgroundTextStyle": "dark",
+        "onReachBottomDistance": 80,
             "navigationBarTitleText": "项目文件",
             "navigationStyle": "custom"
           }

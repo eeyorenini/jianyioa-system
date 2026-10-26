@@ -51,7 +51,7 @@
 
       <view v-else class="card-list">
         <view
-          v-for="item in list"
+          v-for="item in visible"
           :key="item.id"
           class="card"
           @click="goDetail(item)"
@@ -159,8 +159,7 @@
         </view>
       </view>
 
-      <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-      <view v-else-if="noMore && list.length > 3" class="loading-more"><text class="loading-text">没有更多了</text></view>
+      <view v-if="noMore && list.length > 3" class="loading-more"><text class="loading-text">没有更多了</text></view>
 
       <!-- 给底部 tabBar 与 FAB 留出空间 -->
       <view class="bottom-pad"></view>
@@ -229,6 +228,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { absAsset } from '@/utils/api'
 import { useUserStore } from '@/stores/user'
+import { useListPager } from '@/utils/listPager'
 import { guardTab } from '@/utils/permission'
 
 const userStore = useUserStore()
@@ -237,10 +237,16 @@ const list = ref([])
 const total = ref(0)
 const loading = ref(false)
 const refreshing = ref(false)
-const loadingMore = ref(false)
 const page = ref(1)
 const pageSize = 20
-const noMore = ref(false)
+
+// 上拉加载：/api/purchase-requests* 不支持分页（传 page 被忽略，返回全量），
+// 旧实现 page+1 再请求会拿到同一批数据 append → 采购单重复出现。改为前端切片。
+const pager = useListPager(() => list.value, pageSize)
+const visible = pager.visible
+const hasMore = pager.hasMore
+const reset = pager.reset
+const noMore = computed(() => !hasMore.value)
 const pendingCount = ref(0)
 const reimburseCount = ref(0)
 const showDialog = ref(false)
@@ -375,7 +381,17 @@ const previewImage = (current, urls) => {
   uni.previewImage({ current, urls })
 }
 
-function goBack() { uni.navigateBack() }
+// 2026-10-26 修复：本页是 tabBar 页（pages.json tabBar 里的「采购」），
+// 直接 uni.navigateBack() 在栈底会**静默失败**（无上一页可退），点了完全没反应。
+// 其他 tabBar 页（项目/巡检/我的）早就有 getCurrentPages 兜底，本页漏了。
+function goBack() {
+  const pages = getCurrentPages()
+  if (pages.length <= 1) {
+    uni.switchTab({ url: '/pages/home/index' })
+  } else {
+    uni.navigateBack()
+  }
+}
 
 // 切 tab 只在这里改状态，加载交给 watch（避免重复请求）
 function switchTab(key) {
@@ -386,20 +402,18 @@ function switchTab(key) {
 function onRefresh() {
   refreshing.value = true
   page.value = 1
-  noMore.value = false
+  reset()
   loadData()
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value || loading.value) return
-  page.value++
-  loadData(true)
+  // 前端切片，不再重复请求（接口没有分页能力）
+  pager.loadMore()
 }
 
 function loadData(isMore = false) {
   if (loading.value) return
   loading.value = true
-  if (!isMore) noMore.value = false
 
   const userInfo = uni.getStorageSync('userInfo') || {}
   let url = ''
@@ -422,24 +436,20 @@ function loadData(isMore = false) {
     success: (res) => {
       if (res.data.code === 0 || res.data.code === undefined) {
         const arr = res.data.list || res.data.data?.list || []
-        if (isMore) {
-          list.value = [...list.value, ...arr]
-        } else {
-          list.value = arr
-        }
+        // 接口返回全量，整体替换，分页由前端切片负责
+        list.value = arr
+        reset()
         const t = Number(res.data.total)
         if (isFinite(t)) total.value = t
-        else if (!isMore) total.value = arr.length
-        noMore.value = arr.length < pageSize
+        else total.value = arr.length
       } else {
-        if (!isMore) { list.value = []; total.value = 0 }
+        list.value = []; total.value = 0
       }
     },
-    fail: () => { if (!isMore) { list.value = []; total.value = 0 } },
+    fail: () => { list.value = []; total.value = 0 },
     complete: () => {
       loading.value = false
       refreshing.value = false
-      loadingMore.value = false
     }
   })
 }
@@ -759,7 +769,7 @@ onMounted(() => {
 watch(activeTab, () => {
   page.value = 1
   list.value = []
-  noMore.value = false
+  reset()
   total.value = 0
   loadData()
 })

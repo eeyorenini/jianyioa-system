@@ -40,8 +40,8 @@
     </view>
 
     <!-- 材料列表 -->
-    <view class="material-list" v-else-if="filteredList.length">
-      <view class="material-card" v-for="item in filteredList" :key="item.id">
+    <view class="material-list" v-else-if="visible.length">
+      <view class="material-card" v-for="item in visible" :key="item.id">
         <view class="material-info">
           <text class="material-name">{{ item.name }}</text>
           <text class="material-spec">{{ item.spec || item.model || '-' }}</text>
@@ -72,6 +72,9 @@
       <text class="empty-text">暂无主材记录</text>
     </view>
 
+    <!-- 上拉加载到底提示 -->
+    <list-footer :has-more="hasMore" :count="visible.length" />
+
     <!-- 快捷入口 -->
     <view class="material-actions">
       <view class="m-action" @click="goPage('/pages/material/purchase')">
@@ -88,8 +91,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { guardTab } from "@/utils/permission";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const userStore = useUserStore();
 const projectId = ref('');
@@ -109,6 +115,9 @@ const filteredList = computed(() => {
   return list.value.filter(i => i.category === curCat.value);
 });
 
+// 上拉加载：/api/main-materials 返回全量，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => filteredList.value);
+
 const fetchList = async () => {
   loading.value = true;
   try {
@@ -126,6 +135,7 @@ const fetchList = async () => {
     } else if (Array.isArray(res.data)) {
       list.value = res.data;
     }
+    reset();
   } catch (e) {
     console.error('加载主材列表失败:', e);
     uni.showToast({ title: '加载失败', icon: 'none' });
@@ -158,6 +168,10 @@ onMounted(() => {
   projectName.value = options.projectName ? decodeURIComponent(options.projectName) : '';
   fetchList();
 });
+
+// 下拉刷新 / 上拉加载
+onPullDownRefresh(() => runPullRefresh(fetchList, reset));
+onReachBottom(() => loadMore());
 </script>
 
 <style scoped>

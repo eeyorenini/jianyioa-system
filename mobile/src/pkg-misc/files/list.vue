@@ -52,8 +52,8 @@
     </view>
 
     <!-- 文件列表 -->
-    <view class="file-list" v-else-if="filteredList.length">
-      <view class="file-item" v-for="f in filteredList" :key="f.id" @click="goDetail(f)">
+    <view class="file-list" v-else-if="visible.length">
+      <view class="file-item" v-for="f in visible" :key="f.id" @click="goDetail(f)">
         <!-- 顶部行：缩略图 + 文件名 + 状态徽章 -->
         <view class="file-row-top">
           <view class="file-thumb" :style="thumbBg(f)">
@@ -127,6 +127,9 @@
       <text class="empty-hint">切换上方状态或分类查看其他文件</text>
     </view>
 
+    <!-- 上拉加载到底提示 -->
+    <list-footer :has-more="hasMore" :count="visible.length" />
+
     <!-- 上传按钮（仅项目已选且有 write 权限显示） -->
     <view v-if="projectId && canWrite" class="fab" @click="goUpload">
       <text>+</text>
@@ -136,9 +139,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
-import { onShow } from "@dcloudio/uni-app";
+import { onShow, onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { pickProject } from "@/utils/projectPicker";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 import {
   FILE_CATEGORIES, FILE_CATEGORY_MAP, projectFileUrl, authHeader,
   fileStatusText as statusText, fileStatusColor as statusColor,
@@ -171,6 +176,9 @@ const filteredList = computed(() => {
   if (curCategory.value) list = list.filter((f) => f.category === curCategory.value);
   return list;
 });
+
+// 上拉加载：全量数据一次拉回，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => filteredList.value);
 
 // 各分类文件数（含 0，用于角标和空分类置灰）
 const catCounts = computed(() => {
@@ -253,6 +261,7 @@ async function loadData() {
     } else {
       files.value = [];
     }
+    reset();
   } catch (e) {
     console.error('加载项目文件失败', e);
     files.value = [];
@@ -337,6 +346,10 @@ onShow(() => {
   // 审核/上传后返回，刷新列表
   if (projectId.value) loadData();
 });
+
+// 下拉刷新 / 上拉加载
+onPullDownRefresh(() => runPullRefresh(loadData, reset));
+onReachBottom(() => loadMore());
 </script>
 
 <style scoped>

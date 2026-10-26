@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyle">
+    <view class="nav-bar" :style="navStyleCapsule">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">客户管理</text>
       <text class="nav-add" @click="goAdd">+</text>
@@ -10,7 +10,7 @@
     <view class="list">
       <view
         class="list-item"
-        v-for="item in list"
+        v-for="item in visible"
         :key="item.id"
       >
         <view class="item-header">
@@ -27,14 +27,22 @@
         </view>
       </view>
       <view v-if="list.length === 0" class="empty">暂无客户</view>
+      <!-- 上拉加载到底提示 -->
+      <list-footer :has-more="hasMore" :count="visible.length" />
     </view>
   </view>
 </template>
 
 <script setup >
 import { ref, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const list = ref([]);
+
+// 上拉加载：/api/customers 返回全量，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => list.value);
 
 const getLevelClass = (level) => {
   if (level === 'VIP') return 'level-vip';
@@ -49,21 +57,23 @@ const getStatusClass = (status) => {
   return 'status-default';
 };
 
-const fetchList = async () => {
+const fetchList = async (opts = {}) => {
   try {
-    uni.showLoading({ title: "加载中..." });
+    // 下拉刷新时不弹 loading 遮罩
+    if (!opts.silent) uni.showLoading({ title: "加载中..." });
     const token = uni.getStorageSync("token");
     const res = await uni.request({
       url: "/api/customers",
       header: { Authorization: token },
     });
-    uni.hideLoading();
+    if (!opts.silent) uni.hideLoading();
     const data = res.data;
     if (Array.isArray(data)) {
       list.value = data;
+      reset();
     }
   } catch (e) {
-    uni.hideLoading();
+    if (!opts.silent) uni.hideLoading();
     console.log("加载失败", e);
   }
 };
@@ -71,6 +81,10 @@ const fetchList = async () => {
 onMounted(() => {
   fetchList();
 });
+
+// 下拉刷新 / 上拉加载
+onPullDownRefresh(() => runPullRefresh(() => fetchList({ silent: true }), reset));
+onReachBottom(() => loadMore());
 
 
 const goBack = () => {

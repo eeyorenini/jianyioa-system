@@ -27,8 +27,8 @@
     </view>
 
     <!-- 列表 -->
-    <view class="record-list" v-else-if="filteredList.length">
-      <view class="record-card" v-for="item in filteredList" :key="item.id" @click="goDetail(item)">
+    <view class="record-list" v-else-if="visible.length">
+      <view class="record-card" v-for="item in visible" :key="item.id" @click="goDetail(item)">
         <view class="card-top">
           <text class="card-title">{{ item.stage || '验收项' }}</text>
           <text class="status-pill" :class="statusClass(item.accept_status)">{{ item.accept_status || '待验收' }}</text>
@@ -63,6 +63,9 @@
       <text class="empty-text">{{ curStatus ? '暂无' + curStatus + '记录' : '暂无验收记录' }}</text>
     </view>
 
+    <!-- 上拉加载到底提示 -->
+    <list-footer :has-more="hasMore" :count="visible.length" />
+
     <!-- 新建按钮 -->
     <view class="fab" @click="goAdd">
       <text>+</text>
@@ -72,9 +75,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
 import { absAsset } from "@/utils/api";
 import { guardTab } from "@/utils/permission";
 import { pickProject } from "@/utils/projectPicker";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const projectId = ref(0);
 const projectName = ref('');
@@ -92,6 +98,9 @@ const filteredList = computed(() => {
   if (!curStatus.value) return list.value;
   return list.value.filter((i) => (i.accept_status || '待验收') === curStatus.value);
 });
+
+// 上拉加载：/api/acceptance 返回全量，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => filteredList.value);
 
 // 附件图片（后端存 JSON 字符串数组）
 function getPhotos(item) {
@@ -121,6 +130,7 @@ async function loadData() {
     if (Array.isArray(data)) list.value = data;
     else if (data && Array.isArray(data.list)) list.value = data.list;
     else list.value = [];
+    reset();
   } catch (e) {
     console.error('加载验收失败', e);
     list.value = [];
@@ -163,6 +173,10 @@ onMounted(() => {
   if (options.projectName) projectName.value = decodeURIComponent(options.projectName);
   loadData();
 });
+
+// 下拉刷新 / 上拉加载
+onPullDownRefresh(() => runPullRefresh(loadData, reset));
+onReachBottom(() => loadMore());
 </script>
 
 <style scoped>

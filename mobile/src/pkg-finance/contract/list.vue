@@ -27,7 +27,14 @@
     </scroll-view>
 
     <!-- 合同列表 -->
-    <scroll-view class="contract-list" scroll-y @scrolltolower="loadMore">
+    <scroll-view
+      class="contract-list"
+      scroll-y
+      @scrolltolower="loadMore"
+      :refresher-enabled="true"
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+    >
       <view v-if="loading && contracts.length === 0" class="empty-state">
         <text class="loading-icon iconfont icon-loading"></text>
         <text class="empty-text">加载中...</text>
@@ -38,7 +45,7 @@
       </view>
       <view v-else>
         <view
-          v-for="c in contracts"
+          v-for="c in visible"
           :key="c.id"
           class="contract-card"
           @click="goDetail(c)"
@@ -56,25 +63,32 @@
             <text class="arrow iconfont icon-arrow-right"></text>
           </view>
         </view>
-        <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-        <view v-else-if="noMore" class="loading-more"><text class="loading-text">没有更多了</text></view>
+        <view v-if="noMore" class="loading-more"><text class="loading-text">没有更多了</text></view>
       </view>
     </scroll-view>
   </view>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { toDate } from '@/utils/date'
+import { useListPager } from '@/utils/listPager'
 
 const keyword = ref('')
 const status = ref('all')
 const contracts = ref([])
 const loading = ref(false)
-const loadingMore = ref(false)
+const refreshing = ref(false)
 const page = ref(1)
 const pageSize = 20
-const noMore = ref(false)
+
+// 上拉加载：/api/contracts 忽略 page/page_size（返回全量），
+// 旧实现 page+1 再请求会拿到同一份数据 append → 合同重复出现。改为前端切片。
+const pager = useListPager(() => contracts.value, pageSize)
+const visible = pager.visible
+const hasMore = pager.hasMore
+const reset = pager.reset
+const noMore = computed(() => !hasMore.value)
 
 const statusTabs = [
   { label: '全部', value: 'all' },
@@ -89,7 +103,7 @@ onMounted(() => { fetchContracts() })
 function fetchContracts() {
   loading.value = true
   page.value = 1
-  noMore.value = false
+  reset()
   uni.request({
     url: '/api/contracts',
     data: { keyword: keyword.value, status: status.value === 'all' ? '' : status.value, page: 1, page_size: pageSize },
@@ -102,21 +116,15 @@ function fetchContracts() {
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return
-  loadingMore.value = true
-  page.value++
-  uni.request({
-    url: '/api/contracts',
-    data: { keyword: keyword.value, status: status.value === 'all' ? '' : status.value, page: page.value, page_size: pageSize },
-    success: (res) => {
-      if (res.data.code === 0) {
-        const list = res.data.data?.list || []
-        contracts.value = [...contracts.value, ...list]
-        if (list.length < pageSize) noMore.value = true
-      } else { noMore.value = true }
-    },
-    complete: () => { loadingMore.value = false }
-  })
+  // 前端切片，不再重复请求（接口没有分页能力）
+  pager.loadMore()
+}
+
+function onRefresh() {
+  refreshing.value = true
+  fetchContracts()
+  // scroll-view 的 refresher 必须手动复位，否则一直转
+  setTimeout(() => { refreshing.value = false }, 500)
 }
 
 function onStatusChange(val) {

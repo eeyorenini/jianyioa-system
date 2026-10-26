@@ -7,11 +7,11 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">公告通知</view>
+    <view class="page-body">
     <view class="list">
       <view
         class="list-item"
-        v-for="item in list"
+        v-for="item in visible"
         :key="item.id"
         @click="showNotice(item)"
       >
@@ -29,14 +29,23 @@
         <view class="empty-icon">📢</view>
         <view class="empty-text">暂无公告</view>
       </view>
+      <!-- 上拉加载到底提示 -->
+      <list-footer :has-more="hasMore" :count="visible.length" />
+    </view>
     </view>
   </view>
 </template>
 
 <script setup >
 import { ref, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const list = ref([]);
+
+// 上拉加载：/api/notices 返回全量，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => list.value);
 
 const getTypeClass = (type) => {
   if (type === '重要') return 'tag-important';
@@ -58,21 +67,23 @@ const showNotice = (item) => {
   });
 };
 
-const fetchList = async () => {
+const fetchList = async (opts = {}) => {
   try {
-    uni.showLoading({ title: "加载中..." });
+    // 下拉刷新时不弹 loading 遮罩，原生刷新动画已经够了
+    if (!opts.silent) uni.showLoading({ title: "加载中..." });
     const token = uni.getStorageSync("token");
     const res = await uni.request({
       url: "/api/notices",
       header: { Authorization: token },
     });
-    uni.hideLoading();
+    if (!opts.silent) uni.hideLoading();
     const data = res.data;
     if (Array.isArray(data)) {
       list.value = data;
+      reset();
     }
   } catch (e) {
-    uni.hideLoading();
+    if (!opts.silent) uni.hideLoading();
     console.log("加载失败", e);
   }
 };
@@ -80,6 +91,10 @@ const fetchList = async () => {
 onMounted(() => {
   fetchList();
 });
+
+// 下拉刷新 / 上拉加载
+onPullDownRefresh(() => runPullRefresh(() => fetchList({ silent: true }), reset));
+onReachBottom(() => loadMore());
 
 
 const goBack = () => {
@@ -89,17 +104,12 @@ const goBack = () => {
 
 <style scoped>
 .page {
+  padding: 0;
   min-height: 100vh;
   background: #f5f5f5;
-  padding: 15px;
 }
+.page-body { padding: 15px; }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 15px;
-}
 
 .list {
   background: #fff;

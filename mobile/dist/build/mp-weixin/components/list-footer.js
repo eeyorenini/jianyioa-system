@@ -1,0 +1,1 @@
+"use strict";const e=require("../common/vendor.js"),o={__name:"list-footer",props:{hasMore:{type:Boolean,default:!1},count:{type:Number,default:0}},setup:o=>(t,a)=>e.e({a:o.count>0},o.count>0?e.e({b:o.hasMore},(o.hasMore,{})):{})},t=e._export_sfc(o,[["__scopeId","data-v-fa0e1876"]]);wx.createComponent(t);

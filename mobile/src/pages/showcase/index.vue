@@ -1,7 +1,8 @@
 <template>
   <view class="showcase">
     <!-- ==================== 顶部导航 ==================== -->
-    <view class="nav-bar">
+    <!-- 2026-10-26：带 navStyle 让出状态栏 + 微信胶囊宽度，否则「登录」被胶囊盖住 -->
+    <view class="nav-bar" :style="navStyleCapsule">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">样板工地</text>
       <text class="nav-login" @click="goLogin">登录</text>

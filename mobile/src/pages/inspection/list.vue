@@ -21,8 +21,8 @@
     </view>
 
     <!-- 巡检列表 -->
-    <view class="inspect-list" v-else-if="filteredList.length">
-      <view class="inspect-item" v-for="item in filteredList" :key="item.id" @click="goDetail(item)">
+    <view class="inspect-list" v-else-if="visible.length">
+      <view class="inspect-item" v-for="item in visible" :key="item.id" @click="goDetail(item)">
         <!-- 第一行：日期 + 提交人/时间 + 状态标签 -->
         <view class="log-row-first">
           <view class="log-date-bar">
@@ -98,6 +98,9 @@
       <text class="empty-text">{{ curStatus ? '暂无' + curStatus + '记录' : '暂无巡检记录' }}</text>
     </view>
 
+    <!-- 上拉加载到底提示 -->
+    <list-footer :has-more="hasMore" :count="visible.length" />
+
     <!-- 新建按钮 -->
     <view class="fab" @click="goAdd">
       <text>+</text>
@@ -107,9 +110,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
 import { absAsset } from "@/utils/api";
 import { guardTab } from "@/utils/permission";
 import { pickProject } from "@/utils/projectPicker";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const loading = ref(false);
 const curStatus = ref('');
@@ -190,6 +196,8 @@ async function loadData() {
       data = data.filter(i => getStatusText(i.rectify_status || i.status) === curStatus.value);
     }
     list.value = data;
+    // 重新加载 / 切换筛选后回到第一页，否则会停在上次上拉的位置
+    reset();
   } catch (e) {
     console.error('加载巡检失败', e);
     list.value = [];
@@ -199,6 +207,9 @@ async function loadData() {
 }
 
 const filteredList = computed(() => list.value);
+
+// 上拉加载：后端列表接口没有分页实现，改为前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => filteredList.value);
 
 const goDetail = (item) => {
   // 把完整数据通过页面栈传递，避免额外请求
@@ -233,6 +244,12 @@ onMounted(() => {
   if (!guardTab('inspection:read')) return;
   loadData();
 });
+
+// 下拉刷新：重新拉接口，并把分页重置到第一页
+onPullDownRefresh(() => runPullRefresh(loadData, reset));
+
+// 上拉加载：追加下一段（已到底时 loadMore 返回 false，不做任何事）
+onReachBottom(() => loadMore());
 </script>
 
 <style scoped>

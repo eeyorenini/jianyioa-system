@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyle">
+    <view class="nav-bar" :style="navStyleCapsule">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">我的装修</text>
       <view class="nav-more" @click="showMore">···</view>

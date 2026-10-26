@@ -1,5 +1,10 @@
 {
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark",
+  "onReachBottomDistance": 80,
   "navigationBarTitleText": "质量巡检",
   "navigationStyle": "custom",
-  "usingComponents": {}
+  "usingComponents": {
+    "list-footer": "../../components/list-footer"
+  }
 }

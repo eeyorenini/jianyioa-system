@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航（首页不需要返回按钮） -->
-    <view class="nav-bar" :style="navStyle">
+    <view class="nav-bar" :style="navStyleCapsule">
       <view class="nav-placeholder"></view>
       <text class="nav-title">首页</text>
       <view class="msg-icon" @click="goMessage">
@@ -185,11 +185,12 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
-import { onShow } from "@dcloudio/uni-app";
+import { onShow, onPullDownRefresh } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { HOME_QUICK_ENTRIES, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
+import { runPullRefresh } from "@/utils/listPager";
 // 2026-10-22：首页是 tabBar 页，原生未读徽标在这里补同步
 // （消息页在分包里不是 tabBar 页，它调 setTabBarBadge 会报 not TabBar page）
 import { syncMessageBadge } from "@/utils/tabbar";
@@ -288,6 +289,18 @@ onShow(() => {
 onMounted(() => {
   // 实际加载时从后端拉取数据
 });
+
+// 下拉刷新：首页三块数据（未读数 / 最近项目 / 待办统计）一起重拉。
+// 用 Promise.all 等三块都回来再收起刷新动画，避免只刷了一半就停。
+onPullDownRefresh(() =>
+  runPullRefresh(() =>
+    Promise.all([
+      loadUnread(),
+      loadRecentProjects(),
+      loadHomeStats().catch(() => {}),
+    ])
+  )
+);
 
 // ====== 首页统计 / 待办 / 逾期预警：统一从 /api/todo/center 拉（按角色 + 项目相关） ======
 const loadHomeStats = async () => {

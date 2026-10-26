@@ -7,7 +7,7 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">设置</view>
+    <view class="page-body">
     <view class="menu-list">
       <view class="menu-item">
         <text class="menu-text">账号安全</text>
@@ -27,6 +27,7 @@
       </view>
     </view>
     <view class="version">简逸ERP v{{ APP_VERSION }}</view>
+    </view>
   </view>
 </template>
 
@@ -54,17 +55,12 @@ const goBack = () => {
 
 <style scoped>
 .page {
+  padding: 0;
   min-height: 100vh;
   background: #f5f5f5;
-  padding: 15px;
 }
+.page-body { padding: 15px; }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 15px;
-}
 
 .menu-list {
   background: #fff;

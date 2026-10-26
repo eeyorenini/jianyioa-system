@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyle">
+    <view class="nav-bar" :style="navStyleCapsule">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">我的</text>
       <view class="msg-icon" @click="goMessage">
@@ -105,13 +105,14 @@
 
 <script setup >
 import { ref, computed, onMounted } from "vue";
-import { onShow } from "@dcloudio/uni-app";
+import { onShow, onPullDownRefresh } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import BottomPicker from "@/components/bottom-picker.vue";
 import { MY_WORK_ITEMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
 import { syncMessageBadge } from "@/utils/tabbar";
 import { miniBindStatus } from "@/utils/wechat";
+import { runPullRefresh } from "@/utils/listPager";
 
 const userStore = useUserStore();
 // 版本号来自 package.json（vite define 注入），不再手写
@@ -246,6 +247,9 @@ const syncUser = () => {
 };
 onMounted(syncUser);
 onShow(syncUser);
+
+// 下拉刷新：重拉未读数 / 微信绑定状态 / 用户信息（与 onShow 同一套逻辑）
+onPullDownRefresh(() => runPullRefresh(syncUser));
 
 const goMessage = () => {
   // 过一层 resolvePageUrl：小程序端该页在 pkg-misc 分包，构建期虽然会改写字面量，

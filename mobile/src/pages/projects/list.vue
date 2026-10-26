@@ -61,10 +61,10 @@
     </view>
 
     <!-- 项目列表 -->
-    <view class="project-list" v-if="filteredList.length">
+    <view class="project-list" v-if="visible.length">
       <view
         class="project-card"
-        v-for="p in filteredList"
+        v-for="p in visible"
         :key="p.id"
         @click="goDetail(p)"
       >
@@ -123,12 +123,18 @@
       <text class="empty-icon">📂</text>
       <text class="empty-text">{{ keyword ? '未找到匹配项目' : '暂无项目' }}</text>
     </view>
+
+    <!-- 上拉加载到底提示 -->
+    <list-footer :has-more="hasMore" :count="visible.length" />
   </view>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
+import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
+import { useListPager, runPullRefresh } from "@/utils/listPager";
+import ListFooter from "@/components/list-footer.vue";
 
 const keyword = ref('');
 const curStatus = ref('');
@@ -156,6 +162,9 @@ const filteredList = computed(() => {
     computedProgress: computeProgress(p)
   }));
 });
+
+// 上拉加载：后端 /api/projects 没有分页实现，前端切片渲染（详见 utils/listPager.ts）
+const { visible, hasMore, reset, loadMore } = useListPager(() => filteredList.value);
 
 // 计算项目进度：已完成节点 / 总节点数（不含跳过）
 const computeProgress = (project) => {
@@ -217,6 +226,8 @@ const fetchList = async () => {
     const data = res.data;
     if (Array.isArray(data)) {
       list.value = data;
+      // 重新加载 / 切换筛选后回到第一页
+      reset();
     }
   } catch (e) {
     console.error("加载项目失败", e);
@@ -228,6 +239,12 @@ const fetchList = async () => {
 onMounted(() => {
   fetchList();
 });
+
+// 下拉刷新：重新拉接口并把分页重置到第一页
+onPullDownRefresh(() => runPullRefresh(fetchList, reset));
+
+// 上拉加载下一段
+onReachBottom(() => loadMore());
 
 
 

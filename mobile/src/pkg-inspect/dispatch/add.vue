@@ -4,7 +4,7 @@
     <view class="nav-bar" :style="navStyle">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">新建派工单</text>
-      <text class="nav-btn" @click="submit" :class="{ disabled: submitting }">提交</text>
+      <view class="nav-placeholder"></view>
     </view>
 
     <!-- 项目信息横幅 -->
@@ -112,6 +112,14 @@
       @select="onWorkerSelect"
       @cancel="workerPicker.visible = false"
     />
+
+    <!-- 提交按钮（底部固定，与新建变更单/新建项目等页面保持一致） -->
+    <view class="bottom-bar">
+      <view class="btn-submit" :class="{ loading: submitting }" @click="submit">
+        <text v-if="!submitting">提 交</text>
+        <text v-else>提交中...</text>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -319,6 +327,30 @@ function submit() {
 </script>
 
 <style lang="scss" scoped>
+/* ===== 底部固定提交栏（统一规范，2026-10-26） ===== */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+}
+.btn-submit {
+  background: #1E3A5F;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  padding: 14px 0;
+  border-radius: 10px;
+  letter-spacing: 2px;
+}
+.btn-submit.loading { opacity: 0.7; }
+
 .page { min-height: 100vh; background: #f5f5f5; padding-bottom: 120rpx; }
 .form-card { margin: 20rpx; background: #fff; border-radius: 16rpx; padding: 30rpx; }
 .form-section-title { font-size: 28rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 24rpx; }
@@ -381,6 +413,4 @@ function submit() {
 }
 .nav-back { font-size: 28px; font-weight: 300; width: 40px; }
 .nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
-.nav-btn { font-size: 15px; color: #fff; width: 40px; text-align: right; }
-.nav-btn.disabled { opacity: 0.5; }
 </style>

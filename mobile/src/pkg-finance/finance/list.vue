@@ -35,7 +35,14 @@
     </view>
 
     <!-- 记录列表 -->
-    <scroll-view class="record-list" scroll-y @scrolltolower="loadMore">
+    <scroll-view
+      class="record-list"
+      scroll-y
+      @scrolltolower="loadMore"
+      :refresher-enabled="true"
+      :refresher-triggered="refreshing"
+      @refresherrefresh="onRefresh"
+    >
       <view v-if="loading && records.length === 0" class="empty-state">
         <text class="loading-icon iconfont icon-loading"></text>
       </view>
@@ -44,7 +51,7 @@
       </view>
       <view v-else>
         <view
-          v-for="r in records"
+          v-for="r in visible"
           :key="r.id"
           class="record-card"
         >
@@ -60,8 +67,7 @@
             <text class="record-payee">{{ r.payee || '-' }}</text>
           </view>
         </view>
-        <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-        <view v-else-if="noMore" class="loading-more"><text class="loading-text">没有更多了</text></view>
+        <view v-if="noMore" class="loading-more"><text class="loading-text">没有更多了</text></view>
       </view>
     </scroll-view>
 
@@ -73,16 +79,24 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { toDate } from '@/utils/date'
+import { useListPager } from '@/utils/listPager'
 
 const type = ref('all')
 const records = ref([])
 const loading = ref(false)
-const loadingMore = ref(false)
+const refreshing = ref(false)
 const page = ref(1)
 const pageSize = 20
-const noMore = ref(false)
+
+// 上拉加载：/api/finance/records 忽略 page/page_size（返回全量），
+// 旧实现 page+1 再请求会拿到同一份数据 append → 收支记录重复。改为前端切片。
+const pager = useListPager(() => records.value, pageSize)
+const visible = pager.visible
+const hasMore = pager.hasMore
+const reset = pager.reset
+const noMore = computed(() => !hasMore.value)
 const stats = ref({ income: 0, expense: 0, balance: 0 })
 
 const typeTabs = [
@@ -108,7 +122,7 @@ function fetchStats() {
 function fetchRecords() {
   loading.value = true
   page.value = 1
-  noMore.value = false
+  reset()
   uni.request({
     url: '/api/finance/list',
     data: { type: type.value === 'all' ? '' : type.value, page: 1, page_size: pageSize },
@@ -121,21 +135,16 @@ function fetchRecords() {
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return
-  loadingMore.value = true
-  page.value++
-  uni.request({
-    url: '/api/finance/list',
-    data: { type: type.value === 'all' ? '' : type.value, page: page.value, page_size: pageSize },
-    success: (res) => {
-      if (res.data.code === 0) {
-        const list = res.data.data?.list || []
-        records.value = [...records.value, ...list]
-        if (list.length < pageSize) noMore.value = true
-      } else { noMore.value = true }
-    },
-    complete: () => { loadingMore.value = false }
-  })
+  // 前端切片，不再重复请求（接口没有分页能力）
+  pager.loadMore()
+}
+
+function onRefresh() {
+  refreshing.value = true
+  fetchStats()
+  fetchRecords()
+  // scroll-view 的 refresher 必须手动复位
+  setTimeout(() => { refreshing.value = false }, 500)
 }
 
 function onTypeChange(val) {

@@ -1,7 +1,10 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar">
+    <!-- 2026-10-26：必须带 :style="navStyle" —— 它除了补状态栏高度，
+         还会补 paddingRight 把右侧内容让到微信胶囊（···）左边。
+         原来没带，状态栏压住标题、「全部已读」直接被胶囊盖住点不上。 -->
+    <view class="nav-bar" :style="navStyleCapsule">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">消息通知</text>
       <!-- 按钮永远显示：没未读时置灰，避免"按钮不见了"的错觉 -->
@@ -28,7 +31,7 @@
       </view>
       <view v-else>
         <view
-          v-for="msg in messages"
+          v-for="msg in visible"
           :key="msg.id"
           class="message-card"
           :class="{ unread: !msg.is_read }"
@@ -65,8 +68,7 @@
           </view>
         </view>
         
-        <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-        <view v-else-if="noMore && messages.length > 0" class="loading-more"><text class="loading-text">没有更多了</text></view>
+        <view v-if="noMore && messages.length > 0" class="loading-more"><text class="loading-text">没有更多了</text></view>
       </view>
     </scroll-view>
   </view>
@@ -78,14 +80,20 @@ import { onShow } from '@dcloudio/uni-app'
 import { toDate } from '@/utils/date'
 import { syncMessageBadge } from '@/utils/tabbar'
 import { authHeader } from '@/utils/permission'
+import { useListPager } from '@/utils/listPager'
 
 const messages = ref([])
 const loading = ref(false)
-const loadingMore = ref(false)
 const refreshing = ref(false)
-const page = ref(1)
 const pageSize = 20
-const noMore = ref(false)
+
+// 上拉加载：/api/messages 忽略 page/pageSize（返回全量），
+// 旧实现 page+1 再请求拿到同一批数据 append → 消息列表出现重复条目。改为前端切片。
+const pager = useListPager(() => messages.value, pageSize)
+const visible = pager.visible
+const hasMore = pager.hasMore
+const reset = pager.reset
+const noMore = computed(() => !hasMore.value)
 
 // 触摸滑动相关
 const touchMap = ref({})
@@ -138,8 +146,7 @@ const typeConfig = (type) => {
 
 function fetchMessages() {
   loading.value = true
-  page.value = 1
-  noMore.value = false
+  reset()
   uni.request({
     url: '/api/messages',
     data: { page: 1, pageSize: pageSize },
@@ -160,28 +167,13 @@ function fetchMessages() {
 function onRefresh() {
   refreshing.value = true
   fetchMessages()
+  // scroll-view 的 refresher 必须手动复位，否则一直转
   setTimeout(() => { refreshing.value = false }, 500)
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return;
-  loadingMore.value = true;
-  page.value++
-  uni.request({
-    url: '/api/messages',
-    data: { page: page.value, pageSize: pageSize },
-    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') },
-    success: (res) => {
-      const list = res.data?.list || (Array.isArray(res.data) ? res.data : []);
-      if (list.length > 0) {
-        messages.value = [...messages.value, ...list.map(m => ({ ...m, _translateX: 0 }))]
-        if (list.length < pageSize) noMore.value = true
-      } else {
-        noMore.value = true
-      }
-    },
-    complete: () => { loadingMore.value = false }
-  })
+  // 前端切片，不再重复请求（接口没有分页能力）
+  pager.loadMore()
 }
 
 function formatTime(str) {
@@ -333,8 +325,11 @@ const refreshUnreadBadge = () => {
 </script>
 
 <style lang="scss" scoped>
-.page { min-height: 100vh; background: #f5f5f5; }
-.message-list { height: calc(100vh - 88rpx); }
+/* 2026-10-26：导航栏高度是运行时算的（胶囊底边 + 8px），不再固定 88rpx，
+   所以列表高度改成 flex 自适应，别再写死 calc(100vh - 88rpx) —— 否则
+   导航栏一变高，列表底部就被挤出屏幕。 */
+.page { height: 100vh; display: flex; flex-direction: column; background: #f5f5f5; }
+.message-list { flex: 1; height: 0; }
 .message-card { 
   display: flex; 
   align-items: flex-start; 

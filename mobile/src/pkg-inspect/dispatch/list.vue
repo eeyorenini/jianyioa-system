@@ -39,7 +39,7 @@
       </view>
       <view v-else>
         <view
-          v-for="item in list"
+          v-for="item in visible"
           :key="item.id"
           class="card"
           @click="goDetail(item)"
@@ -97,8 +97,7 @@
           <!-- 已完成：不能删除/操作（按大王要求） -->
         </view>
       </view>
-      <view v-if="loadingMore" class="loading-more"><text class="loading-text">加载中...</text></view>
-      <view v-else-if="noMore && list.length > 0" class="loading-more"><text class="loading-text">没有更多了</text></view>
+      <view v-if="noMore && list.length > 0" class="loading-more"><text class="loading-text">没有更多了</text></view>
     </scroll-view>
 
     <!-- 新建按钮（我的派工tab显示） -->
@@ -130,6 +129,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { guardTab } from '@/utils/permission'
 import { pickProject } from '@/utils/projectPicker'
+import { useListPager } from '@/utils/listPager'
 
 const activeTab = ref('my')
 const list = ref([])
@@ -138,7 +138,14 @@ const refreshing = ref(false)
 const loadingMore = ref(false)
 const page = ref(1)
 const pageSize = 20
-const noMore = ref(false)
+
+// 上拉加载：/api/dispatches* 不支持分页（传 page 也被忽略），改为前端切片渲染。
+// 旧实现是「page+1 再请求一次然后 append 全量」，结果同一批数据被追加两遍 → 列表出现重复卡片。
+const pager = useListPager(() => list.value, pageSize)
+const visible = pager.visible
+const hasMore = pager.hasMore
+const reset = pager.reset
+const noMore = computed(() => !hasMore.value)
 const pendingCount = ref(0)
 const showDialog = ref(false)
 const dialogAction = ref('approve')
@@ -212,21 +219,20 @@ function switchTab(key) {
   activeTab.value = key
   page.value = 1
   list.value = []
-  noMore.value = false
+  reset()
   loadData()
 }
 
 function onRefresh() {
   refreshing.value = true
   page.value = 1
-  noMore.value = false
+  reset()
   loadData()
 }
 
 function loadMore() {
-  if (loadingMore.value || noMore.value) return
-  page.value++
-  loadData(true)
+  // 前端切片，不再重复请求接口（接口没有分页能力）
+  pager.loadMore()
 }
 
 function loadData(isMore = false) {
@@ -257,12 +263,9 @@ function loadData(isMore = false) {
     success: (res) => {
       if (res.data.code === 0 || res.data.code === undefined) {
         const arr = res.data.list || res.data.data?.list || (Array.isArray(res.data) ? res.data : [])
-        if (isMore) {
-          list.value = [...list.value, ...arr]
-        } else {
-          list.value = arr
-        }
-        noMore.value = arr.length < pageSize
+        // 接口返回全量，直接整体替换，分页由前端切片负责
+        list.value = arr
+        reset()
       } else {
         if (!isMore) list.value = []
       }
