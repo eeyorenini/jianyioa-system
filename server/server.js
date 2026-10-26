@@ -2598,9 +2598,23 @@ app.get('/api/report/stats', async (req, res) => {
     const incRow = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='income'`).get();
     const expRow = await db.prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM finance WHERE type='expense'`).get();
 
+    // 2026-10-26 修复：原来直接读 projects.progress 列，但那一列是**死列**（全库恒为 0，
+    // 没有任何写入方），真实进度一直是按 project_progress_nodes 的已完成节点占比实时算的
+    // （见 GET /api/projects 与 routes/projects.js）。所以报表里所有项目进度都显示 0%。
+    // 这里改成同样的口径：已完成节点数 / 总节点数，无节点则为 0。
+    // 顺带：客户名原来取 projects.customer（老字段，多数为空），改成跟 /api/projects 一致
+    // 走 customers.name 关联，老数据有值时优先用老字段。
     const projects = await db.prepare(
-      `SELECT id, name, customer AS customer_name, COALESCE(progress,0) AS progress
-       FROM projects ORDER BY progress DESC, id DESC LIMIT 10`
+      `SELECT p.id, p.name,
+              COALESCE(NULLIF(p.customer, ''), c.name) AS customer_name,
+              COALESCE((
+                SELECT ROUND(SUM(CASE WHEN n.status = 'completed' THEN 1 ELSE 0 END) / COUNT(*) * 100)
+                FROM project_progress_nodes n WHERE n.project_id = p.id
+              ), 0) AS progress
+       FROM projects p
+       LEFT JOIN customers c ON c.id = p.customer_id
+       ORDER BY progress DESC, p.id DESC
+       LIMIT 10`
     ).all();
 
     res.json({
