@@ -49,7 +49,7 @@
       </view>
     </view>
 
-    <text class="footer">简逸装饰 · 工地管理系统</text>
+    <text class="footer">简逸ERP · 工地管理系统</text>
   </view>
 </template>
 

@@ -1,4 +1,4 @@
-# 建亿OA移动端
+# 简逸ERP 移动端
 
 **uni-app + Vue 3 + Vite**，H5/小程序/App 三端通用
 

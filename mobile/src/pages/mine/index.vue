@@ -69,6 +69,16 @@
           <text class="menu-row-label">结束借权（回到管理员）</text>
           <text class="menu-row-arrow">›</text>
         </view>
+        <!-- #ifdef MP-WEIXIN -->
+        <!-- 员工自查微信绑定：让员工自己看到「这台手机能不能一键登录」，
+             不用每次都去问管理员。H5 没有 wx.login，不显示。 -->
+        <view class="menu-row" @click="onWxBindTap">
+          <text class="menu-row-icon">💬</text>
+          <text class="menu-row-label">微信登录</text>
+          <text class="wx-bind-tag" :class="wxBindTagClass">{{ wxBindTagText }}</text>
+          <text class="menu-row-arrow">›</text>
+        </view>
+        <!-- #endif -->
         <view class="menu-row" @click="logout">
           <text class="menu-row-icon">🚪</text>
           <text class="menu-row-label logout">退出登录</text>
@@ -79,7 +89,7 @@
 
     <!-- 版本信息 -->
     <view class="version-info">
-      <text>简逸装饰 · 工地管理系统 v{{ APP_VERSION }}</text>
+      <text>简逸ERP · 工地管理系统 v{{ APP_VERSION }}</text>
     </view>
 
     <!-- 借权对象选择弹窗（员工列表） -->
@@ -101,6 +111,7 @@ import BottomPicker from "@/components/bottom-picker.vue";
 import { MY_WORK_ITEMS, visibleEntries, roleClass, applyRoleTabBar, authHeader } from "@/utils/permission";
 import { resolvePageUrl, isTabBarPage } from "@/utils/pageUrl";
 import { syncMessageBadge } from "@/utils/tabbar";
+import { miniBindStatus } from "@/utils/wechat";
 
 const userStore = useUserStore();
 // 版本号来自 package.json（vite define 注入），不再手写
@@ -131,8 +142,100 @@ const loadUnread = () => {
   });
 };
 
+// ====== 微信绑定状态（仅小程序，员工自查） ======
+// is_current 语义：true=本机微信已绑定 / false=绑的是别的微信 / null=查不到（无 code）
+const wxBind = ref({ loaded: false, bound: false, isCurrent: null, bindTime: "", nickname: "" });
+let wxBindAt = 0; // 上次查询时间戳，60 秒内不重复打 jscode2session
+
+/** 库里是 UTC 字符串，补 Z 再转本地，否则少 8 小时 */
+const fmtBindTime = (s) => {
+  if (!s) return "";
+  const raw = String(s).trim();
+  const iso = raw.indexOf("T") > 0 ? raw : raw.replace(" ", "T");
+  const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const loadWxBind = async () => {
+  // #ifdef MP-WEIXIN
+  if (!userStore.state.id) return;
+  if (Date.now() - wxBindAt < 60 * 1000) return;
+  wxBindAt = Date.now();
+  const d = await miniBindStatus();
+  if (!d || !d.success) return;
+  wxBind.value = {
+    loaded: true,
+    bound: !!d.bound,
+    isCurrent:
+      d.is_current === null || d.is_current === undefined ? null : !!d.is_current,
+    bindTime: d.bind_time || "",
+    nickname: d.nickname || "",
+  };
+  // #endif
+};
+
+const wxBindTagText = computed(() => {
+  if (!wxBind.value.loaded) return "检测中";
+  if (!wxBind.value.bound) return "未绑定";
+  if (wxBind.value.isCurrent === true) return "已绑本机";
+  if (wxBind.value.isCurrent === false) return "已绑其他机";
+  return "已绑定";
+});
+
+const wxBindTagClass = computed(() => {
+  if (!wxBind.value.loaded || !wxBind.value.bound) return "is-none";
+  if (wxBind.value.isCurrent === true) return "is-ok";
+  if (wxBind.value.isCurrent === false) return "is-warn";
+  return "is-none";
+});
+
+const onWxBindTap = () => {
+  const b = wxBind.value;
+  if (!b.loaded) {
+    uni.showToast({ title: "正在检测…", icon: "none" });
+    return;
+  }
+  const when = fmtBindTime(b.bindTime);
+
+  if (!b.bound) {
+    uni.showModal({
+      title: "微信未绑定",
+      content: "请联系管理员在电脑端「员工管理」里生成绑定码，扫码后即可用微信一键登录。",
+      showCancel: false,
+    });
+    return;
+  }
+
+  if (b.isCurrent === true) {
+    uni.showModal({
+      title: "已绑定本机",
+      content: `下次打开小程序可直接「微信一键登录」，无需输入密码。${when ? "\n绑定时间：" + when : ""}`,
+      showCancel: false,
+    });
+    return;
+  }
+
+  if (b.isCurrent === false) {
+    uni.showModal({
+      title: "当前微信未绑定",
+      content: `该账号已绑定其他微信${when ? "（" + when + "）" : ""}。如需换成本机，请让管理员先在电脑端解绑。`,
+      showCancel: false,
+    });
+    return;
+  }
+
+  uni.showModal({
+    title: "已绑定微信",
+    content: when ? "绑定时间：" + when : "该账号已绑定微信。",
+    showCancel: false,
+  });
+};
+
 const syncUser = () => {
   loadUnread();
+  loadWxBind();
   // 权限以服务端为准：刷新后重新应用 tabBar（角色/借权变化即时生效）
   userStore.fetchMe().then(() => applyRoleTabBar());
 };
@@ -432,6 +535,31 @@ const goBack = () => {
 .menu-row-arrow {
   font-size: 20px;
   color: #D1D5DB;
+}
+
+/* 微信绑定状态标签（仅小程序「我的」页） */
+.wx-bind-tag {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 10px;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.wx-bind-tag.is-ok {
+  background: #E8F8F0;
+  color: #10B981;
+}
+
+.wx-bind-tag.is-warn {
+  background: #FEF6E7;
+  color: #D97706;
+}
+
+.wx-bind-tag.is-none {
+  background: #F3F4F6;
+  color: #9CA3AF;
 }
 
 .version-info {

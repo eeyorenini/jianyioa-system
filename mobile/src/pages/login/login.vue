@@ -11,7 +11,7 @@
     <view class="login-bg">
       <view class="brand-area">
         <image class="brand-logo" src="/static/logo.png" mode="aspectFit" />
-        <text class="brand-name">简逸装饰</text>
+        <text class="brand-name">简逸ERP</text>
         <text class="brand-sub">工地管理系统</text>
       </view>
 
@@ -29,6 +29,17 @@
 
         <!-- 员工登录 -->
         <template v-if="loginType === 'employee'">
+          <!-- #ifdef MP-WEIXIN -->
+          <!-- 微信一键登录：静默拿 openid，命中已绑定的员工直接进工作台，不用输密码 -->
+          <view class="wx-login-btn" @click="handleEmployeeWxLogin">
+            <text class="wx-login-text">微信一键登录</text>
+          </view>
+          <view class="wx-split">
+            <view class="wx-split-line"></view>
+            <text class="wx-split-text">或使用账号密码</text>
+            <view class="wx-split-line"></view>
+          </view>
+          <!-- #endif -->
           <view class="form-item">
             <view class="form-label">用户名</view>
             <input
@@ -66,10 +77,9 @@
             </text>
           </view>
           <!-- #ifdef MP-WEIXIN -->
-          <!-- 员工微信绑定入口：管理员在 PC 员工列表生成小程序码，扫码直达；
-               扫不了时从这里手动输入绑定码。绑过之后就不用再输账号密码。 -->
+          <!-- 降级通道：小程序码扫不了/已过期时，手动输管理员给的 16 位绑定码 -->
           <view class="bind-entry" @click="goEmployeeBind">
-            <text class="bind-entry-text">已绑定微信？直接进入 · 手动输入绑定码</text>
+            <text class="bind-entry-text">扫不了码？手动输入绑定码</text>
           </view>
           <!-- #endif -->
         </template>
@@ -143,7 +153,7 @@
 import { ref, reactive } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
-import { bindOpenidQuietly } from "@/utils/wechat";
+import { bindOpenidQuietly, miniSilentLogin, saveEmployeeIdentity } from "@/utils/wechat";
 
 // 默认「客户登录」
 const loginType = ref('customer');
@@ -206,6 +216,55 @@ const handleEmployeeLogin = async () => {
     } else {
       uni.showToast({ title: data.message || '用户名或密码错误', icon: 'none' });
     }
+  } catch (e) {
+    uni.showToast({ title: '网络错误', icon: 'none' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 员工微信一键登录：静默拿 openid → 后端按 wechat_users.employee_id 识别身份
+// → 只有一个员工身份就直接进工作台；员工+业主双身份交给选择页。
+// 全程不出现密码，也不依赖那张一次性绑定码（绑定码只在首次绑定时用）。
+const handleEmployeeWxLogin = async () => {
+  if (!checkAgreed()) return;
+  if (loading.value) return;
+  loading.value = true;
+  try {
+    const r = await miniSilentLogin();
+    if (!r || !r.success) {
+      uni.showToast({ title: '微信登录失败，请用账号密码登录', icon: 'none' });
+      return;
+    }
+
+    const ids = Array.isArray(r.identities) ? r.identities : [];
+    const emps = ids.filter((i) => i.type === 'employee');
+    const custs = ids.filter((i) => i.type === 'customer');
+
+    // 这个微信没绑员工：区分"是业主"和"完全没绑"，给的提示不一样
+    if (!emps.length) {
+      uni.showToast({
+        title: custs.length
+          ? '该微信是业主账号，请切到客户登录'
+          : '该微信未绑定员工，请联系管理员',
+        icon: 'none',
+      });
+      return;
+    }
+
+    // 纯员工身份：直接进
+    if (emps.length === 1 && !custs.length) {
+      saveEmployeeIdentity(emps[0]);
+      const userStore = useUserStore();
+      userStore.loadUser();
+      userStore.fetchMe();
+      uni.switchTab({ url: '/pages/home/index' });
+      return;
+    }
+
+    // 双身份（如既是员工又是业主）：让用户选，避免串到客户首页
+    uni.setStorageSync('wxLoginResult', r);
+    uni.navigateTo({ url: '/pages/identity/select' });
   } catch (e) {
     uni.showToast({ title: '网络错误', icon: 'none' });
   } finally {

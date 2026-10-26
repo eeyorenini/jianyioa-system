@@ -156,12 +156,14 @@ export const useUserStore = () => {
   // 微信审核要求「先体验后授权」，未登录必须能进，否则引导页的「先逛逛」按钮会失效。
   // pages/bind/scan 是员工扫码绑定落地页：进页面时还没有身份，绑定成功后才写 storage，
   // 必须放行，否则会被守卫踢走，绑定码白扫。
+  // pages/identity/select 是双身份（员工+业主）选择页：同理，选之前还没有身份。
   const PUBLIC_PAGES = [
     "pages/landing/index",
     "pages/showcase/index",
     "pages/login/login",
     "pages/bind/index",
     "pages/bind/scan",
+    "pages/identity/select",
   ];
 
   /** 安全取页面栈（小程序 / H5 都可用，取不到返回空数组） */
