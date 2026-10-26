@@ -7,7 +7,7 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">项目管理</view>
+    <view class="page-body">
     <view class="list">
       <view
         class="list-item"
@@ -33,6 +33,7 @@
         </view>
       </view>
       <view v-if="list.length === 0" class="empty">暂无项目</view>
+    </view>
     </view>
   </view>
 </template>
@@ -93,17 +94,12 @@ const goBack = () => {
 
 <style scoped>
 .page {
+  padding: 0;
   min-height: 100vh;
   background: #f5f5f5;
-  padding: 15px;
 }
+.page-body { padding: 15px; }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 15px;
-}
 
 .list {
   background: #fff;

@@ -9,7 +9,7 @@
       </text>
     </view>
 
-    <view class="page-title">甘特图</view>
+    <view class="page-body">
     <view class="project-info" v-if="project.name">
       📁 {{ project.name }}
     </view>
@@ -30,7 +30,7 @@
     </view>
 
     <!-- 甘特图主体 -->
-    <scroll-view class="gantt-scroll" scroll-x v-if="project.start_date && project.end_date">
+    <scroll-view class="gantt-scroll" scroll-x scroll-y v-if="project.start_date && project.end_date">
       <view class="gantt-table">
         <!-- 表头：月份行 + 日期行 -->
         <view class="gantt-header-row">
@@ -123,6 +123,7 @@
         <view class="legend-dot dot-skipped"></view>
         <text>已跳过</text>
       </view>
+    </view>
     </view>
   </view>
 </template>
@@ -385,18 +386,26 @@ const goBack = () => {
 
 <style scoped>
 .page {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: #f5f5f5;
+  padding: 0;
+}
+/* 2026-10-26：甘特图需要「冻结表头」，改成整屏 flex 布局 ——
+   让 gantt-scroll 拿到确定高度并自己纵向滚动，表头的 position:sticky 才生效
+   （原来 scroll-view 只开 scroll-x，纵向不滚，sticky 相对它等于失效）。 */
+.page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 15px;
-  padding-bottom: 20px;
 }
+/* H5 端 view 编译成 uni-view，两个都写上 */
+.page-body > view,
+.page-body > uni-view { flex-shrink: 0; }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 12px;
-}
 
 .project-info {
   font-size: 13px;
@@ -430,6 +439,8 @@ const goBack = () => {
 
 /* 甘特图横向滚动 */
 .gantt-scroll {
+  flex: 1 1 auto;
+  min-height: 120px;
   background: #fff;
   border-radius: 12px;
   overflow: hidden;
@@ -470,6 +481,8 @@ const goBack = () => {
 .gantt-date-header {
   display: flex;
 }
+/* 表头行的左列同时 sticky top + left，层级要比数据行的左列高 */
+.gantt-header-row .gantt-label-cell { z-index: 11; }
 
 .date-cell {
   width: 60px;

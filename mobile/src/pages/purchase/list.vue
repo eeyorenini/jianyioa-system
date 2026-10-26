@@ -375,7 +375,17 @@ const previewImage = (current, urls) => {
   uni.previewImage({ current, urls })
 }
 
-function goBack() { uni.navigateBack() }
+// 2026-10-26 修复：本页是 tabBar 页（pages.json tabBar 里的「采购」），
+// 直接 uni.navigateBack() 在栈底会**静默失败**（无上一页可退），点了完全没反应。
+// 其他 tabBar 页（项目/巡检/我的）早就有 getCurrentPages 兜底，本页漏了。
+function goBack() {
+  const pages = getCurrentPages()
+  if (pages.length <= 1) {
+    uni.switchTab({ url: '/pages/home/index' })
+  } else {
+    uni.navigateBack()
+  }
+}
 
 // 切 tab 只在这里改状态，加载交给 watch（避免重复请求）
 function switchTab(key) {

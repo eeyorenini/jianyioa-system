@@ -7,8 +7,7 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <view class="page-title">通讯录</view>
-
+    <view class="page-body">
     <view class="search-bar">
       <input
         v-model="keyword"
@@ -35,6 +34,7 @@
         <view class="empty-icon">👤</view>
         <view class="empty-text">暂无员工</view>
       </view>
+    </view>
     </view>
   </view>
 </template>
@@ -90,17 +90,12 @@ const goBack = () => {
 
 <style scoped>
 .page {
+  padding: 0;
   min-height: 100vh;
   background: #f5f5f5;
-  padding: 15px;
 }
+.page-body { padding: 15px; }
 
-.page-title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 15px;
-}
 
 .search-bar {
   background: #fff;

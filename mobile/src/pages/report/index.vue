@@ -7,88 +7,75 @@
       <view class="nav-placeholder"></view>
     </view>
 
-    <!-- 项目统计 -->
-    <view class="section">
-      <view class="section-title">项目概况</view>
-      <view class="stats-grid">
-        <view class="stat-item">
-          <text class="stat-num">{{ stats.project_total }}</text>
-          <text class="stat-label">项目总数</text>
+    <view class="page-body">
+      <!-- 项目总览 -->
+      <view class="hero-card">
+        <view class="hero-left">
+          <text class="hero-num">{{ stats.project_total || 0 }}</text>
+          <text class="hero-label">项目总数</text>
         </view>
-        <view class="stat-item">
-          <text class="stat-num text-green">{{ stats.project_active }}</text>
-          <text class="stat-label">进行中</text>
-        </view>
-        <view class="stat-item">
-          <text class="stat-num text-orange">{{ stats.project_overdue }}</text>
-          <text class="stat-label">逾期未完成</text>
-        </view>
-        <view class="stat-item">
-          <text class="stat-num text-blue">{{ stats.project_completed }}</text>
-          <text class="stat-label">已完成</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- 巡检统计 -->
-    <view class="section">
-      <view class="section-title">巡检统计</view>
-      <view class="stats-grid">
-        <view class="stat-item">
-          <text class="stat-num">{{ stats.inspection_total }}</text>
-          <text class="stat-label">巡检总数</text>
-        </view>
-        <view class="stat-item">
-          <text class="stat-num text-red">{{ stats.inspection_pending }}</text>
-          <text class="stat-label">待整改</text>
-        </view>
-        <view class="stat-item">
-          <text class="stat-num text-green">{{ stats.inspection_fixed }}</text>
-          <text class="stat-label">已整改</text>
-        </view>
-        <view class="stat-item">
-          <text class="stat-num text-orange">{{ stats.inspection_overdue }}</text>
-          <text class="stat-label">已逾期</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- 收支汇总 -->
-    <view class="section">
-      <view class="section-title">收支汇总</view>
-      <view class="finance-summary">
-        <view class="finance-item income">
-          <text class="finance-label">总收入</text>
-          <text class="finance-amount">¥{{ stats.income || 0 }}</text>
-        </view>
-        <view class="finance-item expense">
-          <text class="finance-label">总支出</text>
-          <text class="finance-amount">¥{{ stats.expense || 0 }}</text>
-        </view>
-        <view class="finance-divider"></view>
-        <view class="finance-item balance">
-          <text class="finance-label">净利润</text>
-          <text class="finance-amount">¥{{ (stats.income - stats.expense) || 0 }}</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- 项目进度排名 -->
-    <view class="section">
-      <view class="section-title">项目进度</view>
-      <view v-if="projects.length === 0" class="empty-small">暂无数据</view>
-      <view v-else>
-        <view v-for="p in projects" :key="p.id" class="project-rank-item">
-          <view class="rank-left">
-            <text class="rank-name">{{ p.name }}</text>
-            <text class="rank-customer">{{ p.customer_name || '-' }}</text>
+        <view class="hero-right">
+          <view class="hero-tag">
+            <view class="tag-dot dot-active"></view>
+            <text class="tag-text">进行中 {{ stats.project_active || 0 }}</text>
           </view>
-          <view class="rank-right">
-            <view class="progress-bar-wrap">
-              <view class="progress-bar">
-                <view class="progress-fill" :style="{ width: p.progress + '%' }"></view>
-              </view>
-              <text class="progress-text">{{ p.progress }}%</text>
+          <view class="hero-tag">
+            <view class="tag-dot dot-done"></view>
+            <text class="tag-text">已完成 {{ stats.project_completed || 0 }}</text>
+          </view>
+          <view class="hero-tag">
+            <view class="tag-dot dot-over"></view>
+            <text class="tag-text">逾期 {{ stats.project_overdue || 0 }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 巡检统计 -->
+      <view class="card">
+        <view class="card-title"><view class="title-bar"></view>巡检统计</view>
+        <view class="grid-4">
+          <view class="stat" v-for="item in inspectionStats" :key="item.label">
+            <text class="stat-num" :style="{ color: item.color }">{{ item.value }}</text>
+            <text class="stat-label">{{ item.label }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 收支汇总 -->
+      <view class="card">
+        <view class="card-title"><view class="title-bar"></view>收支汇总</view>
+        <view class="finance-row">
+          <view class="fin-item">
+            <text class="fin-label">总收入</text>
+            <text class="fin-amount c-green">¥{{ money(stats.income) }}</text>
+          </view>
+          <view class="fin-item">
+            <text class="fin-label">总支出</text>
+            <text class="fin-amount c-red">¥{{ money(stats.expense) }}</text>
+          </view>
+          <view class="fin-item">
+            <text class="fin-label">净利润</text>
+            <text class="fin-amount" :class="profit >= 0 ? 'c-blue' : 'c-red'">¥{{ money(profit) }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 项目进度 -->
+      <view class="card">
+        <view class="card-title"><view class="title-bar"></view>项目进度</view>
+        <view v-if="projects.length === 0" class="empty">暂无项目数据</view>
+        <view v-else>
+          <view v-for="p in projects" :key="p.id" class="proj-row">
+            <view class="proj-head">
+              <text class="proj-name">{{ p.name }}</text>
+              <text class="proj-pct" :style="{ color: progressColor(p.progress) }">{{ progressOf(p.progress) }}%</text>
+            </view>
+            <text class="proj-sub">{{ p.customer_name || '未关联客户' }}</text>
+            <view class="bar">
+              <view
+                class="bar-fill"
+                :style="{ width: progressOf(p.progress) + '%', background: progressColor(p.progress) }"
+              ></view>
             </view>
           </view>
         </view>
@@ -98,23 +85,55 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 const stats = ref({ project_total: 0, project_active: 0, project_overdue: 0, project_completed: 0, inspection_total: 0, inspection_pending: 0, inspection_fixed: 0, inspection_overdue: 0, income: 0, expense: 0 })
 const projects = ref([])
+const loading = ref(false)
+
+const inspectionStats = computed(() => [
+  { label: '巡检总数', value: Number(stats.value.inspection_total || 0), color: '#1E3A5F' },
+  { label: '待整改', value: Number(stats.value.inspection_pending || 0), color: '#EF4444' },
+  { label: '已整改', value: Number(stats.value.inspection_fixed || 0), color: '#22C55E' },
+  { label: '已逾期', value: Number(stats.value.inspection_overdue || 0), color: '#FF6B35' },
+])
+
+const profit = computed(() => Number(stats.value.income || 0) - Number(stats.value.expense || 0))
+
+const money = (v) => Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// 后端返回的 progress 可能是字符串（MySQL ROUND 结果是 DECIMAL），统一转数字并夹到 0~100
+const progressOf = (v) => {
+  const n = Number(v)
+  if (!isFinite(n)) return 0
+  return Math.max(0, Math.min(100, Math.round(n)))
+}
+
+const progressColor = (v) => {
+  const n = progressOf(v)
+  if (n >= 100) return '#22C55E'
+  if (n >= 60) return '#1E3A5F'
+  if (n >= 30) return '#FF6B35'
+  return '#EF4444'
+}
 
 onMounted(() => {
+  loadStats()
+})
+
+function loadStats() {
+  loading.value = true
   uni.request({
     url: '/api/report/stats',
     success: (res) => {
-      if (res.data.code === 0) {
+      if (res.data && res.data.code === 0) {
         stats.value = res.data.data?.stats || {}
         projects.value = res.data.data?.projects || []
       }
-    }
+    },
+    complete: () => { loading.value = false }
   })
-})
-
+}
 
 const goBack = () => {
   uni.navigateBack();
@@ -122,37 +141,109 @@ const goBack = () => {
 </script>
 
 <style lang="scss" scoped>
-.page { min-height: 100vh; background: #f5f5f5; padding: 20rpx; }
-.section { background: #fff; border-radius: 16rpx; padding: 28rpx; margin-bottom: 20rpx; }
-.section-title { font-size: 30rpx; font-weight: 600; color: #1E3A5F; margin-bottom: 24rpx; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16rpx; }
-.stat-item { text-align: center; }
-.stat-num { font-size: 48rpx; font-weight: 700; display: block; margin-bottom: 8rpx; }
-.text-green { color: #4CAF50; }
-.text-orange { color: #FF6B35; }
-.text-blue { color: #1E3A5F; }
-.text-red { color: #F44336; }
-.stat-label { font-size: 22rpx; color: #999; }
-.finance-summary { display: flex; align-items: center; justify-content: space-between; }
-.finance-item { text-align: center; flex: 1; }
-.finance-label { font-size: 24rpx; color: #999; display: block; margin-bottom: 8rpx; }
-.finance-amount { font-size: 36rpx; font-weight: 600; display: block; }
-.income .finance-amount { color: #4CAF50; }
-.expense .finance-amount { color: #F44336; }
-.balance .finance-amount { color: #1E3A5F; }
-.finance-divider { width: 1rpx; height: 60rpx; background: #eee; }
-.project-rank-item { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 0; border-bottom: 1rpx solid #f5f5f5; }
-.project-rank-item:last-child { border-bottom: none; }
-.rank-left { flex: 1; }
-.rank-name { font-size: 28rpx; color: #333; font-weight: 600; display: block; margin-bottom: 4rpx; }
-.rank-customer { font-size: 24rpx; color: #999; }
-.rank-right { width: 280rpx; }
-.progress-bar-wrap { display: flex; align-items: center; gap: 12rpx; }
-.progress-bar { flex: 1; height: 12rpx; background: #f0f0f0; border-radius: 6rpx; overflow: hidden; }
-.progress-fill { height: 100%; background: linear-gradient(90deg, #1E3A5F, #FF6B35); border-radius: 6rpx; }
-.progress-text { font-size: 24rpx; color: #666; width: 70rpx; text-align: right; }
-.empty-small { font-size: 26rpx; color: #999; text-align: center; padding: 40rpx 0; }
-/* 导航栏 */
+.page { height: 100vh; display: flex; flex-direction: column; background: #f5f6f8; padding: 0; }
+.page-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+
+/* ===== 项目总览卡 ===== */
+.hero-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 18px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #1E3A5F 0%, #2E5C8A 100%);
+  box-shadow: 0 6px 18px rgba(30, 58, 95, 0.24);
+  margin-bottom: 14px;
+}
+.hero-left { display: flex; flex-direction: column; }
+.hero-num { font-size: 40px; font-weight: 700; color: #fff; line-height: 1.1; }
+.hero-label { font-size: 12px; color: rgba(255, 255, 255, 0.7); margin-top: 4px; letter-spacing: 0.5px; }
+.hero-right { display: flex; flex-direction: column; gap: 8px; }
+.hero-tag { display: flex; align-items: center; gap: 6px; }
+.tag-dot { width: 6px; height: 6px; border-radius: 50%; }
+.dot-active { background: #4ADE80; }
+.dot-done { background: #93C5FD; }
+.dot-over { background: #FCA5A5; }
+.tag-text { font-size: 12px; color: rgba(255, 255, 255, 0.88); }
+
+/* ===== 通用卡片 ===== */
+.card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 6px rgba(30, 58, 95, 0.06);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1E3A5F;
+  margin-bottom: 14px;
+}
+.title-bar {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: #FF6B35;
+  margin-right: 8px;
+}
+
+/* ===== 四宫格统计 ===== */
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0;
+  border-radius: 10px;
+  background: #F8FAFC;
+}
+.stat-num { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 11px; color: #94A3B8; margin-top: 4px; }
+
+/* ===== 收支 ===== */
+.finance-row { display: flex; }
+.fin-item { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; }
+.fin-item + .fin-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 26px;
+  background: #EEF2F7;
+}
+.fin-label { font-size: 11px; color: #94A3B8; margin-bottom: 6px; }
+.fin-amount { font-size: 16px; font-weight: 600; }
+.c-green { color: #22C55E; }
+.c-red { color: #EF4444; }
+.c-blue { color: #1E3A5F; }
+
+/* ===== 项目进度 ===== */
+.proj-row { padding: 12px 0; border-bottom: 1px solid #F1F5F9; }
+.proj-row:last-child { border-bottom: none; padding-bottom: 0; }
+.proj-head { display: flex; align-items: center; justify-content: space-between; }
+.proj-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1F2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
+}
+.proj-pct { font-size: 15px; font-weight: 700; flex-shrink: 0; }
+.proj-sub { display: block; font-size: 11px; color: #94A3B8; margin: 3px 0 8px; }
+.bar { height: 7px; background: #EEF2F7; border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+
+.empty { font-size: 13px; color: #94A3B8; text-align: center; padding: 24px 0; }
+
+/* ===== 导航栏 ===== */
 .nav-bar {
   display: flex;
   align-items: center;
@@ -182,5 +273,4 @@ const goBack = () => {
 .nav-placeholder {
   width: 40px;
 }
-
 </style>

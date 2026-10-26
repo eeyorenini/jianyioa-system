@@ -158,13 +158,15 @@ onMounted(() => {
   loadDashboard()
 })
 
-function loadDashboard() {
+function loadDashboard(opts = {}) {
+  const toastOnSuccess = opts.toast === true
   loading.value = true
   uni.request({
     url: '/api/finance/dashboard',
     success: (res) => {
       if (res.data.code === 0) {
         summary.value = res.data.data
+        if (toastOnSuccess) uni.showToast({ title: '已刷新', icon: 'success', duration: 900 })
       } else {
         uni.showToast({ title: res.data.msg || '加载失败', icon: 'none' })
       }
@@ -176,8 +178,12 @@ function loadDashboard() {
   })
 }
 
+// 2026-10-26：原来点刷新是「静默重载」——页面已有数据时 loading 块不显示
+// （v-if="loading && !summary"），请求回来数据又没变化，看上去就像点了没反应。
+// 现在：防重入 + 成功后 toast「已刷新」，点了有明确反馈。
 function reload() {
-  loadDashboard()
+  if (loading.value) return
+  loadDashboard({ toast: true })
 }
 
 function getBarHeight(value, kind) {
@@ -220,7 +226,8 @@ function goBack() {
 }
 .nav-back { font-size: 28px; font-weight: 300; width: 40px; }
 .nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
-.nav-btn { font-size: 22px; width: 40px; text-align: right; }
+/* 2026-10-26：加大热区，原来只有 22px 字高，手指容易点空 */
+.nav-btn { font-size: 22px; width: 44px; text-align: right; padding: 8px 0; line-height: 1; box-sizing: border-box; }
 
 .loading-state {
   display: flex; flex-direction: column;

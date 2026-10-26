@@ -333,8 +333,11 @@ const refreshUnreadBadge = () => {
 </script>
 
 <style lang="scss" scoped>
-.page { min-height: 100vh; background: #f5f5f5; }
-.message-list { height: calc(100vh - 88rpx); }
+/* 2026-10-26：导航栏高度由状态栏决定（刘海屏 safe-area 约 47px），
+   写死 calc(100vh - 88rpx) 会算少 40 多 px，列表底部被挤出屏幕。
+   改成 flex 自适应，跟小程序端保持一致。 */
+.page { height: 100vh; display: flex; flex-direction: column; background: #f5f5f5; }
+.message-list { flex: 1; height: 0; }
 .message-card { 
   display: flex; 
   align-items: flex-start; 
