@@ -8,7 +8,7 @@
         <view class="hero-logo-wrap">
           <image class="hero-logo" src="/static/logo.png" mode="aspectFit" />
         </view>
-        <text class="hero-name">简逸装饰</text>
+        <text class="hero-name">简逸ERP</text>
         <text class="hero-slogan">让业主随时看见工地</text>
         <text class="hero-sub">设计 · 施工 · 巡检 · 验收，全流程在线</text>
 
@@ -77,7 +77,7 @@
 
     <!-- ==================== 底部信息 ==================== -->
     <view class="footer">
-      <text class="footer-line">简逸装饰 · 工地管理系统</text>
+      <text class="footer-line">简逸ERP · 工地管理系统</text>
       <text class="footer-line">咨询请联系您的专属设计师或项目经理</text>
       <text class="footer-version">v{{ APP_VERSION }}</text>
     </view>

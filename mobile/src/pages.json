@@ -3,7 +3,7 @@
     {
       "path": "pages/landing/index",
       "style": {
-        "navigationBarTitleText": "简逸装饰",
+        "navigationBarTitleText": "简逸ERP",
         "navigationStyle": "custom"
       }
     },
@@ -39,6 +39,13 @@
       "path": "pages/bind/scan",
       "style": {
         "navigationBarTitleText": "绑定微信",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/identity/select",
+      "style": {
+        "navigationBarTitleText": "选择身份",
         "navigationStyle": "custom"
       }
     },
@@ -143,7 +150,7 @@
   ],
   "globalStyle": {
     "navigationBarTextStyle": "white",
-    "navigationBarTitleText": "简逸装饰",
+    "navigationBarTitleText": "简逸ERP",
     "navigationBarBackgroundColor": "#1E3A5F",
     "backgroundColor": "#F5F7FA"
   },

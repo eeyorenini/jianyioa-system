@@ -153,13 +153,46 @@ export async function miniBindByTicket(ticket: string): Promise<any> {
 }
 
 /**
+ * 查询当前员工账号的微信绑定状态（「我的」页展示用）。
+ * 服务端强制校验 x-user-type=employee（两套 id 会撞号），所以只能在员工登录态下调用。
+ * @returns { bound, is_current, bind_time, nickname, openid_mask } 或 null
+ */
+export async function miniBindStatus(): Promise<any> {
+  // #ifdef MP-WEIXIN
+  try {
+    const code = await wxCode();
+    const res: any = await uni.request({
+      url: "/api/wechat/my-bind-status",
+      method: "POST",
+      data: { code: code || "" },
+    });
+    return (res && res.data) || null;
+  } catch (e) {
+    console.warn("[wechat] 查询绑定状态失败:", (e && (e as any).message) || e);
+    return null;
+  }
+  // #endif
+  // #ifndef MP-WEIXIN
+  return null;
+  // #endif
+}
+
+/**
  * 保存员工身份到本地（与 login.vue 的员工密码登录保持一致）。
  * 注意：permissions 必须一起写，否则首页快捷入口会因权限为空全部隐藏。
+ *
+ * 入参兼容两种来源：
+ *   - 绑定接口 / 密码登录返回的员工对象：主键叫 id
+ *   - mini-login 返回的 identities[type=employee]：主键叫 employee_id
+ * ⚠️ 不兼容 employee_id 的话这里会静默 return，storage 写不进去，
+ *    用户看着"登录成功"却跳回未登录态。
  */
 export function saveEmployeeIdentity(emp: any): void {
-  if (!emp || !emp.id) return;
+  if (!emp) return;
+  const id = Number(emp.id || emp.employee_id || 0);
+  if (!id) return;
   const userInfo = {
-    id: emp.id,
+    id,
     username: emp.username || "",
     name: emp.name || "",
     role_name: emp.role_name || "",

@@ -62,8 +62,10 @@
 <script setup>
 import { ref, computed } from "vue";
 import { onLoad } from "@dcloudio/uni-app";
-import { miniSilentLogin, miniSaveProfile, uploadAvatar, saveCustomerIdentity } from "@/utils/wechat";
+import { miniSilentLogin, miniSaveProfile, uploadAvatar, saveCustomerIdentity, saveEmployeeIdentity } from "@/utils/wechat";
+import { useUserStore } from "@/stores/user";
 
+const userStore = useUserStore();
 const checking = ref(true);
 const loading = ref(false);
 const openid = ref("");
@@ -88,6 +90,17 @@ onLoad(async () => {
   if (r.bound && r.customer) {
     saveCustomerIdentity(r);
     uni.reLaunch({ url: "/pages/customer/home" });
+    return;
+  }
+
+  // 没有业主身份、但有员工身份：说明这台微信是员工，误点了「微信一键登录」。
+  // 不能让他继续去填头像昵称（那套流程只服务业主），直接送进工作台。
+  const emps = (Array.isArray(r.identities) ? r.identities : []).filter((i) => i.type === "employee");
+  if (emps.length && !r.customer) {
+    saveEmployeeIdentity(emps[0]);
+    userStore.loadUser();
+    userStore.fetchMe();
+    uni.switchTab({ url: "/pages/home/index" });
     return;
   }
 

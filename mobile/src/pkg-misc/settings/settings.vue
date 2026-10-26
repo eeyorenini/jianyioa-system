@@ -26,11 +26,13 @@
         <text class="arrow">›</text>
       </view>
     </view>
-    <view class="version">简逸OA v1.0.0</view>
+    <view class="version">简逸ERP v{{ APP_VERSION }}</view>
   </view>
 </template>
 
 <script setup >
+const APP_VERSION = __APP_VERSION__;
+
 const handleClear = () => {
   uni.showModal({
     title: "提示",
