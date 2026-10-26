@@ -1,4 +1,4 @@
--- 建亿 OA 系统 MySQL 数据库初始化脚本
+-- 简逸ERP MySQL 数据库初始化脚本
 -- 适用 MySQL 5.7+ / 8.0
 -- 使用前请先创建数据库: CREATE DATABASE jianyioa DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

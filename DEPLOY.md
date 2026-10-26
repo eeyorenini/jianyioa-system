@@ -1,4 +1,4 @@
-# 建亿 OA 系统 - 宝塔 Windows 面板部署手册
+# 简逸ERP - 宝塔 Windows 面板部署手册
 
 ## 准备工作（已完成）
 
@@ -113,7 +113,7 @@ mkdir uploads
 **首次启动日志会显示**：
 ```
 ✅ 数据库表结构初始化完成（init.sql）
-🚀 建亿OA系统后端运行在 http://localhost:3001
+🚀 简逸ERP系统后端运行在 http://localhost:3001
 ```
 
 ## 九、配置前端 web 站点（Vue3）

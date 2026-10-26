@@ -1,7 +1,7 @@
 {
   "name": "jianyioa-system",
-  "version": "2.4.7",
-  "description": "建亿OA系统 v1.0.1 (MySQL版)",
+  "version": "2.5.0",
+  "description": "简逸ERP (MySQL版)",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",

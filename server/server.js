@@ -1274,7 +1274,7 @@ async function sendSmsFromNotify(phone, name, title, content, templateId) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: '装企云ERP系统运行中' });
+  res.json({ status: 'ok', message: '简逸ERP系统运行中' });
 });
 
 // ==================== 客户管理 ====================
@@ -10841,6 +10841,53 @@ app.post('/api/wechat/mini-bind-by-ticket', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// POST /api/wechat/my-bind-status — 员工自查微信绑定状态（「我的」页用）
+// ⚠️ 必须校验 x-user-type：employees.id 与 customers.id 是两套自增序列、会撞号，
+//    不校验的话业主查这个接口会命中同号员工的绑定记录（信息泄露 + 误判）。
+app.post('/api/wechat/my-bind-status', async (req, res) => {
+  try {
+    const userType = String(req.headers['x-user-type'] || '').toLowerCase();
+    if (userType !== 'employee') {
+      return res.status(403).json({ success: false, message: '仅员工可查询微信绑定状态' });
+    }
+    const employeeId = getUserId(req);
+    if (!employeeId) return res.status(401).json({ success: false, message: '未登录' });
+
+    const row = await db.prepare(
+      'SELECT mini_openid, nickname, bind_time FROM wechat_users WHERE employee_id = ? LIMIT 1'
+    ).get(employeeId);
+
+    if (!row) return res.json({ success: true, bound: false, is_current: false });
+
+    // 传了 code 才能判断「当前这台微信是不是绑定的那台」。
+    // 不传（如 H5）只能回答「该账号绑过微信」，is_current 返回 null 表示未知。
+    let isCurrent = null;
+    const code = String((req.body || {}).code || '').trim();
+    if (code) {
+      try {
+        const cfg = await getMiniConfig();
+        if (cfg) {
+          const session = await getWechatSession(code, 'mini', cfg);
+          if (session && session.openid) isCurrent = session.openid === row.mini_openid;
+        }
+      } catch (e) {
+        // 换 openid 失败不影响「有没有绑过」这个结论，降级为未知
+        console.warn('[my-bind-status]', e.message);
+      }
+    }
+
+    const oid = String(row.mini_openid || '');
+    res.json({
+      success: true,
+      bound: true,
+      is_current: isCurrent,
+      bind_time: row.bind_time || '',
+      nickname: row.nickname || '',
+      openid_mask: oid.length >= 8 ? oid.slice(0, 4) + '***' + oid.slice(-4) : '',
+    });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // POST /api/admin/employees/:id/bind-qrcode — 管理员生成员工微信绑定码
 app.post('/api/admin/employees/:id/bind-qrcode', async (req, res) => {
   try {
@@ -13030,7 +13077,7 @@ process.on('uncaughtException', (err) => {
 function startServer(retry = 0) {
   const maxRetry = 3;
   const server = app.listen(PORT, () => {
-    console.log(`🚀 装企云ERP系统后端运行在 http://localhost:${PORT}`);
+    console.log(`🚀 简逸ERP系统后端运行在 http://localhost:${PORT}`);
   });
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE' && retry < maxRetry) {

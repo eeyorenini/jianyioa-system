@@ -1,5 +1,5 @@
 #!/bin/bash
-# OA系统 Vite 启动脚本
+# 简逸ERP Vite 启动脚本
 # 清除过期缓存 →启动 Vite 开发服务器
 
 VITE_DIR="/Users/gtamer/Desktop/test/oa-system/web"

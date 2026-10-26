@@ -172,5 +172,5 @@ app.use('/api/delete-images', require('./routes/upload'));
 
 
 app.listen(PORT, () => {
-  console.log(`🚀 装企云ERP系统后端运行在 http://localhost:${PORT}`);
+  console.log(`🚀 简逸ERP系统后端运行在 http://localhost:${PORT}`);
 });

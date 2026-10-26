@@ -22,7 +22,7 @@ router.post('/api/debug/add-type-column', async (req, res) => {
 // ==================== 家庭成员管理 ====================
 
 router.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: '装企云ERP系统运行中' });
+  res.json({ status: 'ok', message: '简逸ERP系统运行中' });
 });
 
 // ==================== 客户管理 ====================

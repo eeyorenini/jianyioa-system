@@ -169,7 +169,7 @@ const checkAndInsertDefaultData = () => {
 setTimeout(checkAndInsertDefaultData, 1000);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: '装企云ERP系统运行中' });
+  res.json({ status: 'ok', message: '简逸ERP系统运行中' });
 });
 
 app.get('/api/customers', (req, res) => {
@@ -2135,5 +2135,5 @@ app.post('/api/export-pdf-multi', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 装企云ERP系统后端运行在 http://localhost:${PORT}`);
+  console.log(`🚀 简逸ERP系统后端运行在 http://localhost:${PORT}`);
 });
