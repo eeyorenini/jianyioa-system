@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "材料商城",
+  "navigationStyle": "custom",
+  "enablePullDownRefresh": false,
+  "onReachBottomDistance": 80,
+  "usingComponents": {}
+}

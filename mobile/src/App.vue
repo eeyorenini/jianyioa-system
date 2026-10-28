@@ -359,6 +359,14 @@ page {
   flex: 1;
 }
 
+/**
+ * ⚠️ .bottom-bar 是 display:flex，.btn-submit 不写 flex 就会被压成内容宽度、
+ * 贴着左边显示（主材验收提交按钮"跑偏"的根因）。全站提交按钮统一撑满 + 居中。
+ */
+.bottom-bar .btn-submit {
+  flex: 1;
+}
+
 /* ==================== 数字动画 ==================== */
 .stat-num {
   font-size: 24px;
