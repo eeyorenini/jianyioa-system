@@ -92,6 +92,28 @@
       }
     },
     {
+      "path": "pages/customer/mall",
+      "style": {
+        "navigationBarTitleText": "材料商城",
+        "navigationStyle": "custom",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/customer/mall-cart",
+      "style": {
+        "navigationBarTitleText": "购物车",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/customer/mall-orders",
+      "style": {
+        "navigationBarTitleText": "我的订单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/customer/logs",
       "style": {
         "navigationBarTitleText": "施工日志",

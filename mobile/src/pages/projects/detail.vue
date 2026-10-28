@@ -1590,6 +1590,34 @@ const openOneAttachment = (url) => {
 
   // #ifdef APP-PLUS
   plus.runtime.openURL(fullUrl, () => uni.showToast({ title: '打开失败', icon: 'none' }));
+  return;
+  // #endif
+
+  // #ifdef APP-HARMONY
+  // 鸿蒙端没有 plus API（uni-app 鸿蒙不支持 plus.*），这里走 downloadFile + openDocument，
+  // 失败则把链接复制到剪贴板让用户去浏览器打开，避免点了没反应。
+  uni.downloadFile({
+    url: fullUrl,
+    success: (res) => {
+      uni.openDocument({
+        filePath: res.tempFilePath,
+        success: () => {},
+        fail: () => {
+          uni.setClipboardData({
+            data: fullUrl,
+            success: () => uni.showToast({ title: '已复制链接，请在浏览器打开', icon: 'none' }),
+          });
+        },
+      });
+    },
+    fail: () => {
+      uni.setClipboardData({
+        data: fullUrl,
+        success: () => uni.showToast({ title: '已复制链接，请在浏览器打开', icon: 'none' }),
+      });
+    },
+  });
+  return;
   // #endif
 };
 

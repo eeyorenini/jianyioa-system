@@ -20,3 +20,7 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
+# HBuilderX 本地配置与云打包输出（不进仓库，v2.5.2）
+.hbuilderx/
+jianyioa-mobile/
+unpackage/

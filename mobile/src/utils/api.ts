@@ -49,6 +49,12 @@ origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 // #endif
 
+// #ifdef APP-HARMONY
+// 鸿蒙 Next 端不会命中 APP-PLUS（uni-app 官方：只有 APP-HARMONY 和 APP 能条件编译到鸿蒙），
+// 漏了这段 API_ORIGIN 会是空串，所有 /api 请求退化成相对路径 → 全部失败。
+origin = resolveApiOrigin('https://erp.fujinwanjia.com');
+// #endif
+
 // #ifdef MP-ALIPAY
 origin = resolveApiOrigin('https://erp.fujinwanjia.com');
 // #endif

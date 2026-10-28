@@ -104,19 +104,32 @@
               v-model="custForm.phone"
               type="number"
               maxlength="11"
-              placeholder="请输入注册手机号"
+              placeholder="请输入预约登记的手机号"
               confirm-type="next"
             />
           </view>
           <view class="form-item">
-            <view class="form-label">姓名（可选）</view>
-            <input
-              class="form-input"
-              v-model="custForm.name"
-              placeholder="请输入您的姓名"
-              confirm-type="done"
-              @keyup.enter="handleCustomerLogin"
-            />
+            <view class="form-label">验证码</view>
+            <view class="code-row">
+              <input
+                class="form-input code-input"
+                v-model="custForm.code"
+                type="number"
+                maxlength="6"
+                placeholder="6 位验证码"
+                confirm-type="done"
+                @confirm="handleCustomerLogin"
+              />
+              <view
+                class="code-btn"
+                :class="{ 'code-btn-disabled': sending || counting > 0 }"
+                @click="sendCode"
+              >
+                <text v-if="sending">发送中</text>
+                <text v-else-if="counting > 0">{{ counting }}s 后重发</text>
+                <text v-else>获取验证码</text>
+              </view>
+            </view>
           </view>
           <view class="btn btn-primary btn-block" :class="{ loading: loading }" @click="handleCustomerLogin">
             <text v-if="!loading">登 录</text>
@@ -143,7 +156,7 @@
       </view>
 
       <view class="roles-demo" v-else>
-        <text class="roles-label" style="color: rgba(255,255,255,0.5);">输入您预约时登记的手机号码即可登录</text>
+        <text class="roles-label" style="color: rgba(255,255,255,0.5);">输入预约登记的手机号，获取短信验证码登录</text>
       </view>
     </view>
   </view>
@@ -151,7 +164,7 @@
 
 <script setup >
 import { ref, reactive } from "vue";
-import { onLoad } from "@dcloudio/uni-app";
+import { onLoad, onUnload } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { bindOpenidQuietly, miniSilentLogin, saveEmployeeIdentity } from "@/utils/wechat";
 
@@ -177,7 +190,20 @@ const empForm = reactive({
 
 const custForm = reactive({
   phone: '',
-  name: '',
+  code: '',
+});
+
+// 验证码发送状态
+const sending = ref(false);
+const counting = ref(0);
+let countTimer = null;
+
+// 离开页面时清掉倒计时，避免定时器泄漏
+onUnload(() => {
+  if (countTimer) {
+    clearInterval(countTimer);
+    countTimer = null;
+  }
 });
 
 // 校验是否已同意条款
@@ -277,29 +303,69 @@ const goEmployeeBind = () => {
   uni.navigateTo({ url: '/pages/bind/scan' });
 };
 
-// 客户登录
-const handleCustomerLogin = async () => {
+// 发送登录验证码（v2.5.2：业主端改为手机号 + 短信验证码，不再只凭手机号登录）
+const sendCode = async () => {
+  if (sending.value || counting.value > 0) return;
   if (!checkAgreed()) return;
-  if (!custForm.phone.trim()) {
-    uni.showToast({ title: '请输入手机号', icon: 'none' });
+  const phone = String(custForm.phone || '').trim();
+  if (!/^1[3-9]\d{9}$/.test(phone)) {
+    uni.showToast({ title: '请输入正确的手机号', icon: 'none' });
     return;
   }
-  if (custForm.phone.length !== 11) {
-    uni.showToast({ title: '手机号格式不正确', icon: 'none' });
+  sending.value = true;
+  try {
+    const res = await uni.request({
+      url: '/api/customer-auth/send-code',
+      method: 'POST',
+      data: { phone },
+    });
+    const data = res.data || {};
+    if (data.success) {
+      uni.showToast({ title: '验证码已发送', icon: 'none' });
+      // 60 秒倒计时，与后端重发间隔保持一致，避免用户点了必失败
+      counting.value = 60;
+      if (countTimer) clearInterval(countTimer);
+      countTimer = setInterval(() => {
+        counting.value -= 1;
+        if (counting.value <= 0) {
+          clearInterval(countTimer);
+          countTimer = null;
+        }
+      }, 1000);
+    } else {
+      uni.showToast({ title: data.message || '发送失败', icon: 'none' });
+    }
+  } catch (e) {
+    console.error('发送验证码失败:', e);
+    uni.showToast({ title: '网络错误', icon: 'none' });
+  } finally {
+    sending.value = false;
+  }
+};
+
+// 客户登录：手机号 + 验证码
+const handleCustomerLogin = async () => {
+  if (!checkAgreed()) return;
+  const phone = String(custForm.phone || '').trim();
+  const code = String(custForm.code || '').trim();
+  if (!/^1[3-9]\d{9}$/.test(phone)) {
+    uni.showToast({ title: '请输入正确的手机号', icon: 'none' });
+    return;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    uni.showToast({ title: '请输入 6 位验证码', icon: 'none' });
     return;
   }
 
   loading.value = true;
   try {
     const res = await uni.request({
-      url: '/api/customers/login',
+      url: '/api/customer-auth/login-by-code',
       method: 'POST',
-      data: { phone: custForm.phone, name: custForm.name },
+      data: { phone, code },
     });
-    console.log('登录响应:', res);
-    const data = res.data;
-    console.log('data:', data);
-    if (data && data.success && data.customer) {
+    const data = res.data || {};
+    if (data.success && data.customer) {
       // 保存用户信息
       uni.setStorageSync('userInfo', data.customer);
       uni.setStorageSync('token', 'logged-in');
@@ -315,10 +381,10 @@ const handleCustomerLogin = async () => {
       }
       // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
       // 小程序端顺手把当前微信 openid 绑上，下次进入免输手机号（失败不影响登录）
-      bindOpenidQuietly(custForm.phone);
+      bindOpenidQuietly(phone);
       uni.reLaunch({ url: '/pages/customer/home' });
     } else {
-      uni.showToast({ title: data?.message || '登录失败', icon: 'none' });
+      uni.showToast({ title: data.message || '登录失败', icon: 'none' });
     }
   } catch (e) {
     console.error('登录错误:', e);
@@ -512,6 +578,36 @@ const goBack = () => {
   outline: none;
   border-color: #1E3A5F;
   background: #fff;
+}
+
+/* 验证码行：输入框 + 右侧获取按钮 */
+.code-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+.code-input {
+  flex: 1;
+  min-width: 0;
+}
+.code-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 104px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: #1E3A5F;
+  color: #fff;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+.code-btn-disabled {
+  background: #C9CFD8;
+  color: #fff;
 }
 
 .btn {

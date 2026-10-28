@@ -21,6 +21,8 @@ import { computed } from "vue";
 // 定义菜单项
 const defaultMenuList = [
   { key: 'basic', name: '项目信息', icon: '🏠', pagePath: '/pages/customer/project-detail' },
+  // v2.5.1 材料商城：主材上架后业主可加购物车，下单拿订单号走银行转账
+  { key: 'mall', name: '材料商城', icon: '🛍️', pagePath: '/pages/customer/mall' },
   { key: 'budget', name: '预算报价', icon: '📋', pagePath: '/pages/customer/budget' },
   { key: 'changes', name: '项目变更', icon: '📝', pagePath: '/pages/customer/changes' },
   { key: 'warranty', name: '售后维保', icon: '🛡️', pagePath: '/pages/customer/warranty' },
@@ -68,6 +70,10 @@ const handleClick = (item) => {
     case 'budget':
       // 预算报价 - 提示功能开发中
       uni.showToast({ title: '功能开发中', icon: 'none' });
+      break;
+    case 'mall':
+      // 材料商城（不依赖项目 id，直接进）
+      uni.navigateTo({ url: item.pagePath });
       break;
     case 'changes':
       // 项目变更 - 提示功能开发中

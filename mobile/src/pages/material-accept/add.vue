@@ -34,18 +34,12 @@
         </picker>
       </view>
 
+      <!-- 验收人 = 当前登录人，不可改：谁提交就算谁验收 -->
       <view class="form-item">
         <text class="form-label">验收人</text>
-        <picker v-if="staff.length" :range="staffNames" @change="onForemanChange">
-          <view class="picker-wrap">
-            <text :class="form.foreman_name ? 'picker-value' : 'picker-placeholder'">
-              {{ form.foreman_name || '请选择验收人' }}
-            </text>
-            <text class="picker-arrow">›</text>
-          </view>
-        </picker>
-        <view v-else class="picker-wrap">
-          <text class="picker-placeholder">项目未关联员工</text>
+        <view class="picker-wrap readonly">
+          <text class="picker-value">{{ form.foreman_name || '当前登录人' }}</text>
+          <text class="picker-lock">本人</text>
         </view>
       </view>
 
@@ -221,14 +215,22 @@
           <text class="picker-close" @click="closeMaterialPicker">✕</text>
         </view>
         <view class="picker-search">
-          <input
-            class="picker-input"
-            v-model="matPicker.keyword"
-            placeholder="搜主材名称 / 品牌 / 型号，如「瓷砖」"
-            confirm-type="search"
-            @input="onKeywordInput"
-            @confirm="doSearch"
-          />
+          <view class="search-box">
+            <text class="search-icon">🔍</text>
+            <input
+              class="search-input"
+              v-model="matPicker.keyword"
+              placeholder="搜主材名称 / 品牌 / 型号，如「瓷砖」"
+              placeholder-class="search-placeholder"
+              confirm-type="search"
+              @input="onKeywordInput"
+              @confirm="doSearch"
+            />
+            <text class="search-clear" v-if="matPicker.keyword" @click="clearKeyword">✕</text>
+          </view>
+        </view>
+        <view class="picker-tip" v-if="matPicker.list.length">
+          共 {{ matPicker.list.length }} 条{{ matPicker.keyword ? '匹配结果' : '主材' }}，点击添加到明细
         </view>
         <scroll-view class="picker-list" scroll-y>
           <view v-if="matPicker.loading" class="picker-empty">搜索中...</view>
@@ -243,7 +245,8 @@
               <text class="picker-row-name">{{ m.name }}</text>
               <text class="picker-row-sub">{{ [m.brand, m.spec || m.model, m.category].filter(Boolean).join(' · ') }}</text>
             </view>
-            <text class="picker-row-unit">{{ m.unit || '' }}</text>
+            <text class="picker-row-unit" v-if="m.unit">{{ m.unit }}</text>
+            <text class="picker-row-add">＋</text>
           </view>
         </scroll-view>
         <view class="picker-foot">
@@ -257,14 +260,16 @@
 <script setup>
 import { ref, reactive, computed } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
+import { useUserStore } from '@/stores/user';
+import { getImageUrl } from '@/utils/api';
 import {
   MA_STAGES, MA_VERDICTS, MA_PROBLEM_TAGS, MA_DOCS, MA_STORAGE, MA_RESULTS, MA_HANDLINGS,
   verdictTone, todayStr,
 } from './dict';
 
+const userStore = useUserStore();
 const projectId = ref(0);
 const projectName = ref('');
-const staff = ref([]);
 const suppliers = ref([]);
 const items = ref([]);
 const photos = ref([]);
@@ -294,7 +299,6 @@ const form = reactive({
   remark: '',
 });
 
-const staffNames = computed(() => staff.value.map((s) => s.name + (s.position ? `（${s.position}）` : '')));
 const supplierNames = computed(() => suppliers.value.map((s) => s.name));
 
 const authHeader = () => ({ Authorization: uni.getStorageSync('token') });
@@ -304,10 +308,6 @@ const onStageChange = (e) => { form.stage = stages[e.detail.value]; };
 const onStorageChange = (e) => { form.storage = storageOptions[e.detail.value]; };
 const onResultChange = (e) => { form.result = resultOptions[e.detail.value]; };
 const onHandlingChange = (e) => { form.handling = handlingOptions[e.detail.value]; };
-const onForemanChange = (e) => {
-  const s = staff.value[e.detail.value];
-  if (s) { form.foreman_id = s.id; form.foreman_name = s.name; }
-};
 const onSupplierChange = (e) => {
   const s = suppliers.value[e.detail.value];
   if (s) form.supplier_name = s.name;
@@ -380,6 +380,12 @@ const onKeywordInput = () => {
   searchTimer = setTimeout(doSearch, 350);
 };
 
+const clearKeyword = () => {
+  matPicker.keyword = '';
+  if (searchTimer) clearTimeout(searchTimer);
+  doSearch();
+};
+
 const pickMaterial = (m) => {
   items.value.push(newItem(m));
   closeMaterialPicker();
@@ -395,7 +401,11 @@ const addManualItem = () => {
 // ===== 照片上传（与巡检/验收同一套稳健逻辑）=====
 let _photoSeq = 0;
 const nextPhotoId = () => 'p_' + Date.now().toString(36) + '_' + (++_photoSeq).toString(36);
-const photoSrc = (p) => (p ? (p.url || p.localUrl || '') : '');
+// ⚠️ 后端 /api/upload-image 返回的是相对路径 `/uploads/logs/xxx.png`，
+// 小程序里 <image src="/uploads/..."> 会被解析到调试器本地 pageframe
+// → 控制台报 "Failed to load image http://127.0.0.1:24137/__pageframe__/uploads/..."。
+// 必须过 getImageUrl() 补成 https 绝对地址（H5 同源则原样返回）。
+const photoSrc = (p) => (p ? getImageUrl(p.url || p.localUrl || '') : '');
 const onPhotoImgError = (img) => {
   if (img && img.localUrl && img.url !== img.localUrl) img.url = img.localUrl;
 };
@@ -477,6 +487,7 @@ const previewPhoto = (idx) => {
 // ===== 提交 =====
 const validate = () => {
   if (!projectId.value) return '未指定项目';
+  if (!form.foreman_name) return '未识别到当前登录人，请重新登录';
   if (!form.accept_date) return '请选择验收日期';
   if (!form.stage) return '请选择施工阶段';
   if (!items.value.length) return '请至少添加一项材料';
@@ -567,16 +578,22 @@ const loadMeta = async () => {
     });
     const d = res.data || {};
     if (d.project_name && !projectName.value) projectName.value = d.project_name;
-    staff.value = Array.isArray(d.staff) ? d.staff : [];
     suppliers.value = Array.isArray(d.suppliers) ? d.suppliers : [];
-    // 默认验收人 = 项目工长，没有工长则留空让用户选
-    if (d.foreman_id) {
-      form.foreman_id = d.foreman_id;
-      form.foreman_name = d.foreman_name || '';
-    }
   } catch (e) {
-    /* meta 失败不阻断，工长可手工选/留空 */
+    /* meta 失败不阻断，供应商可手填 */
   }
+};
+
+/**
+ * 验收人锁定为当前登录人。
+ * 业务口径：谁的账号提交，验收人就是谁，不接受手选（原来选项目工长是错的）。
+ * 借权场景下 state.name 已经是当前身份姓名，直接取即可。
+ */
+const lockAcceptor = () => {
+  try { userStore.loadUser(); } catch (e) { /* 忽略 */ }
+  const st = userStore.state || {};
+  form.foreman_id = st.id || null;
+  form.foreman_name = st.name || '';
 };
 
 // ⚠️ 用 onLoad 而不是 onMounted + getCurrentPages()：H5 首屏 mounted 阶段页面栈可能还没就绪
@@ -584,6 +601,7 @@ onLoad(async (options) => {
   const opts = options || {};
   projectId.value = parseInt(opts.projectId || '0') || 0;
   if (opts.projectName) projectName.value = decodeURIComponent(opts.projectName);
+  lockAcceptor();
   if (projectId.value) await loadMeta();
 });
 
@@ -685,6 +703,21 @@ const goBack = () => uni.navigateBack();
 .picker-placeholder { font-size: 14px; color: #C7CBD3; flex: 1; }
 .picker-arrow { font-size: 18px; color: #C7CBD3; padding-left: 8px; }
 .inline-input { flex: 1; font-size: 14px; color: #1A1F36; }
+
+/* 只读行（验收人 = 当前登录人） */
+.picker-wrap.readonly {
+  background: #F7F9FC;
+  border-color: #EDF0F5;
+}
+.picker-wrap.readonly .picker-value { color: #1A1F36; font-weight: 500; }
+.picker-lock {
+  font-size: 11px;
+  color: #1E3A5F;
+  background: #DBEAFE;
+  border-radius: 9px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
 
 .form-textarea {
   width: 100%;
@@ -884,6 +917,7 @@ const goBack = () => uni.navigateBack();
   z-index: 100;
 }
 .btn-submit {
+  flex: 1;
   background: #1E3A5F;
   color: #fff;
   font-size: 16px;
@@ -926,15 +960,57 @@ const goBack = () => uni.navigateBack();
 }
 .picker-title { font-size: 15px; font-weight: 600; color: #1A1F36; }
 .picker-close { font-size: 16px; color: #9CA3AF; padding: 4px 8px; }
+
+/* 搜索框：整宽 + 浅灰底 + 圆角，别再用裸 input 撑不满 */
 .picker-search { margin-bottom: 8px; }
-.picker-input {
-  border: 1.5px solid #E5E7EB;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-size: 14px;
-  box-sizing: border-box;
+.search-box {
+  display: flex;
+  align-items: center;
   width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  background: #F3F5F9;
+  border: 1.5px solid transparent;
+  border-radius: 12px;
 }
+.search-icon {
+  font-size: 14px;
+  color: #9CA3AF;
+  margin-right: 8px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.search-input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  font-size: 14px;
+  color: #1A1F36;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.search-placeholder { font-size: 14px; color: #B3B9C6; }
+.search-clear {
+  font-size: 12px;
+  color: #fff;
+  background: #C7CBD3;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.picker-tip {
+  font-size: 11px;
+  color: #9CA3AF;
+  padding: 2px 2px 8px;
+}
+
 .picker-list { flex: 1; max-height: 46vh; }
 .picker-empty { text-align: center; color: #9CA3AF; font-size: 13px; padding: 28px 0; }
 .picker-row {
@@ -943,10 +1019,31 @@ const goBack = () => uni.navigateBack();
   padding: 11px 0;
   border-bottom: 1px solid #F3F4F6;
 }
+.picker-row:active { background: #F7F9FC; }
 .picker-row-main { flex: 1; min-width: 0; }
 .picker-row-name { font-size: 14px; color: #1A1F36; display: block; }
 .picker-row-sub { font-size: 11px; color: #9CA3AF; margin-top: 2px; display: block; }
-.picker-row-unit { font-size: 12px; color: #6B7280; }
+.picker-row-unit {
+  font-size: 12px;
+  color: #6B7280;
+  background: #F3F5F9;
+  border-radius: 8px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.picker-row-add {
+  width: 22px;
+  height: 22px;
+  line-height: 21px;
+  text-align: center;
+  font-size: 15px;
+  color: #1E3A5F;
+  background: #DBEAFE;
+  border-radius: 50%;
+  margin-left: 10px;
+  flex-shrink: 0;
+}
 .picker-foot { padding-top: 10px; text-align: center; }
 .picker-manual { font-size: 13px; color: #1E3A5F; font-weight: 600; }
 </style>

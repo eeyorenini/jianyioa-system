@@ -1,9 +1,9 @@
 {
-    "name" : "",
-    "appid" : "",
-    "description" : "",
-    "versionName" : "1.0.0",
-    "versionCode" : "100",
+    "name" : "简逸ERP",
+    "appid" : "__UNI__4045D44",
+    "description" : "简逸装饰工程管理系统移动端",
+    "versionName" : "2.5.2",
+    "versionCode" : "20502",
     "transformPx" : false,
     /* 5+App特有相关 */
     "app-plus" : {
@@ -22,22 +22,21 @@
         "distribute" : {
             /* android打包配置 */
             "android" : {
+                /* 应用包名：一旦分发出去就不能再改，改了等于另一个 App（覆盖安装会失败）。
+                   正式定名后请同步到下方 app-harmony 的 bundleName。 */
+                "packagename" : "com.fujinwanjia.erp",
                 "permissions" : [
                     "<uses-permission android:name=\"android.permission.CHANGE_NETWORK_STATE\"/>",
-                    "<uses-permission android:name=\"android.permission.MOUNT_UNMOUNT_FILESYSTEMS\"/>",
                     "<uses-permission android:name=\"android.permission.VIBRATE\"/>",
-                    "<uses-permission android:name=\"android.permission.READ_LOGS\"/>",
                     "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
-                    "<uses-feature android:name=\"android.hardware.camera.autofocus\"/>",
                     "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
                     "<uses-permission android:name=\"android.permission.CAMERA\"/>",
-                    "<uses-permission android:name=\"android.permission.GET_ACCOUNTS\"/>",
-                    "<uses-permission android:name=\"android.permission.READ_PHONE_STATE\"/>",
-                    "<uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\"/>",
                     "<uses-permission android:name=\"android.permission.WAKE_LOCK\"/>",
                     "<uses-permission android:name=\"android.permission.FLASHLIGHT\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>",
+                    "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
                     "<uses-feature android:name=\"android.hardware.camera\"/>",
-                    "<uses-permission android:name=\"android.permission.WRITE_SETTINGS\"/>"
+                    "<uses-feature android:name=\"android.hardware.camera.autofocus\"/>"
                 ]
             },
             /* ios打包配置 */
@@ -59,14 +58,22 @@
     "mp-alipay" : {
         "usingComponents" : true
     },
+    /* 鸿蒙 Next（纯血鸿蒙）配置：bundleName 必须与签名证书里的一致，
+       否则 DevEco 打包会报签名校验失败。改包名要连证书一起重申请。 */
+    "app-harmony" : {
+        "distribute" : {
+            "bundleName" : "com.fujinwanjia.erp",
+            "modules" : {}
+        }
+    },
     "mp-baidu" : {
         "usingComponents" : true
     },
     "mp-toutiao" : {
         "usingComponents" : true
     },
-    "uniStatistics": {  
-        "enable": false
+    "uniStatistics" : {
+        "enable" : false
     },
     "vueVersion" : "3",
     "h5" : {
@@ -88,5 +95,7 @@
                 }
             }
         }
-    }
+    },
+    "locale" : "zh-Hans",
+    "fallbackLocale" : "zh-Hans"
 }
