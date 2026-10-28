@@ -35,6 +35,17 @@
                 <el-option label="北京福进万家房地产经纪" value="北京福进万家房地产经纪" />
               </el-select>
             </el-form-item>
+            <el-form-item label="验证码模板号">
+              <el-input
+                v-model="smsForm.code_template_code"
+                placeholder="如 SMS_512345678，留空则业主无法用验证码登录"
+              />
+              <div class="secret-hint">
+                业主登录用的「验证码」类模板，需在阿里云控制台单独申请（模板类型选「验证码」，
+                文案建议：您的登录验证码为${code}，5分钟内有效，请勿转发给他人）。
+                它与下方「短信模板」里的通知类模板是分开的，不要混用。
+              </div>
+            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="saveSmsSettings" :loading="saving">保存设置</el-button>
             </el-form-item>
@@ -199,7 +210,9 @@ const smsForm = reactive({
   provider: 'aliyun',
   access_key_id: '',
   access_key_secret: '',
-  sign_name: ''
+  sign_name: '',
+  // v2.5.2 业主登录验证码模板（与「短信模板」里的通知类模板分开）
+  code_template_code: ''
 })
 
 // 微信公众号表单

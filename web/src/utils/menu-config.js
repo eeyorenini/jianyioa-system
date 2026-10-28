@@ -47,6 +47,8 @@ export const MENU_CONFIG = [
     type: 'group', index: 'material-group', icon: 'Box', title: '材料管理',
     children: [
       { path: '/main-materials', title: '主材管理', perm: 'material' },
+      // v2.5.1 商城管理：主材勾「上架商城」即在此处出现；也可在此单独上架/改商城价与库存
+      { path: '/mall', title: '商城管理', perm: 'material' },
       // v2.4.1：工长对进场材料的逐项验收（与移动端「主材验收」同一模块）
       { path: '/material-acceptance', title: '材料验收', perm: 'material_acceptance' },
       // { path: '/suppliers', title: '供应商管理', perm: 'supplier' }, // v2.3.1 已合并到外部联系人
@@ -108,6 +110,7 @@ export const ENTRY_META = {
   '/progress-node-templates': { emoji: '🧩', desc: '施工节点模板', theme: 'purple' },
 
   '/main-materials': { emoji: '🧱', desc: '主材档案', theme: 'orange' },
+  '/mall': { emoji: '🛍️', desc: '商城上架与订单', theme: 'green' },
   '/material-acceptance': { emoji: '📦', desc: '进场材料逐项验收', theme: 'orange' },
   '/warehouse': { emoji: '📦', desc: '库存出入库', theme: 'teal' },
   '/material-orders': { emoji: '🛒', desc: '采购订单', theme: 'green' },

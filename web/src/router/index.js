@@ -31,6 +31,8 @@ const Invoices = () => import('../views/Invoices.vue')
 const Channels = () => import('../views/Channels.vue')
 const PersonalCenter = () => import('../views/PersonalCenter.vue')
 const MainMaterials = () => import('../views/MainMaterials.vue')
+// v2.5.1 商城管理（上架 / 订单 / 收款设置）
+const MallManage = () => import('../views/MallManage.vue')
 const MaterialAcceptance = () => import('../views/MaterialAcceptance.vue')
 const SmsTemplates = () => import('../views/SmsTemplates.vue')
 const ProgressNodeTemplates = () => import('../views/ProgressNodeTemplates.vue')
@@ -75,6 +77,8 @@ const routes = [
   { path: '/progress-node-templates', name: 'ProgressNodeTemplates', component: ProgressNodeTemplates, meta: { perm: 'project' } },
 
   { path: '/main-materials', name: 'MainMaterials', component: MainMaterials, meta: { perm: 'material' } },
+  // v2.5.1 商城管理：商品上架 / 订单确认收款 / 银行收款设置（无在线支付）
+  { path: '/mall', name: 'MallManage', component: MallManage, meta: { perm: 'material' } },
   // v2.4.1 材料验收（工长对进场材料的逐项验收）
   { path: '/material-acceptance', name: 'MaterialAcceptance', component: MaterialAcceptance, meta: { perm: 'material_acceptance' } },
   // { path: '/suppliers', name: 'Suppliers', component: Suppliers, meta: { perm: 'supplier' } }, // v2.3.1 已合并到外部联系人

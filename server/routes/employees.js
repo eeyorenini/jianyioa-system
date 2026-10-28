@@ -177,15 +177,22 @@ router.put('/api/employees/:id/password', async (req, res) => {
   const userId = getUserId(req);
   const { old_password, new_password } = req.body;
 
-  // 校验旧密码
-  const emp = await db.prepare('SELECT password FROM employees WHERE id=?').get(userId);
-  if (!emp || emp.password !== old_password) {
+  if (!userId) return res.status(401).json({ error: '未登录，请重新登录后再试' });
+  if (!old_password) return res.status(400).json({ error: '请输入旧密码' });
+
+  // 旧密码校验与登录接口同口径（MySQL 比对）。
+  // password 列 utf8mb4_general_ci 大小写不敏感，用 JS 的 !== 比会误判
+  // → 出现「能登录、却一直提示旧密码错误」。
+  const emp = await db.prepare('SELECT id FROM employees WHERE id=? AND password=?')
+    .get(userId, String(old_password));
+  if (!emp) {
     return res.status(400).json({ error: '旧密码错误' });
   }
-  if (!new_password || new_password.length < 6) {
+  const newPwd = new_password == null ? '' : String(new_password);
+  if (newPwd.length < 6) {
     return res.status(400).json({ error: '新密码至少6位' });
   }
-  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(new_password, userId);
+  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(newPwd, userId);
   await addLog(userId, '', '修改密码', '员工管理', userId, '', '修改登录密码', req.ip);
   res.json({ message: '密码修改成功' });
 });

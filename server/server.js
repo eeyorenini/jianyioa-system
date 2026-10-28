@@ -14,6 +14,8 @@ const fs = require('fs');
 const multer = require('multer');
 const os = require('os');
 const { spawnSync, spawn } = require('child_process');
+// 主材拼音检索：纯本地字表，不引第三方依赖（部署只需拷这一个文件）
+const { buildPinyin } = require('./material-pinyin');
 // puppeteer 懒加载（v2.3.5 PDF 预览用）：缺失时不致命，其他功能照常工作
 // 改成 try-catch + 懒加载：避免残缺 puppeteer 包让 server.js 启动崩溃
 let puppeteer = null;
@@ -429,6 +431,172 @@ setTimeout(async () => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='家庭成员表'
     `);
     console.log('✅ family_members 表已创建或已存在');
+
+    // 创建短信验证码表（v2.5.2 业主端「手机号 + 验证码」登录）
+    // 幂等：已存在则跳过，服务器覆盖代码后重启即可自动建表，不需要单独跑 migration
+    try {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS sms_codes (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          phone VARCHAR(20) NOT NULL COMMENT '接收手机号',
+          scene VARCHAR(20) NOT NULL DEFAULT 'login' COMMENT 'login/bind/reset',
+          code_hash CHAR(64) NOT NULL COMMENT 'sha256(验证码)，不存明文',
+          expires_at DATETIME NOT NULL,
+          used_at DATETIME NULL,
+          fail_count INT NOT NULL DEFAULT 0,
+          ip VARCHAR(64) NULL,
+          created_at DATETIME NOT NULL,
+          KEY idx_phone_scene (phone, scene),
+          KEY idx_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='短信验证码表'
+      `);
+      console.log('✅ sms_codes 表已创建或已存在');
+    } catch (e) {
+      console.log('⚠️ sms_codes 建表失败:', e.message);
+    }
+
+    // 短信配置补 code_template_code 键（老库没这个键时补空串，避免前端保存时整对象覆盖丢掉它）
+    try {
+      const [cfgRows] = await pool.query("SELECT id, setting_value FROM system_settings WHERE category='sms'");
+      if (cfgRows.length) {
+        let parsed = null;
+        try { parsed = JSON.parse(cfgRows[0].setting_value); } catch (e) { parsed = null; }
+        if (parsed && typeof parsed === 'object') {
+          const wrapped = !!(parsed.setting_value && typeof parsed.setting_value === 'object');
+          const target = wrapped ? parsed.setting_value : parsed;
+          if (!('code_template_code' in target)) {
+            target.code_template_code = '';
+            await pool.query('UPDATE system_settings SET setting_value=? WHERE id=?',
+              [JSON.stringify(parsed), cfgRows[0].id]);
+            console.log('✅ 短信配置已补 code_template_code 键');
+          }
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ 短信配置补键失败:', e.message);
+    }
+
+    // ================= v2.5.2 商城 + 主材品类：DDL 自动迁移 =================
+    // 生产库是老库（v2.3.0），覆盖 server.js 后必须自动补齐这些表和列，
+    // 否则商城 / 主材管理接口全部 500（Unknown table / Unknown column）。
+    // ⚠️ 这里只做 DDL，不做数据迁移：品类种子与 category→品类映射见
+    //    server/migrations/v2_5_0_material_taxonomy.js（需手动跑一次，幂等）。
+    // MySQL 5.5.62：DATETIME 不能 DEFAULT CURRENT_TIMESTAMP，COMMENT 一律单引号。
+    const v252Tables = [
+      ['material_categories', `CREATE TABLE IF NOT EXISTS material_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) NOT NULL COMMENT '不可变编码，商城/报价靠它对接',
+        name VARCHAR(60) NOT NULL,
+        parent_id INT DEFAULT NULL,
+        level TINYINT NOT NULL DEFAULT 1,
+        sort_order INT NOT NULL DEFAULT 0,
+        status TINYINT NOT NULL DEFAULT 1,
+        created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        updated_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        UNIQUE KEY uk_code (code),
+        KEY idx_parent (parent_id),
+        KEY idx_level (level)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='主材品类字典'`],
+
+      ['material_brands', `CREATE TABLE IF NOT EXISTS material_brands (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(80) NOT NULL,
+        alias VARCHAR(500) DEFAULT '' COMMENT '别名，逗号分隔，检索用',
+        logo VARCHAR(255) DEFAULT '',
+        pinyin VARCHAR(120) DEFAULT '' COMMENT '品牌全拼，检索用',
+        pinyin_abbr VARCHAR(40) DEFAULT '' COMMENT '品牌拼音首字母，检索用',
+        sort_order INT NOT NULL DEFAULT 0,
+        status TINYINT NOT NULL DEFAULT 1,
+        created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        updated_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        UNIQUE KEY uk_name (name)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='主材品牌字典'`],
+
+      ['mall_orders', `CREATE TABLE IF NOT EXISTS mall_orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_no VARCHAR(32) NOT NULL COMMENT '订单编号，业主转账备注用',
+        customer_id INT DEFAULT NULL COMMENT 'customers.id',
+        customer_name VARCHAR(100) DEFAULT '' COMMENT '下单人姓名（快照）',
+        phone VARCHAR(50) DEFAULT '' COMMENT '联系电话（快照）',
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '订单总额',
+        item_count INT NOT NULL DEFAULT 0 COMMENT '商品种类数',
+        total_qty INT NOT NULL DEFAULT 0 COMMENT '商品总件数',
+        status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'pending待转账/paid已收款/cancelled已取消',
+        remark TEXT COMMENT '业主备注',
+        admin_remark TEXT COMMENT '财务备注',
+        paid_at DATETIME DEFAULT NULL COMMENT '确认收款时间',
+        paid_by INT DEFAULT NULL COMMENT '确认人 employees.id',
+        created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        updated_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        UNIQUE KEY uk_order_no (order_no),
+        KEY idx_customer (customer_id),
+        KEY idx_status (status),
+        KEY idx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商城订单'`],
+
+      ['mall_order_items', `CREATE TABLE IF NOT EXISTS mall_order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        material_id INT DEFAULT NULL COMMENT 'main_materials.id',
+        name VARCHAR(255) NOT NULL DEFAULT '' COMMENT '商品名快照',
+        spec VARCHAR(255) DEFAULT '' COMMENT '规格快照',
+        brand VARCHAR(100) DEFAULT '' COMMENT '品牌快照',
+        image VARCHAR(500) DEFAULT '' COMMENT '主图快照',
+        unit VARCHAR(50) DEFAULT '' COMMENT '单位',
+        unit_price DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '成交单价快照',
+        qty INT NOT NULL DEFAULT 1,
+        subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT '2024-01-01 00:00:00',
+        KEY idx_order (order_id),
+        KEY idx_material (material_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商城订单明细'`],
+    ];
+    for (const [tblName, sql] of v252Tables) {
+      try {
+        await db.exec(sql);
+      } catch (e) {
+        console.log(`⚠️ ${tblName} 建表失败:`, e.message);
+      }
+    }
+    console.log('✅ 商城/品类表已就绪（material_categories / material_brands / mall_orders / mall_order_items）');
+
+    // main_materials 补列（列已存在时 ALTER 会报错，直接忽略）
+    const mmCols = [
+      ['type_id', "INT DEFAULT NULL COMMENT '一级类型：主材/辅材/家具家电'"],
+      ['category_id', "INT DEFAULT NULL COMMENT '二级品类'"],
+      ['sub_id', "INT DEFAULT NULL COMMENT '三级子类'"],
+      ['brand_id', "INT DEFAULT NULL COMMENT '品牌字典 id'"],
+      ['series', "VARCHAR(255) DEFAULT NULL COMMENT '系列/套系，从原 category 迁入'"],
+      ['gallery', "TEXT COMMENT '附加图 JSON 数组，商城多图'"],
+      ['mall_status', "TINYINT NOT NULL DEFAULT 0 COMMENT '0未上架 1已上架 2已下架'"],
+      ['mall_price', "DECIMAL(12,2) DEFAULT NULL COMMENT '商城零售价'"],
+      ['mall_stock', "INT NOT NULL DEFAULT 0 COMMENT '商城可售库存'"],
+      ['mall_sku_code', "VARCHAR(100) DEFAULT NULL COMMENT '对接外部商城的 SKU'"],
+      ['pinyin', "VARCHAR(255) DEFAULT NULL COMMENT '名称全拼'"],
+      ['pinyin_abbr', "VARCHAR(100) DEFAULT NULL COMMENT '名称拼音首字母'"],
+    ];
+    let mmColAdded = 0;
+    for (const [col, ddl] of mmCols) {
+      try {
+        await db.exec(`ALTER TABLE main_materials ADD COLUMN ${col} ${ddl}`);
+        mmColAdded += 1;
+      } catch (e) { /* 列已存在，跳过 */ }
+    }
+    if (mmColAdded) console.log(`✅ main_materials 补列 ${mmColAdded} 个`);
+
+    // main_materials 补索引（已存在会报错，忽略）
+    const mmIdx = [
+      'ADD INDEX idx_type_cat (type_id, category_id)',
+      'ADD INDEX idx_brand (brand_id)',
+      'ADD INDEX idx_name (name(64))',
+      'ADD INDEX idx_pinyin_abbr (pinyin_abbr(32))',
+      'ADD INDEX idx_mall_status (mall_status)',
+    ];
+    for (const ddl of mmIdx) {
+      try {
+        await db.exec(`ALTER TABLE main_materials ${ddl}`);
+      } catch (e) { /* 索引已存在，跳过 */ }
+    }
   } catch (e) {
     console.log('⚠️ family_members 建表失败:', e.message);
   }
@@ -3439,245 +3607,794 @@ app.post('/api/materials/out', checkAnyPermission(['material:write', 'warehouse:
   res.json({ message: '出库成功' });
 });
 
-app.get('/api/main-materials', async (req, res) => {
-  const { keyword = '', category = '', page = 1, limit = 20, project_id = '' } = req.query;
-  const userId = getUserId(req);
-  const userRole = req.headers['x-user-role'] || '';
-  const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
-  const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'purchase');
-  const pageNum = parseInt(page) || 1;
-  const pageSize = parseInt(limit) || 20;
-  const offset = (pageNum - 1) * pageSize;
+/* ==================================================================
+ * 主材档案 v2 —— 品类 / 品牌 / 检索
+ * ------------------------------------------------------------------
+ * 设计说明见 docs/prototype/main-materials-v2.html
+ *
+ * 核心变化：
+ *   1. 品类走 material_categories 三级字典（type_id → category_id → sub_id）
+ *   2. 品牌走 material_brands 字典（brand_id），brand 旧字段继续回填保持兼容
+ *   3. 检索支持：多字段 + 拼音 + 品牌别名 + 多条件组合 + 排序
+ *   4. /facets 给前端做动态计数（左侧树 / 品牌下拉 / 快捷筛选的数字）
+ *   5. 无 purchase 权限也能查目录，但成本类字段脱敏（原来直接 1=0 返回空，
+ *      工长完全看不到主材，只能走 material-search 那个后门接口）
+ * ================================================================== */
 
-  const conditions = [];
+// 成本类字段：无权限时置空（报价 quote_price 保留，本来就要给客户看）
+const MM_COST_FIELDS = [
+  'original_price', 'cost_price', 'cost_price2', 'contract_price',
+  'internal_control_price', 'upgrade_profit_rate', 'loss_rate',
+  'loss_amount', 'exchange_rate'
+];
+
+function mmStripCost(rows, canSeeCost) {
+  if (canSeeCost) return rows;
+  return rows.map(r => {
+    const o = Object.assign({}, r);
+    for (const f of MM_COST_FIELDS) o[f] = null;
+    return o;
+  });
+}
+
+function mmParseIds(v) {
+  if (v == null || v === '') return [];
+  const arr = Array.isArray(v) ? v : String(v).split(',');
+  return arr.map(x => parseInt(x, 10)).filter(n => Number.isFinite(n));
+}
+
+const MM_BASE_JOINS = `
+  FROM main_materials m
+  LEFT JOIN material_categories t ON m.type_id = t.id
+  LEFT JOIN material_categories c ON m.category_id = c.id
+  LEFT JOIN material_categories s ON m.sub_id = s.id
+  LEFT JOIN material_brands b ON m.brand_id = b.id
+`;
+
+const MM_SELECT_FIELDS = `
+  m.*,
+  t.name AS type_name,
+  c.name AS category_name,
+  s.name AS sub_name,
+  b.name AS brand_name,
+  b.logo AS brand_logo,
+  COALESCE(NULLIF(b.name, ''), m.brand) AS brand_display
+`;
+
+/**
+ * 构造主材查询的 WHERE。
+ * @param {object} q      req.query
+ * @param {object} skip   要跳过的维度（facet 计数用），如 { brand: true }
+ */
+function mmBuildWhere(q, skip) {
+  skip = skip || {};
+  const where = [];
   const params = [];
 
-  // project_id 模式下：查某项目使用的主材及用量（不限制权限，普通员工也能查）
-  if (project_id) {
-    // 直接返回所有主材（采购目录），带上该项目已用量
-    let sql = `
-      SELECT m.*,
-        COALESCE(mo.used_qty, 0) as used,
-        (m.quantity - COALESCE(mo.used_qty, 0)) as left
-      FROM main_materials m
-      LEFT JOIN (
-        SELECT material_id, SUM(quantity) as used_qty
-        FROM material_out
-        WHERE project_id = ?
-        GROUP BY material_id
-      ) mo ON m.id = mo.material_id
-    `;
-    const allParams = [project_id];
-    if (keyword) {
-      conditions.push('(m.code LIKE ? OR m.name LIKE ? OR m.brand LIKE ? OR m.model LIKE ?)');
-      const k = `%${keyword}%`;
-      allParams.push(k, k, k, k);
+  if (!skip.type) {
+    const tid = parseInt(q.type_id, 10);
+    if (Number.isFinite(tid)) { where.push('m.type_id = ?'); params.push(tid); }
+  }
+  if (!skip.category) {
+    const cid = parseInt(q.category_id, 10);
+    if (Number.isFinite(cid)) { where.push('m.category_id = ?'); params.push(cid); }
+  }
+  // 兼容旧参数：category 传的是中文类别名（老前端与移动端在用）
+  if (q.category && !q.category_id) {
+    where.push('(c.name = ? OR m.category = ?)');
+    params.push(q.category, q.category);
+  }
+  if (!skip.sub) {
+    const sid = parseInt(q.sub_id, 10);
+    if (Number.isFinite(sid)) { where.push('m.sub_id = ?'); params.push(sid); }
+  }
+  if (!skip.brand) {
+    const bids = mmParseIds(q.brand_ids || q.brand_id);
+    if (bids.length) {
+      where.push('m.brand_id IN (' + bids.map(() => '?').join(',') + ')');
+      params.push(...bids);
     }
-    if (category) {
-      conditions.push('m.category = ?');
-      allParams.push(category);
+  }
+  if (!skip.series && q.series) {
+    where.push('m.series = ?');
+    params.push(q.series);
+  }
+  if (q.mall_status !== undefined && q.mall_status !== '') {
+    const ms = parseInt(q.mall_status, 10);
+    if (Number.isFinite(ms)) { where.push('m.mall_status = ?'); params.push(ms); }
+  }
+  if (q.has_image === '1') {
+    where.push("(m.cover_image IS NOT NULL AND m.cover_image <> '')");
+  } else if (q.has_image === '0') {
+    where.push("(m.cover_image IS NULL OR m.cover_image = '')");
+  }
+
+  // 关键词：名称 / 编号 / 型号 / 规格 / 系列 / 品牌名 / 品牌别名 / 商品拼音 / 品牌拼音
+  const kw = String(q.keyword || '').trim();
+  if (kw) {
+    const like = '%' + kw + '%';
+    const kwWhere = [
+      'm.name LIKE ?', 'm.code LIKE ?', 'm.model LIKE ?', 'm.specification LIKE ?',
+      'm.series LIKE ?', 'b.name LIKE ?', 'b.alias LIKE ?',
+      'm.pinyin LIKE ?', 'm.pinyin_abbr LIKE ?',
+      'b.pinyin LIKE ?', 'b.pinyin_abbr LIKE ?',
+    ];
+    for (let i = 0; i < 11; i++) params.push(like);
+
+    // 松散首字母：用户常跳字打（马可波罗 → mkl，而库里存的是 mkbl）。
+    // 仅对 2~6 位纯字母生效，避免中文/数字关键词被塞进一堆 % 反而拖慢查询。
+    if (/^[a-z]{2,6}$/i.test(kw)) {
+      const loose = kw.toLowerCase().split('').join('%') + '%';
+      kwWhere.push('m.pinyin_abbr LIKE ?', 'b.pinyin_abbr LIKE ?');
+      params.push(loose, loose);
     }
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
+
+    where.push('(' + kwWhere.join(' OR ') + ')');
+  }
+
+  // 快捷筛选
+  if (!skip.quick) {
+    const quick = String(q.quick || '');
+    if (quick === 'noimg') {
+      where.push("(m.cover_image IS NULL OR m.cover_image = '')");
+    } else if (quick === 'nocat') {
+      where.push('m.category_id IS NULL');
+    } else if (quick === 'mall') {
+      where.push('m.mall_status = 1');
+    } else if (quick === 'lowprofit') {
+      where.push('m.quote_price > 0 AND (m.quote_price - m.cost_price2) / m.quote_price < 0.25');
+    } else if (quick === 'nobrand') {
+      where.push('m.brand_id IS NULL');
     }
-    sql += ' ORDER BY m.sort_order ASC, m.id DESC';
-    const list = await db.prepare(sql).all(...allParams);
-    res.json({ list, total: list.length, page: 1, limit: list.length });
-    return;
   }
 
-  // 非 project_id 模式：原逻辑（受限权限）
-  if (!hasAll) {
-    conditions.push('1=0');
-  }
-  if (keyword) {
-    conditions.push('(code LIKE ? OR name LIKE ? OR brand LIKE ? OR model LIKE ?)');
-    const k = `%${keyword}%`;
-    params.push(k, k, k, k);
-  }
-  if (category) {
-    conditions.push('category = ?');
-    params.push(category);
-  }
+  return {
+    sql: where.length ? ' WHERE ' + where.join(' AND ') : '',
+    params
+  };
+}
 
-  const whereSql = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
-  const countStmt = db.prepare('SELECT COUNT(*) as total FROM main_materials' + whereSql);
-  const total = (await countStmt.get(...params))?.total || 0;
+function mmOrderBy(sort) {
+  switch (String(sort || '')) {
+    case 'quote_desc': return ' ORDER BY m.quote_price DESC, m.id DESC';
+    case 'quote_asc': return ' ORDER BY m.quote_price ASC, m.id ASC';
+    case 'profit_asc': return ' ORDER BY (CASE WHEN m.quote_price > 0 THEN (m.quote_price - m.cost_price2) / m.quote_price ELSE 0 END) ASC, m.id DESC';
+    case 'profit_desc': return ' ORDER BY (CASE WHEN m.quote_price > 0 THEN (m.quote_price - m.cost_price2) / m.quote_price ELSE 0 END) DESC, m.id DESC';
+    case 'id_asc': return ' ORDER BY m.id ASC';
+    case 'newest': return ' ORDER BY m.id DESC';
+    default: return ' ORDER BY m.sort_order ASC, m.id DESC';
+  }
+}
 
-  let sql = 'SELECT * FROM main_materials' + whereSql + ' ORDER BY sort_order ASC, id DESC LIMIT ? OFFSET ?';
-  const stmt = db.prepare(sql);
-  const list = await stmt.all(...params, pageSize, offset);
+/* ---------------- 品类字典 ---------------- */
 
-  res.json({ list, total, page: pageNum, limit: pageSize });
+app.get('/api/material-categories/tree', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, code, name, parent_id, level, sort_order
+         FROM material_categories
+        WHERE status = 1
+        ORDER BY level ASC, sort_order ASC, id ASC`
+    );
+    // 每个节点的商品数（按 category_id 聚合，子类商品也计入所属品类）
+    const [cntCat] = await pool.query(
+      `SELECT category_id AS id, COUNT(*) AS cnt FROM main_materials WHERE category_id IS NOT NULL GROUP BY category_id`
+    );
+    const [cntSub] = await pool.query(
+      `SELECT sub_id AS id, COUNT(*) AS cnt FROM main_materials WHERE sub_id IS NOT NULL GROUP BY sub_id`
+    );
+    const [cntType] = await pool.query(
+      `SELECT type_id AS id, COUNT(*) AS cnt FROM main_materials WHERE type_id IS NOT NULL GROUP BY type_id`
+    );
+    const catMap = new Map(cntCat.map(r => [r.id, Number(r.cnt)]));
+    const subMap = new Map(cntSub.map(r => [r.id, Number(r.cnt)]));
+    const typeMap = new Map(cntType.map(r => [r.id, Number(r.cnt)]));
+
+    const byId = new Map();
+    const tree = [];
+    for (const r of rows) {
+      const node = {
+        id: r.id, code: r.code, name: r.name, parent_id: r.parent_id,
+        level: r.level, sort_order: r.sort_order,
+        count: r.level === 1 ? (typeMap.get(r.id) || 0)
+             : r.level === 2 ? (catMap.get(r.id) || 0)
+             : (subMap.get(r.id) || 0),
+        children: []
+      };
+      byId.set(r.id, node);
+      if (r.parent_id && byId.has(r.parent_id)) byId.get(r.parent_id).children.push(node);
+      else tree.push(node);
+    }
+    res.json(tree);
+  } catch (err) {
+    console.error('material-categories/tree error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+app.post('/api/material-categories', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '仅管理员可维护品类' });
+    const { code, name, parent_id, sort_order } = req.body || {};
+    if (!code || !name) return res.status(400).json({ error: 'code 与 name 必填' });
+    if (!/^[a-z0-9][a-z0-9.-]*$/.test(String(code))) {
+      return res.status(400).json({ error: 'code 只能是小写字母、数字、点、横线，且不可改' });
+    }
+    let level = 1;
+    if (parent_id) {
+      const [p] = await pool.query('SELECT level FROM material_categories WHERE id = ?', [parent_id]);
+      if (!p.length) return res.status(400).json({ error: '上级品类不存在' });
+      level = p[0].level + 1;
+      if (level > 3) return res.status(400).json({ error: '最多三级' });
+    }
+    const [r] = await pool.query(
+      `INSERT INTO material_categories (code, name, parent_id, level, sort_order, created_at, updated_at)
+       VALUES (?,?,?,?,?,NOW(),NOW())`,
+      [code, name, parent_id || null, level, Number(sort_order) || 0]
+    );
+    await addLog(userId, '', '新增', '主材管理', r.insertId, name, `新增品类: ${name}`, req.ip);
+    res.json({ id: r.insertId, message: '新增成功' });
+  } catch (err) {
+    if (String(err.message).includes('Duplicate')) return res.status(400).json({ error: 'code 已存在' });
+    console.error('material-categories POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/material-categories/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '仅管理员可维护品类' });
+    const { name, sort_order, status } = req.body || {};
+    // code 不允许改（商城/报价靠它对接）
+    const sets = [];
+    const params = [];
+    if (name !== undefined) { sets.push('name = ?'); params.push(name); }
+    if (sort_order !== undefined) { sets.push('sort_order = ?'); params.push(Number(sort_order) || 0); }
+    if (status !== undefined) { sets.push('status = ?'); params.push(Number(status) ? 1 : 0); }
+    if (!sets.length) return res.status(400).json({ error: '没有要更新的字段' });
+    sets.push('updated_at = NOW()');
+    params.push(req.params.id);
+    await pool.query(`UPDATE material_categories SET ${sets.join(', ')} WHERE id = ?`, params);
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error('material-categories PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 兼容：旧的类别名列表接口 ---------------- */
+// 老前端 onMounted 里调 /api/main-materials/categories 取下拉选项，
+// 语义从"category 字符串"改为"二级品类名"，字段名不变，避免前端 404。
 app.get('/api/main-materials/categories', async (req, res) => {
   try {
-    const rows = await db.prepare('SELECT category FROM main_materials').all();
-    const categories = [...new Set(rows.map(r => r.category).filter(c => c && c.trim()))];
-    categories.sort();
-    res.json(categories);
-  } catch(e) {
-    console.log('categories error:', e.message, e.stack);
+    const [rows] = await pool.query(
+      `SELECT name FROM material_categories WHERE level = 2 AND status = 1 ORDER BY sort_order ASC, id ASC`
+    );
+    res.json(rows.map(r => r.name));
+  } catch (err) {
+    console.error('main-materials/categories error:', err.message);
     res.json([]);
   }
 });
 
-app.post('/api/main-materials', async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
+/* ---------------- 品牌字典 ---------------- */
 
-  const userId = getUserId(req);
-  const data = req.body || {};
+app.get('/api/material-brands', async (req, res) => {
+  try {
+    const kw = String(req.query.keyword || '').trim();
+    const withCount = req.query.with_count === '1';
+    const where = ['b.status = 1'];
+    const params = [];
+    if (kw) {
+      where.push('(b.name LIKE ? OR b.alias LIKE ?)');
+      params.push('%' + kw + '%', '%' + kw + '%');
+    }
+    let sql = `SELECT b.id, b.name, b.alias, b.logo, b.sort_order FROM material_brands b
+                WHERE ${where.join(' AND ')} ORDER BY b.sort_order ASC, b.id ASC`;
+    const [rows] = await pool.query(sql, params);
+    if (withCount && rows.length) {
+      const [cnt] = await pool.query(
+        `SELECT brand_id, COUNT(*) cnt FROM main_materials WHERE brand_id IS NOT NULL GROUP BY brand_id`
+      );
+      const m = new Map(cnt.map(r => [r.brand_id, Number(r.cnt)]));
+      rows.forEach(r => { r.count = m.get(r.id) || 0; });
+      // 该品牌主营的品类（品牌墙卡片上展示），取商品数最多的 3 个
+      const [catRows] = await pool.query(
+        `SELECT m.brand_id, c.name AS cat_name, COUNT(*) AS cnt
+           FROM main_materials m JOIN material_categories c ON m.category_id = c.id
+          WHERE m.brand_id IS NOT NULL
+          GROUP BY m.brand_id, c.name
+          ORDER BY m.brand_id, cnt DESC`
+      );
+      const catMap = new Map();
+      for (const r of catRows) {
+        if (!catMap.has(r.brand_id)) catMap.set(r.brand_id, []);
+        const arr = catMap.get(r.brand_id);
+        if (arr.length < 3) arr.push(r.cat_name);
+      }
+      rows.forEach(r => { r.cat_names = (catMap.get(r.id) || []).join(' · '); });
+      rows.sort((a, b) => (b.count - a.count) || (a.sort_order - b.sort_order));
+    }
+    res.json(rows);
+  } catch (err) {
+    console.error('material-brands error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
-  // 自动补全 supplier_name
-  let supplierId = data.supplier_id || null;
-  let supplierName = data.supplier_name || '';
-  if (supplierId && !supplierName) {
-    const [sup] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(supplierId);
-    if (sup) supplierName = sup.name;
+app.post('/api/material-brands', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '仅管理员可维护品牌' });
+    const { name, alias, logo, sort_order } = req.body || {};
+    if (!name) return res.status(400).json({ error: '品牌名必填' });
+    const bpy = buildPinyin(name);
+    const [r] = await pool.query(
+      `INSERT INTO material_brands (name, alias, logo, sort_order, pinyin, pinyin_abbr, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,NOW(),NOW())`,
+      [name, alias || name, logo || '', Number(sort_order) || 0, bpy.pinyin || '', bpy.pinyin_abbr || '']
+    );
+    await addLog(userId, '', '新增', '主材管理', r.insertId, name, `新增品牌: ${name}`, req.ip);
+    res.json({ id: r.insertId, message: '新增成功' });
+  } catch (err) {
+    if (String(err.message).includes('Duplicate')) return res.status(400).json({ error: '品牌已存在' });
+    console.error('material-brands POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/material-brands/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) return res.status(401).json({ error: '未登录' });
+    if (!(await isAdmin(userId))) return res.status(403).json({ error: '仅管理员可维护品牌' });
+    const { name, alias, logo, sort_order, status } = req.body || {};
+    const sets = [];
+    const params = [];
+    if (name !== undefined) {
+      sets.push('name = ?'); params.push(name);
+      // 改名必须同步重算拼音，否则新名字搜不到（旧拼音还留着）
+      const bpy = buildPinyin(name);
+      sets.push('pinyin = ?'); params.push(bpy.pinyin || '');
+      sets.push('pinyin_abbr = ?'); params.push(bpy.pinyin_abbr || '');
+    }
+    if (alias !== undefined) { sets.push('alias = ?'); params.push(alias); }
+    if (logo !== undefined) { sets.push('logo = ?'); params.push(logo); }
+    if (sort_order !== undefined) { sets.push('sort_order = ?'); params.push(Number(sort_order) || 0); }
+    if (status !== undefined) { sets.push('status = ?'); params.push(Number(status) ? 1 : 0); }
+    if (!sets.length) return res.status(400).json({ error: '没有要更新的字段' });
+    sets.push('updated_at = NOW()');
+    params.push(req.params.id);
+    await pool.query(`UPDATE material_brands SET ${sets.join(', ')} WHERE id = ?`, params);
+    // 品牌改名时同步回填冗余列，避免老代码读到旧名
+    if (name !== undefined) {
+      await pool.query('UPDATE main_materials SET brand = ? WHERE brand_id = ?', [name, req.params.id]);
+    }
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error('material-brands PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 主材列表（重写） ---------------- */
+
+app.get('/api/main-materials', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const userRole = req.headers['x-user-role'] || '';
+    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+    const canSeeCost = userIsAdmin || await hasReadAllPermission(userId, 'purchase');
+
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (pageNum - 1) * pageSize;
+
+    // 项目维度：查该项目已用量（兼容移动端材料台账）
+    // ⚠ 原实现 SELECT m.quantity，但 main_materials 没有 quantity 列 → 必然 500。
+    //   这里改为从 material_out 汇总，库存列按 0 兜底，并给移动端补齐 unit / spec 别名。
+    if (req.query.project_id) {
+      const pid = parseInt(req.query.project_id, 10);
+      const { sql: w, params: p } = mmBuildWhere(req.query, null);
+      const sql = `
+        SELECT ${MM_SELECT_FIELDS},
+               COALESCE(mo.used_qty, 0) AS used,
+               0 AS quantity,
+               COALESCE(NULLIF(m.purchase_unit, ''), m.quote_unit) AS unit,
+               m.specification AS spec
+          FROM main_materials m
+          LEFT JOIN material_categories t ON m.type_id = t.id
+          LEFT JOIN material_categories c ON m.category_id = c.id
+          LEFT JOIN material_categories s ON m.sub_id = s.id
+          LEFT JOIN material_brands b ON m.brand_id = b.id
+          LEFT JOIN (
+            SELECT material_id, SUM(quantity) AS used_qty
+              FROM material_out WHERE project_id = ? GROUP BY material_id
+          ) mo ON m.id = mo.material_id
+          ${w}
+          ${mmOrderBy(req.query.sort)}
+      `;
+      const [list] = await pool.query(sql, [pid, ...p]);
+      return res.json({ list: mmStripCost(list, canSeeCost), total: list.length, page: 1, limit: list.length });
+    }
+
+    const { sql: whereSql, params } = mmBuildWhere(req.query, null);
+
+    const [cntRows] = await pool.query(
+      `SELECT COUNT(*) AS total ${MM_BASE_JOINS} ${whereSql}`, params
+    );
+    const total = Number(cntRows[0] && cntRows[0].total) || 0;
+
+    // LIMIT/OFFSET 已用 parseInt 校验，直接内联（mysql2 预处理对 LIMIT 占位符支持不佳）
+    const [list] = await pool.query(
+      `SELECT ${MM_SELECT_FIELDS} ${MM_BASE_JOINS} ${whereSql} ${mmOrderBy(req.query.sort)}
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      params
+    );
+
+    res.json({
+      list: mmStripCost(list, canSeeCost),
+      total,
+      page: pageNum,
+      limit: pageSize,
+      can_see_cost: !!canSeeCost
+    });
+  } catch (err) {
+    console.error('main-materials GET error:', err.message, err.stack);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- facets：各维度动态计数 ---------------- */
+
+app.get('/api/main-materials/facets', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const userRole = req.headers['x-user-role'] || '';
+    const userIsAdmin = userRole === 'admin' || userRole === '超级管理员';
+    const canSeeCost = userIsAdmin || await hasReadAllPermission(userId, 'purchase');
+
+    async function countBy(skip, groupExpr, joinExtra) {
+      const { sql, params } = mmBuildWhere(req.query, skip);
+      const [rows] = await pool.query(
+        `SELECT ${groupExpr} AS k, COUNT(*) AS c ${MM_BASE_JOINS} ${joinExtra || ''} ${sql} GROUP BY ${groupExpr}`,
+        params
+      );
+      return rows.map(r => ({ id: r.k, count: Number(r.c) }));
+    }
+
+    const [types, cats, subs, brands] = await Promise.all([
+      countBy({ type: true }, 'm.type_id'),
+      countBy({ category: true, sub: true }, 'm.category_id'),
+      countBy({ sub: true }, 'm.sub_id'),
+      countBy({ brand: true }, 'm.brand_id'),
+    ]);
+
+    // 快捷筛选的计数：各自跳过 quick 条件
+    const [totalRow] = await pool.query(
+      `SELECT COUNT(*) AS c ${MM_BASE_JOINS} ${mmBuildWhere(req.query, { quick: true }).sql}`,
+      mmBuildWhere(req.query, { quick: true }).params
+    );
+    const quickCounts = { all: Number(totalRow[0].c) || 0 };
+    for (const key of ['noimg', 'nocat', 'mall', 'lowprofit', 'nobrand']) {
+      const q2 = Object.assign({}, req.query, { quick: key });
+      const { sql, params } = mmBuildWhere(q2, null);
+      const [r] = await pool.query(`SELECT COUNT(*) AS c ${MM_BASE_JOINS} ${sql}`, params);
+      quickCounts[key] = Number(r[0].c) || 0;
+    }
+
+    // 系列下拉候选
+    const { sql: sSql, params: sParams } = mmBuildWhere(req.query, { series: true });
+    const [seriesRows] = await pool.query(
+      `SELECT m.series AS k, COUNT(*) AS c ${MM_BASE_JOINS}
+        ${sSql ? sSql + ' AND ' : ' WHERE '} m.series IS NOT NULL AND m.series <> ''
+        GROUP BY m.series ORDER BY c DESC LIMIT 100`,
+      sParams
+    );
+
+    res.json({
+      total: quickCounts.all,
+      can_see_cost: !!canSeeCost,
+      types,
+      categories: cats,
+      subs,
+      brands,
+      quick: quickCounts,
+      series: seriesRows.map(r => ({ name: r.k, count: Number(r.c) }))
+    });
+  } catch (err) {
+    console.error('main-materials/facets error:', err.message, err.stack);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 新增 / 编辑 ---------------- */
+
+/**
+ * 品类 / 品牌字典缓存。
+ * 批量导入 1000+ 行时逐行查库会慢到不可用，这里一次性加载到内存；
+ * 字典有变更时传 force = true 刷新。
+ */
+let _mmDictCache = null;
+async function mmDicts(force) {
+  if (_mmDictCache && !force) return _mmDictCache;
+  const [cats] = await pool.query(
+    'SELECT id, code, name, level, parent_id FROM material_categories ORDER BY level, sort_order, id'
+  );
+  const [brands] = await pool.query('SELECT id, name, alias FROM material_brands');
+  const catByName = new Map();
+  const catById = new Map();
+  cats.forEach(c => {
+    if (!catByName.has(c.name)) catByName.set(c.name, c);
+    catById.set(c.id, c);
+  });
+  const brandByName = new Map();
+  brands.forEach(b => {
+    if (!brandByName.has(b.name)) brandByName.set(b.name, b.id);
+    String(b.alias || '').split(',').forEach(a => {
+      const t = a.trim();
+      if (t && !brandByName.has(t)) brandByName.set(t, b.id);
+    });
+  });
+  _mmDictCache = { cats, brands, catByName, catById, brandByName };
+  return _mmDictCache;
+}
+
+/**
+ * 把前端传来的品类 / 品牌解析成 id，并回填冗余列（brand 旧字段、category 旧字段、pinyin）。
+ * 前端可以直接传 brand_id，也可以只传 brand（品牌名或别名）。
+ */
+async function mmResolveRefs(data) {
+  const out = {};
+  const dict = await mmDicts();
+
+  // —— 品牌 ——
+  let brandId = parseInt(data.brand_id, 10);
+  let brandName = String(data.brand || '').trim();
+  if (Number.isFinite(brandId)) {
+    const [hit] = await pool.query('SELECT name FROM material_brands WHERE id = ?', [brandId]);
+    if (hit.length) brandName = hit[0].name;
+  } else if (brandName) {
+    const id = dict.brandByName.get(brandName);
+    if (id) {
+      brandId = id;
+      const b = dict.brands.find(x => x.id === id);
+      if (b) brandName = b.name;
+    }
+  }
+  out.brand_id = Number.isFinite(brandId) ? brandId : null;
+  out.brand = brandName;
+
+  // —— 品类：优先 sub_id，其次 category_id ——
+  let typeId = parseInt(data.type_id, 10);
+  let catId = parseInt(data.category_id, 10);
+  let subId = parseInt(data.sub_id, 10);
+
+  // 传的是中文名时按名字反查
+  if (!Number.isFinite(subId) && data.sub_name) {
+    const c = dict.catByName.get(String(data.sub_name).trim());
+    if (c) subId = c.id;
+  }
+  if (!Number.isFinite(catId) && data.category_name) {
+    const c = dict.catByName.get(String(data.category_name).trim());
+    if (c) catId = c.id;
+  }
+  if (!Number.isFinite(typeId) && data.type_name) {
+    const c = dict.catByName.get(String(data.type_name).trim());
+    if (c) typeId = c.id;
   }
 
-  const stmt = db.prepare(`
-    INSERT INTO main_materials (
-      code, name, original_price, cost_price, cost_price2, quote_price, contract_price,
-      quote_unit, exchange_rate, purchase_unit, loss_rate, loss_amount, warranty_period, stock_period,
-      specification, model, color, spec_alternative, model_alternative, color_alternative, brand,
-      sort_order, remark, acceptance_remark, contract_remark, other_remark, position, package_name,
-      upgrade_profit_rate, internal_control_price, combo, limit_formula, quote_formula, category,
-      is_visible, is_fixed, creator_id, supplier_id, supplier_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = await stmt.run(
-    data.code || '',
-    data.name || '',
-    Number(data.original_price || 0),
-    Number(data.cost_price || 0),
-    Number(data.cost_price2 || 0),
-    Number(data.quote_price || 0),
-    Number(data.contract_price || 0),
-    data.quote_unit || '片',
-    Number(data.exchange_rate || 1),
-    data.purchase_unit || '',
-    Number(data.loss_rate || 0),
-    Number(data.loss_amount || 0),
-    data.warranty_period || '',
-    data.stock_period || '',
-    data.specification || '',
-    data.model || '',
-    data.color || '',
-    data.spec_alternative || '',
-    data.model_alternative || '',
-    data.color_alternative || '',
-    data.brand || '',
-    Number(data.sort_order || 0),
-    data.remark || '',
-    data.acceptance_remark || '',
-    data.contract_remark || '',
-    data.other_remark || '',
-    data.position || '',
-    data.package_name || '',
-    Number(data.upgrade_profit_rate || 0),
-    Number(data.internal_control_price || 0),
-    data.combo || '',
-    data.limit_formula || '',
-    data.quote_formula || '',
-    data.category || '',
-    Number(data.is_visible ?? 1),
-    Number(data.is_fixed ?? 0),
-    userId,
-    supplierId,
-    supplierName
+  // 兼容老前端 / 移动端：把中文品类名直接塞在 category 字段里传过来。
+  // 命中字典就转成 id（按 level 决定挂在哪一级）；没命中就当作旧自由文本照原样落库，不报错。
+  if (!Number.isFinite(catId) && !Number.isFinite(subId) && !Number.isFinite(typeId) && data.category) {
+    const c = dict.catByName.get(String(data.category).trim());
+    if (c) {
+      if (c.level === 3) subId = c.id;
+      else if (c.level === 2) catId = c.id;
+      else typeId = c.id;
+    }
+  }
+
+  out.type_id = Number.isFinite(typeId) ? typeId : null;
+  out.category_id = Number.isFinite(catId) ? catId : null;
+  out.sub_id = Number.isFinite(subId) ? subId : null;
+
+  // 只给了子类时反推品类与类型
+  if (out.sub_id) {
+    const s = dict.catById.get(out.sub_id);
+    if (s) {
+      if (!out.category_id && s.parent_id) out.category_id = s.parent_id;
+      if (!out.type_id && out.category_id) {
+        const c = dict.catById.get(out.category_id);
+        if (c && c.parent_id) out.type_id = c.parent_id;
+      }
+    }
+  } else if (out.category_id) {
+    const c = dict.catById.get(out.category_id);
+    if (c) {
+      if (!out.type_id && c.parent_id) out.type_id = c.parent_id;
+      if (!out.sub_id && c.level === 3 && c.parent_id) out.category_id = c.parent_id;
+    }
+  }
+
+  // 拼音
+  const py = buildPinyin(data.name || '');
+  out.pinyin = py.pinyin;
+  out.pinyin_abbr = py.pinyin_abbr;
+
+  // 回填旧字段 category（导出、移动端、老前端仍在读它）
+  if (out.category_id) {
+    const c = dict.catById.get(out.category_id);
+    if (c) out.category = c.name;
+  }
+
+  return out;
+}
+
+/** 新增一条主材（POST 与 Excel 导入共用） */
+async function mmInsertOne(data, userId) {
+  const refs = await mmResolveRefs(data);
+  const merged = Object.assign({}, data, refs);
+
+  // 供应商：v2.3.1 起统一在 external_contacts，旧的 suppliers 表已不存在
+  let supplierName = String(merged.supplier_name || '').trim();
+  const supplierId = parseInt(merged.supplier_id, 10);
+  if (Number.isFinite(supplierId) && !supplierName) {
+    const [sup] = await pool.query('SELECT name FROM external_contacts WHERE id = ?', [supplierId]);
+    if (sup.length) supplierName = sup[0].name;
+  }
+  merged.supplier_name = supplierName;
+  merged.supplier_id = Number.isFinite(supplierId) ? supplierId : null;
+
+  const cols = MM_WRITE_COLS;
+  const placeholders = cols.map(() => '?').join(',');
+  const values = cols.map(c => mmNormalizeValue(c, merged[c]));
+  const [result] = await pool.query(
+    `INSERT INTO main_materials (${cols.join(', ')}, creator_id, created_at, updated_at)
+     VALUES (${placeholders}, ?, NOW(), NOW())`,
+    [...values, userId]
   );
-  await addLog(userId, '', '新增', '主材管理', result.lastInsertRowid, data.name || '', `主材: ${data.name || result.lastInsertRowid}`, req.ip);
-  res.json({ id: result.lastInsertRowid, message: '添加成功' });
+  return result.insertId;
+}
+
+const MM_WRITE_COLS = [
+  'code', 'name', 'original_price', 'cost_price', 'cost_price2', 'quote_price', 'contract_price',
+  'quote_unit', 'exchange_rate', 'purchase_unit', 'loss_rate', 'loss_amount', 'warranty_period', 'stock_period',
+  'specification', 'model', 'color', 'spec_alternative', 'model_alternative', 'color_alternative', 'brand',
+  'sort_order', 'remark', 'acceptance_remark', 'contract_remark', 'other_remark', 'position', 'package_name',
+  'upgrade_profit_rate', 'internal_control_price', 'combo', 'limit_formula', 'quote_formula', 'category',
+  'is_visible', 'is_fixed', 'cover_image', 'gallery',
+  'type_id', 'category_id', 'sub_id', 'brand_id', 'series',
+  'mall_status', 'mall_price', 'mall_stock', 'mall_sku_code', 'pinyin', 'pinyin_abbr',
+  'supplier_id', 'supplier_name'
+];
+
+const MM_NUM_COLS = new Set([
+  'original_price', 'cost_price', 'cost_price2', 'quote_price', 'contract_price',
+  'loss_rate', 'loss_amount', 'sort_order', 'upgrade_profit_rate', 'internal_control_price',
+  'is_visible', 'is_fixed', 'mall_status', 'mall_stock', 'mall_price'
+]);
+const MM_INT_COLS = new Set(['type_id', 'category_id', 'sub_id', 'brand_id', 'supplier_id']);
+
+function mmNormalizeValue(col, raw) {
+  if (MM_INT_COLS.has(col)) {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (col === 'exchange_rate') {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+  if (col === 'mall_price') {
+    if (raw === '' || raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (MM_NUM_COLS.has(col)) {
+    if (raw === '' || raw == null) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (col === 'quote_unit') return raw || '片';
+  return raw == null ? '' : String(raw);
+}
+
+app.post('/api/main-materials', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const data = req.body || {};
+    if (!data.name) return res.status(400).json({ error: '主材名称必填' });
+
+    const newId = await mmInsertOne(data, userId);
+    await addLog(userId, '', '新增', '主材管理', newId, data.name, `主材: ${data.name}`, req.ip);
+    res.json({ id: newId, message: '添加成功' });
+  } catch (err) {
+    console.error('main-materials POST error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.put('/api/main-materials/:id', async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
+  try {
+    const userId = getUserId(req);
+    const [existing] = await pool.query('SELECT creator_id FROM main_materials WHERE id = ?', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: '主材不存在' });
+    if (existing[0].creator_id !== userId && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无权修改他人的数据' });
+    }
+    const data = req.body || {};
+    if (!data.name) return res.status(400).json({ error: '主材名称必填' });
 
-  const userId = getUserId(req);
-  // 权限检查
-  const [existing] = await db.prepare('SELECT creator_id FROM main_materials WHERE id = ?').all(req.params.id);
-  if (!existing) return res.status(404).json({ error: '主材不存在' });
-  if (existing.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权修改他人的数据' });
-  const data = req.body || {};
+    const refs = await mmResolveRefs(data);
+    const merged = Object.assign({}, data, refs);
 
-  // 自动补全 supplier_name
-  let supplierId = data.supplier_id || null;
-  let supplierName = data.supplier_name || '';
-  if (supplierId && !supplierName) {
-    const [sup] = await db.prepare('SELECT name FROM suppliers WHERE id = ?').all(supplierId);
-    if (sup) supplierName = sup.name;
+    let supplierName = String(merged.supplier_name || '').trim();
+    const supplierId = parseInt(merged.supplier_id, 10);
+    if (Number.isFinite(supplierId) && !supplierName) {
+      const [sup] = await pool.query('SELECT name FROM external_contacts WHERE id = ?', [supplierId]);
+      if (sup.length) supplierName = sup[0].name;
+    }
+    merged.supplier_name = supplierName;
+    merged.supplier_id = Number.isFinite(supplierId) ? supplierId : null;
+
+    const cols = MM_WRITE_COLS;
+    const sets = cols.map(c => `${c} = ?`).join(', ');
+    const values = cols.map(c => mmNormalizeValue(c, merged[c]));
+
+    await pool.query(
+      `UPDATE main_materials SET ${sets}, updated_at = NOW() WHERE id = ?`,
+      [...values, req.params.id]
+    );
+    await addLog(userId, '', '编辑', '主材管理', req.params.id, merged.name, `更新主材: ${merged.name}`, req.ip);
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error('main-materials PUT error:', err.message);
+    res.status(500).json({ error: err.message });
   }
+});
 
-  const stmt = db.prepare(`
-    UPDATE main_materials SET
-      code=?, name=?, original_price=?, cost_price=?, cost_price2=?, quote_price=?, contract_price=?,
-      quote_unit=?, exchange_rate=?, purchase_unit=?, loss_rate=?, loss_amount=?, warranty_period=?, stock_period=?,
-      specification=?, model=?, color=?, spec_alternative=?, model_alternative=?, color_alternative=?, brand=?,
-      sort_order=?, remark=?, acceptance_remark=?, contract_remark=?, other_remark=?, position=?, package_name=?,
-      upgrade_profit_rate=?, internal_control_price=?, combo=?, limit_formula=?, quote_formula=?, category=?,
-      is_visible=?, is_fixed=?, updated_at=CURRENT_TIMESTAMP, supplier_id=?, supplier_name=?
-    WHERE id=?
-  `);
-  await stmt.run(
-    data.code || '',
-    data.name || '',
-    Number(data.original_price || 0),
-    Number(data.cost_price || 0),
-    Number(data.cost_price2 || 0),
-    Number(data.quote_price || 0),
-    Number(data.contract_price || 0),
-    data.quote_unit || '片',
-    Number(data.exchange_rate || 1),
-    data.purchase_unit || '',
-    Number(data.loss_rate || 0),
-    Number(data.loss_amount || 0),
-    data.warranty_period || '',
-    data.stock_period || '',
-    data.specification || '',
-    data.model || '',
-    data.color || '',
-    data.spec_alternative || '',
-    data.model_alternative || '',
-    data.color_alternative || '',
-    data.brand || '',
-    Number(data.sort_order || 0),
-    data.remark || '',
-    data.acceptance_remark || '',
-    data.contract_remark || '',
-    data.other_remark || '',
-    data.position || '',
-    data.package_name || '',
-    Number(data.upgrade_profit_rate || 0),
-    Number(data.internal_control_price || 0),
-    data.combo || '',
-    data.limit_formula || '',
-    data.quote_formula || '',
-    data.category || '',
-    Number(data.is_visible ?? 1),
-    Number(data.is_fixed ?? 0),
-    supplierId,
-    supplierName,
-    req.params.id
-  );
-  await addLog(userId, '', '编辑', '主材管理', req.params.id, data.name || '', `更新主材: ${data.name || req.params.id}`, req.ip);
-  res.json({ message: '更新成功' });
+/* ---------------- 主图上传：单独一个端点，便于前端做裁剪/压缩 ---------------- */
+
+app.put('/api/main-materials/:id/cover', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const [existing] = await pool.query('SELECT creator_id FROM main_materials WHERE id = ?', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: '主材不存在' });
+    if (existing[0].creator_id !== userId && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无权修改他人的数据' });
+    }
+    const url = String(req.body && req.body.cover_image || '').trim();
+    await pool.query('UPDATE main_materials SET cover_image = ?, updated_at = NOW() WHERE id = ?',
+      [url, req.params.id]);
+    res.json({ message: '已更新', cover_image: url });
+  } catch (err) {
+    console.error('main-materials cover error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete('/api/main-materials/:id', async (req, res) => {
-  const _rawUid = req.headers['x-user-id'];
-    
-  const userId = getUserId(req);
-  const [m] = await db.prepare('SELECT name, creator_id FROM main_materials WHERE id = ?').all(req.params.id);
-  if (!m) return res.status(404).json({ error: '记录不存在' });
-  if (m.creator_id !== userId && !(await isAdmin(userId))) return res.status(403).json({ error: '无权删除他人的数据' });
-  const mName = m.name;
-  const stmt = db.prepare('DELETE FROM main_materials WHERE id = ?');
-  await stmt.run(req.params.id);
-  await addLog(userId, '', '删除', '主材管理', req.params.id, mName, `删除主材: ${mName}`, req.ip);
-  res.json({ message: '删除成功' });
+  try {
+    const userId = getUserId(req);
+    const [m] = await pool.query('SELECT name, creator_id FROM main_materials WHERE id = ?', [req.params.id]);
+    if (!m.length) return res.status(404).json({ error: '记录不存在' });
+    if (m[0].creator_id !== userId && !(await isAdmin(userId))) {
+      return res.status(403).json({ error: '无权删除他人的数据' });
+    }
+    await pool.query('DELETE FROM main_materials WHERE id = ?', [req.params.id]);
+    await addLog(userId, '', '删除', '主材管理', req.params.id, m[0].name, `删除主材: ${m[0].name}`, req.ip);
+    res.json({ message: '删除成功' });
+  } catch (err) {
+    console.error('main-materials DELETE error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
+
 
 app.post('/api/main-materials/batch-upsert', async (req, res) => {
   const userId = getUserId(req);
@@ -3784,7 +4501,9 @@ mapping={
   '规格备选':'spec_alternative','型号备选':'model_alternative','颜色备选':'color_alternative','品牌':'brand','排序':'sort_order',
   '备注说明':'remark','验收说明':'acceptance_remark','发包备注':'contract_remark','其他备注':'other_remark',
   '位置':'position','套系':'package_name','升级利润率':'upgrade_profit_rate','内控单价':'internal_control_price',
-  '组合':'combo','限量公式':'limit_formula','报价量公式':'quote_formula','系统编号':'code','类别':'category'
+  '组合':'combo','限量公式':'limit_formula','报价量公式':'quote_formula','系统编号':'code','类别':'category',
+  '类型':'type_name','品类':'category_name','子类':'sub_name','系列':'series','主图':'cover_image',
+  '商城状态':'mall_status','商城价':'mall_price','商城库存':'mall_stock'
 }
 rows=[]
 for idx,row in df.iterrows():
@@ -3826,62 +4545,36 @@ print(json.dumps(rows,ensure_ascii=False))
     res.status(500).json({ message: 'Excel解析失败' });
     return;
   }
-  const insertStmt = db.prepare(`
-    INSERT INTO main_materials (
-      code, name, original_price, cost_price, cost_price2, quote_price, contract_price,
-      quote_unit, exchange_rate, purchase_unit, loss_rate, loss_amount, warranty_period, stock_period,
-      specification, model, color, spec_alternative, model_alternative, color_alternative, brand,
-      sort_order, remark, acceptance_remark, contract_remark, other_remark, position, package_name,
-      upgrade_profit_rate, internal_control_price, combo, limit_formula, quote_formula, category,
-      is_visible, is_fixed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  // 复用 mmInsertOne：自动解析品类 / 品牌 / 拼音，并回填旧字段。
+  // 字典先刷新一次，避免批量导入时逐行查库。
+  await mmDicts(true);
+  let okCount = 0;
+  const failures = [];
   for (const row of rows) {
-    await insertStmt.run(
-      row.code || '',
-      row.name || '',
-      Number(row.original_price || 0),
-      Number(row.cost_price || 0),
-      Number(row.cost_price2 || 0),
-      Number(row.quote_price || 0),
-      Number(row.contract_price || 0),
-      row.quote_unit || '片',
-      Number(row.exchange_rate || 1),
-      row.purchase_unit || '',
-      Number(row.loss_rate || 0),
-      Number(row.loss_amount || 0),
-      row.warranty_period || '',
-      row.stock_period || '',
-      row.specification || '',
-      row.model || '',
-      row.color || '',
-      row.spec_alternative || '',
-      row.model_alternative || '',
-      row.color_alternative || '',
-      row.brand || '',
-      Number(row.sort_order || 0),
-      row.remark || '',
-      row.acceptance_remark || '',
-      row.contract_remark || '',
-      row.other_remark || '',
-      row.position || '',
-      row.package_name || '',
-      Number(row.upgrade_profit_rate || 0),
-      Number(row.internal_control_price || 0),
-      row.combo || '',
-      row.limit_formula || '',
-      row.quote_formula || '',
-      row.category || '',
-      Number(row.is_visible ?? 1),
-      Number(row.is_fixed ?? 0)
-    );
+    if (!row.name) continue;
+    try {
+      await mmInsertOne(row, userId);
+      okCount++;
+    } catch (e) {
+      failures.push({ name: row.name, error: e.message });
+      console.error('导入单行失败:', row.name, e.message);
+    }
   }
-  await addLog(userId, '', '新增', '主材管理', null, '批量导入', `Excel导入主材 ${rows.length} 条`, req.ip);
-  res.json({ message: '导入成功', count: rows.length });
+  await addLog(userId, '', '新增', '主材管理', null, '批量导入',
+    `Excel导入主材 ${okCount} 条${failures.length ? `，失败 ${failures.length} 条` : ''}`, req.ip);
+  res.json({
+    message: failures.length ? `导入完成，成功 ${okCount} 条，失败 ${failures.length} 条` : '导入成功',
+    count: okCount,
+    failed: failures.length,
+    failures: failures.slice(0, 20)
+  });
 });
 
 app.get('/api/main-materials/export', async (req, res) => {
-  const rows = await db.prepare('SELECT * FROM main_materials ORDER BY sort_order ASC, id DESC').all();
+  // 带品类 / 品牌 / 系列一起导出，导出的表可直接再导入
+  const [rows] = await pool.query(
+    `SELECT ${MM_SELECT_FIELDS} ${MM_BASE_JOINS} ORDER BY m.sort_order ASC, m.id DESC`
+  );
   const payloadPath = path.join(os.tmpdir(), `main_material_payload_${Date.now()}.json`);
   const outputPath = path.join(os.tmpdir(), `main_material_export_${Date.now()}.xlsx`);
   fs.writeFileSync(payloadPath, JSON.stringify(rows), 'utf8');
@@ -3891,14 +4584,14 @@ payload_path=sys.argv[1]
 output_path=sys.argv[2]
 with open(payload_path,'r',encoding='utf-8') as f:
   rows=json.load(f)
-headers=['编号','名称','原价','核算价','成本价','报价','发包价','报价单位','兑换比例','采购单位','损耗比例','损耗金额','保修时长','备货周期','规格','型号','颜色','规格备选','型号备选','颜色备选','品牌','排序','备注说明','验收说明','发包备注','其他备注','位置','套系','升级利润率','内控单价','组合','限量公式','报价量公式','系统编号','类别']
-fields=['id','name','original_price','cost_price','cost_price2','quote_price','contract_price','quote_unit','exchange_rate','purchase_unit','loss_rate','loss_amount','warranty_period','stock_period','specification','model','color','spec_alternative','model_alternative','color_alternative','brand','sort_order','remark','acceptance_remark','contract_remark','other_remark','position','package_name','upgrade_profit_rate','internal_control_price','combo','limit_formula','quote_formula','code','category']
+headers=['编号','名称','类型','品类','子类','系列','品牌','原价','核算价','成本价','报价','发包价','报价单位','兑换比例','采购单位','损耗比例','损耗金额','保修时长','备货周期','规格','型号','颜色','规格备选','型号备选','颜色备选','排序','备注说明','验收说明','发包备注','其他备注','位置','套系','升级利润率','内控单价','组合','限量公式','报价量公式','系统编号','主图','商城状态','商城价','商城库存']
+fields=['id','name','type_name','category_name','sub_name','series','brand_display','original_price','cost_price','cost_price2','quote_price','contract_price','quote_unit','exchange_rate','purchase_unit','loss_rate','loss_amount','warranty_period','stock_period','specification','model','color','spec_alternative','model_alternative','color_alternative','sort_order','remark','acceptance_remark','contract_remark','other_remark','position','package_name','upgrade_profit_rate','internal_control_price','combo','limit_formula','quote_formula','code','cover_image','mall_status','mall_price','mall_stock']
 wb=openpyxl.Workbook()
 ws=wb.active
 ws.title='主材管理'
 ws.append(headers)
 for r in rows:
-  ws.append([r.get(f,'') for f in fields])
+  ws.append([r.get(f,'') if r.get(f) is not None else '' for f in fields])
 wb.save(output_path)
 `;
   const result = spawnSync('python3', ['-c', script, payloadPath, outputPath], { encoding: 'utf8' });
@@ -3916,6 +4609,605 @@ wb.save(output_path)
     } catch (e) {
     }
   });
+});
+
+/* ==================================================================
+ * 商城 v2.5.1 —— 无在线支付，只做「加购物车 → 生成订单号 → 银行转账备注」
+ * ------------------------------------------------------------------
+ * 设计原则（按"简单一些"的要求）：
+ *   1. 商品池直接复用 main_materials，mall_status=1 即在商城可见。
+ *      不另建商品表、不双写 —— 主材管理里勾「上架商城」立刻生效。
+ *   2. 购物车放前端 storage，不入库（业主换设备重加，可接受）。
+ *   3. 金额一律服务端算，不信前端传的 total。
+ *   4. 下单只落订单，不扣库存、不改商品状态；财务人工确认收款。
+ * ================================================================== */
+
+/** 商城价：填了 mall_price 用它，没填回退报价 quote_price */
+const MALL_PRICE_EXPR = 'COALESCE(NULLIF(m.mall_price, 0), m.quote_price)';
+
+/** 业主端只暴露这些列 —— 成本/毛利/供应商/公式一律不出库 */
+const MALL_PUBLIC_FIELDS = `
+  m.id, m.name, m.code, m.model, m.specification, m.color, m.series,
+  m.quote_unit, m.cover_image, m.gallery, m.remark,
+  m.mall_stock, m.mall_sku_code, m.category_id, m.brand_id,
+  c.name AS category_name,
+  s.name AS sub_name,
+  COALESCE(NULLIF(b.name, ''), m.brand) AS brand_name,
+  b.logo AS brand_logo,
+  ${MALL_PRICE_EXPR} AS price
+`;
+
+const MALL_JOINS = `
+  FROM main_materials m
+  LEFT JOIN material_categories c ON m.category_id = c.id
+  LEFT JOIN material_categories s ON m.sub_id = s.id
+  LEFT JOIN material_brands b ON m.brand_id = b.id
+`;
+
+/** 管理端：能看/能改商城（管理员 或 有 material 权限） */
+async function mallCan(req, action) {
+  const userId = getUserId(req);
+  if (!userId) return false;
+  const role = String(req.headers['x-user-role'] || '');
+  if (role === 'admin' || role === '超级管理员') return true;
+  if (await isAdmin(userId)) return true;
+  try {
+    return await permCore.canAction(userId, 'material', action || 'read');
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 订单号：M + yyyyMMdd + 4 位当日流水，业主好抄、财务好核对 */
+async function mallNextOrderNo() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const prefix = 'M' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate());
+  const [rows] = await pool.query(
+    'SELECT order_no FROM mall_orders WHERE order_no LIKE ? ORDER BY order_no DESC LIMIT 1',
+    [prefix + '%']
+  );
+  let seq = 1;
+  if (rows.length) {
+    const tail = parseInt(String(rows[0].order_no).slice(prefix.length), 10);
+    if (Number.isFinite(tail)) seq = tail + 1;
+  }
+  return prefix + String(seq).padStart(4, '0');
+}
+
+/* ---------------- 业主端：商品 ---------------- */
+
+app.get('/api/mall/products', async (req, res) => {
+  try {
+    const where = ["m.mall_status = 1"];
+    const params = [];
+
+    const kw = String(req.query.keyword || '').trim();
+    if (kw) {
+      const like = '%' + kw + '%';
+      where.push(`(m.name LIKE ? OR m.model LIKE ? OR m.specification LIKE ? OR m.series LIKE ?
+        OR b.name LIKE ? OR b.alias LIKE ? OR m.pinyin LIKE ? OR m.pinyin_abbr LIKE ?
+        OR b.pinyin LIKE ? OR b.pinyin_abbr LIKE ?)`);
+      for (let i = 0; i < 10; i++) params.push(like);
+    }
+    const cid = parseInt(req.query.category_id, 10);
+    if (Number.isFinite(cid)) { where.push('m.category_id = ?'); params.push(cid); }
+    const bid = parseInt(req.query.brand_id, 10);
+    if (Number.isFinite(bid)) { where.push('m.brand_id = ?'); params.push(bid); }
+
+    const whereSql = ' WHERE ' + where.join(' AND ');
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total ${MALL_JOINS} ${whereSql}`, params);
+    const total = Number(cnt[0] && cnt[0].total) || 0;
+
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.page_size, 10) || 20));
+    const offset = (pageNum - 1) * pageSize;
+
+    let orderBy = 'm.sort_order ASC, m.id DESC';
+    const sort = String(req.query.sort || '');
+    if (sort === 'price_asc') orderBy = `${MALL_PRICE_EXPR} ASC, m.id DESC`;
+    else if (sort === 'price_desc') orderBy = `${MALL_PRICE_EXPR} DESC, m.id DESC`;
+    else if (sort === 'new') orderBy = 'm.id DESC';
+
+    const [list] = await pool.query(
+      `SELECT ${MALL_PUBLIC_FIELDS} ${MALL_JOINS} ${whereSql} ORDER BY ${orderBy} LIMIT ${pageSize} OFFSET ${offset}`,
+      params
+    );
+    res.json({ list, total, page: pageNum, limit: pageSize });
+  } catch (err) {
+    console.error('mall products error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/mall/categories', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.id, c.name, COUNT(*) AS count
+         FROM main_materials m
+         JOIN material_categories c ON m.category_id = c.id
+        WHERE m.mall_status = 1
+        GROUP BY c.id, c.name
+        ORDER BY count DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('mall categories error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/mall/products/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ${MALL_PUBLIC_FIELDS} ${MALL_JOINS} WHERE m.id = ? AND m.mall_status = 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: '商品不存在或已下架' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('mall product detail error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 业主端：收款信息 ---------------- */
+
+app.get('/api/mall/payinfo', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT setting_value FROM system_settings WHERE category = 'mall_bank' LIMIT 1"
+    );
+    let info = {};
+    if (rows.length && rows[0].setting_value) {
+      try { info = JSON.parse(rows[0].setting_value); } catch (e) { info = {}; }
+    }
+    res.json({
+      bank_name: info.bank_name || '',
+      account_name: info.account_name || '',
+      account_no: info.account_no || '',
+      note: info.note || ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 业主端：下单 ---------------- */
+
+app.post('/api/mall/orders', async (req, res) => {
+  let conn = null;
+  try {
+    const items = Array.isArray(req.body && req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: '购物车是空的' });
+
+    // 合并同商品、丢掉非法数量
+    const want = new Map();
+    for (const it of items) {
+      const mid = parseInt(it.material_id, 10);
+      const qty = parseInt(it.qty, 10);
+      if (!Number.isFinite(mid) || !Number.isFinite(qty) || qty <= 0) continue;
+      want.set(mid, (want.get(mid) || 0) + Math.min(qty, 9999));
+    }
+    if (!want.size) return res.status(400).json({ error: '没有有效的商品' });
+
+    const ids = [...want.keys()];
+    const [goods] = await pool.query(
+      `SELECT m.id, m.name, m.specification, m.model, m.quote_unit, m.cover_image,
+              m.mall_stock, ${MALL_PRICE_EXPR} AS price,
+              COALESCE(NULLIF(b.name, ''), m.brand) AS brand_name
+         FROM main_materials m
+         LEFT JOIN material_brands b ON m.brand_id = b.id
+        WHERE m.id IN (${ids.map(() => '?').join(',')}) AND m.mall_status = 1`,
+      ids
+    );
+    if (goods.length !== ids.length) {
+      return res.status(400).json({ error: '部分商品已下架，请刷新后重试' });
+    }
+
+    // 金额一律服务端算
+    let totalAmount = 0;
+    let totalQty = 0;
+    const lines = goods.map((g) => {
+      const qty = want.get(g.id);
+      const price = Number(g.price) || 0;
+      if (Number(g.mall_stock) > 0 && qty > Number(g.mall_stock)) {
+        const e = new Error(`「${g.name}」库存不足，仅剩 ${g.mall_stock}`);
+        e.statusCode = 400;
+        throw e;
+      }
+      const subtotal = Math.round(price * qty * 100) / 100;
+      totalAmount += subtotal;
+      totalQty += qty;
+      return {
+        material_id: g.id,
+        name: g.name,
+        spec: g.specification || g.model || '',
+        brand: g.brand_name || '',
+        image: g.cover_image || '',
+        unit: g.quote_unit || '',
+        unit_price: price,
+        qty,
+        subtotal
+      };
+    });
+    totalAmount = Math.round(totalAmount * 100) / 100;
+
+    // 下单人：业主身份优先，员工代下也能记
+    const userId = getUserId(req);
+    const identity = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    const customerId = identity ? identity.customerId : null;
+    const customerName = (identity && identity.name) || String(req.body.customer_name || '').trim();
+    const phone = (identity && identity.phone) || String(req.body.phone || '').trim();
+    const remark = String(req.body.remark || '').slice(0, 500);
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    // 订单号唯一索引兜底，撞号就顺延重试
+    let orderNo = null;
+    let orderId = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = await mallNextOrderNo();
+      try {
+        const [r] = await conn.query(
+          `INSERT INTO mall_orders
+             (order_no, customer_id, customer_name, phone, total_amount, item_count, total_qty,
+              status, remark, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,'pending',?,NOW(),NOW())`,
+          [candidate, customerId, customerName, phone, totalAmount, lines.length, totalQty, remark]
+        );
+        orderNo = candidate;
+        orderId = r.insertId;
+        break;
+      } catch (e) {
+        if (String(e.code || '').includes('DUP') || String(e.message).includes('Duplicate')) continue;
+        throw e;
+      }
+    }
+    if (!orderNo) throw new Error('订单号生成失败，请重试');
+
+    for (const l of lines) {
+      await conn.query(
+        `INSERT INTO mall_order_items
+           (order_id, material_id, name, spec, brand, image, unit, unit_price, qty, subtotal, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,NOW())`,
+        [orderId, l.material_id, l.name, l.spec, l.brand, l.image, l.unit, l.unit_price, l.qty, l.subtotal]
+      );
+    }
+
+    await conn.commit();
+
+    res.json({
+      id: orderId,
+      order_no: orderNo,
+      total_amount: totalAmount,
+      item_count: lines.length,
+      total_qty: totalQty,
+      items: lines,
+      message: '下单成功'
+    });
+  } catch (err) {
+    if (conn) { try { await conn.rollback(); } catch (e) {} }
+    console.error('mall order create error:', err.message);
+    res.status(err.statusCode || 500).json({ error: err.message });
+  } finally {
+    if (conn) { try { conn.release(); } catch (e) {} }
+  }
+});
+
+/* ---------------- 业主端：我的订单 ---------------- */
+
+app.get('/api/mall/orders', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const identity = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    if (!identity) return res.json([]);
+
+    const [orders] = await pool.query(
+      `SELECT id, order_no, total_amount, item_count, total_qty, status, remark, paid_at, created_at
+         FROM mall_orders
+        WHERE customer_id = ?
+        ORDER BY id DESC`,
+      [identity.customerId]
+    );
+    if (!orders.length) return res.json([]);
+
+    const ids = orders.map((o) => o.id);
+    const [items] = await pool.query(
+      `SELECT order_id, name, spec, image, unit, unit_price, qty, subtotal
+         FROM mall_order_items WHERE order_id IN (${ids.map(() => '?').join(',')})`,
+      ids
+    );
+    const byOrder = new Map();
+    for (const it of items) {
+      if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
+      byOrder.get(it.order_id).push(it);
+    }
+    res.json(orders.map((o) => Object.assign({}, o, { items: byOrder.get(o.id) || [] })));
+  } catch (err) {
+    console.error('mall orders error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/mall/orders/:id', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const identity = await permCore.resolveCustomerIdentity(userId, req.headers['x-user-type']);
+    const [rows] = await pool.query('SELECT * FROM mall_orders WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: '订单不存在' });
+    const o = rows[0];
+    if (identity && o.customer_id && o.customer_id !== identity.customerId) {
+      return res.status(403).json({ error: '无权查看该订单' });
+    }
+    const [items] = await pool.query(
+      'SELECT * FROM mall_order_items WHERE order_id = ?', [o.id]
+    );
+    res.json(Object.assign({}, o, { items }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 管理端：商品 ---------------- */
+
+app.get('/api/mall/admin/products', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'read'))) return res.status(403).json({ error: '无权限' });
+    const where = [];
+    const params = [];
+    // on_sale=1 只看已上架；on_sale=0 只看未上架；不传看全部
+    const onSale = String(req.query.on_sale == null ? '' : req.query.on_sale);
+    if (onSale === '1') where.push('m.mall_status = 1');
+    else if (onSale === '0') where.push('(m.mall_status IS NULL OR m.mall_status = 0)');
+
+    const kw = String(req.query.keyword || '').trim();
+    if (kw) {
+      const like = '%' + kw + '%';
+      where.push('(m.name LIKE ? OR m.model LIKE ? OR m.specification LIKE ? OR b.name LIKE ? OR m.pinyin LIKE ? OR m.pinyin_abbr LIKE ?)');
+      for (let i = 0; i < 6; i++) params.push(like);
+    }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total ${MALL_JOINS} ${whereSql}`, params);
+    const total = Number(cnt[0] && cnt[0].total) || 0;
+
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.page_size, 10) || 20));
+    const offset = (pageNum - 1) * pageSize;
+
+    const [list] = await pool.query(
+      `SELECT m.id, m.name, m.model, m.specification, m.quote_unit, m.quote_price,
+              m.cover_image, m.mall_status, m.mall_price, m.mall_stock, m.mall_sku_code,
+              c.name AS category_name, s.name AS sub_name,
+              COALESCE(NULLIF(b.name, ''), m.brand) AS brand_name,
+              ${MALL_PRICE_EXPR} AS price
+       ${MALL_JOINS} ${whereSql}
+       ORDER BY m.mall_status DESC, m.sort_order ASC, m.id DESC
+       LIMIT ${pageSize} OFFSET ${offset}`,
+      params
+    );
+    res.json({ list, total, page: pageNum, limit: pageSize });
+  } catch (err) {
+    console.error('mall admin products error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/mall/admin/products/:id', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'write'))) return res.status(403).json({ error: '无权限' });
+    const userId = getUserId(req);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: '参数错误' });
+
+    const b = req.body || {};
+    const sets = [];
+    const params = [];
+    if (b.mall_status !== undefined) {
+      sets.push('mall_status = ?');
+      params.push(Number(b.mall_status) ? 1 : 0);
+    }
+    if (b.mall_price !== undefined) {
+      const n = Number(b.mall_price);
+      sets.push('mall_price = ?');
+      params.push(b.mall_price === '' || b.mall_price == null || !Number.isFinite(n) ? null : n);
+    }
+    if (b.mall_stock !== undefined) {
+      const n = parseInt(b.mall_stock, 10);
+      sets.push('mall_stock = ?');
+      params.push(Number.isFinite(n) ? n : 0);
+    }
+    if (b.mall_sku_code !== undefined) {
+      sets.push('mall_sku_code = ?');
+      params.push(String(b.mall_sku_code || ''));
+    }
+    if (!sets.length) return res.status(400).json({ error: '没有要更新的字段' });
+
+    params.push(id);
+    await pool.query(`UPDATE main_materials SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+
+    const [row] = await pool.query('SELECT name, mall_status FROM main_materials WHERE id = ?', [id]);
+    if (row.length) {
+      await addLog(userId, '', '编辑', '商城管理', id, row[0].name,
+        `商城: ${row[0].name} → ${Number(row[0].mall_status) ? '上架' : '下架'}`, req.ip);
+    }
+    res.json({ message: '已更新' });
+  } catch (err) {
+    console.error('mall admin product update error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 管理端：订单 ---------------- */
+
+app.get('/api/mall/admin/orders', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'read'))) return res.status(403).json({ error: '无权限' });
+    const where = [];
+    const params = [];
+    const st = String(req.query.status || '').trim();
+    if (st) { where.push('status = ?'); params.push(st); }
+    const kw = String(req.query.keyword || '').trim();
+    if (kw) {
+      const like = '%' + kw + '%';
+      where.push('(order_no LIKE ? OR customer_name LIKE ? OR phone LIKE ?)');
+      params.push(like, like, like);
+    }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : '';
+
+    const [cnt] = await pool.query(`SELECT COUNT(*) AS total FROM mall_orders ${whereSql}`, params);
+    const total = Number(cnt[0] && cnt[0].total) || 0;
+
+    const pageNum = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.page_size, 10) || 20));
+    const offset = (pageNum - 1) * pageSize;
+
+    const [list] = await pool.query(
+      `SELECT * FROM mall_orders ${whereSql} ORDER BY id DESC LIMIT ${pageSize} OFFSET ${offset}`,
+      params
+    );
+
+    if (list.length) {
+      const ids = list.map((o) => o.id);
+      const [items] = await pool.query(
+        `SELECT * FROM mall_order_items WHERE order_id IN (${ids.map(() => '?').join(',')})`, ids
+      );
+      const byOrder = new Map();
+      for (const it of items) {
+        if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
+        byOrder.get(it.order_id).push(it);
+      }
+      list.forEach((o) => { o.items = byOrder.get(o.id) || []; });
+    }
+    res.json({ list, total, page: pageNum, limit: pageSize });
+  } catch (err) {
+    console.error('mall admin orders error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/mall/admin/orders/:id', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'write'))) return res.status(403).json({ error: '无权限' });
+    const userId = getUserId(req);
+    const id = parseInt(req.params.id, 10);
+    const action = String((req.body && req.body.action) || '').trim();
+    const [rows] = await pool.query('SELECT * FROM mall_orders WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ error: '订单不存在' });
+    const o = rows[0];
+
+    if (action === 'confirm') {
+      if (o.status === 'paid') return res.json({ message: '已是已收款状态' });
+      await pool.query(
+        "UPDATE mall_orders SET status = 'paid', paid_at = NOW(), paid_by = ?, updated_at = NOW() WHERE id = ?",
+        [userId, id]
+      );
+      await addLog(userId, '', '编辑', '商城管理', id, o.order_no, `确认收款: ${o.order_no}`, req.ip);
+      return res.json({ message: '已确认收款' });
+    }
+    if (action === 'cancel') {
+      await pool.query(
+        "UPDATE mall_orders SET status = 'cancelled', updated_at = NOW() WHERE id = ?", [id]
+      );
+      await addLog(userId, '', '编辑', '商城管理', id, o.order_no, `取消订单: ${o.order_no}`, req.ip);
+      return res.json({ message: '已取消' });
+    }
+    if (action === 'remark') {
+      await pool.query(
+        'UPDATE mall_orders SET admin_remark = ?, updated_at = NOW() WHERE id = ?',
+        [String((req.body && req.body.admin_remark) || '').slice(0, 500), id]
+      );
+      return res.json({ message: '已保存' });
+    }
+    return res.status(400).json({ error: '未知操作' });
+  } catch (err) {
+    console.error('mall admin order update error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 管理端：收款设置 ---------------- */
+
+app.get('/api/mall/admin/settings', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'read'))) return res.status(403).json({ error: '无权限' });
+    const [rows] = await pool.query(
+      "SELECT setting_value FROM system_settings WHERE category = 'mall_bank' LIMIT 1"
+    );
+    let info = {};
+    if (rows.length && rows[0].setting_value) {
+      try { info = JSON.parse(rows[0].setting_value); } catch (e) { info = {}; }
+    }
+    res.json({
+      bank_name: info.bank_name || '',
+      account_name: info.account_name || '',
+      account_no: info.account_no || '',
+      note: info.note || ''
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/mall/admin/settings', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'write'))) return res.status(403).json({ error: '无权限' });
+    const b = req.body || {};
+    const payload = JSON.stringify({
+      bank_name: String(b.bank_name || '').slice(0, 100),
+      account_name: String(b.account_name || '').slice(0, 100),
+      account_no: String(b.account_no || '').slice(0, 60),
+      note: String(b.note || '').slice(0, 300)
+    });
+    const [rows] = await pool.query(
+      "SELECT id FROM system_settings WHERE category = 'mall_bank' LIMIT 1"
+    );
+    if (rows.length) {
+      await pool.query(
+        "UPDATE system_settings SET setting_value = ?, updated_at = NOW() WHERE id = ?",
+        [payload, rows[0].id]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO system_settings (category, setting_value, created_at, updated_at) VALUES ('mall_bank', ?, NOW(), NOW())",
+        [payload]
+      );
+    }
+    res.json({ message: '已保存' });
+  } catch (err) {
+    console.error('mall settings save error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ---------------- 管理端：概览 ---------------- */
+
+app.get('/api/mall/admin/stats', async (req, res) => {
+  try {
+    if (!(await mallCan(req, 'read'))) return res.status(403).json({ error: '无权限' });
+    const [onSale] = await pool.query('SELECT COUNT(*) AS n FROM main_materials WHERE mall_status = 1');
+    const [noImg] = await pool.query(
+      "SELECT COUNT(*) AS n FROM main_materials WHERE mall_status = 1 AND (cover_image IS NULL OR cover_image = '')"
+    );
+    const [noPrice] = await pool.query(
+      'SELECT COUNT(*) AS n FROM main_materials WHERE mall_status = 1 AND (mall_price IS NULL OR mall_price = 0) AND (quote_price IS NULL OR quote_price = 0)'
+    );
+    const [pending] = await pool.query("SELECT COUNT(*) AS n, COALESCE(SUM(total_amount),0) AS amt FROM mall_orders WHERE status = 'pending'");
+    const [paid] = await pool.query("SELECT COUNT(*) AS n, COALESCE(SUM(total_amount),0) AS amt FROM mall_orders WHERE status = 'paid'");
+    res.json({
+      on_sale: onSale[0].n,
+      no_image: noImg[0].n,
+      no_price: noPrice[0].n,
+      pending_count: pending[0].n,
+      pending_amount: Number(pending[0].amt) || 0,
+      paid_count: paid[0].n,
+      paid_amount: Number(paid[0].amt) || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/material-orders', async (req, res) => {
@@ -4253,15 +5545,29 @@ app.put('/api/employees/:id/password', async (req, res) => {
   const userId = getUserId(req);
   const { old_password, new_password } = req.body;
 
-  // 校验旧密码
-  const emp = await db.prepare('SELECT password FROM employees WHERE id=?').get(userId);
-  if (!emp || emp.password !== old_password) {
+  if (!userId) return res.status(401).json({ error: '未登录，请重新登录后再试' });
+  if (!old_password) return res.status(400).json({ error: '请输入旧密码' });
+
+  // 【重要】旧密码校验必须与登录接口同一口径 —— 走 MySQL 比对，不能取回 JS 里比。
+  //   employees.password 列是 utf8mb4_general_ci（大小写不敏感），登录接口
+  //   `WHERE username=? AND password=?` 用 `524811nini` 也能登进系统；
+  //   而原来这里 `emp.password !== old_password` 是 JS 严格比较（大小写敏感），
+  //   于是出现「能登录、但改密码一直提示旧密码错误」的必现 bug。
+  //   改成同一口径后，两边判定完全一致。
+  const emp = await db.prepare('SELECT id FROM employees WHERE id=? AND password=?')
+    .get(userId, String(old_password));
+  if (!emp) {
     return res.status(400).json({ error: '旧密码错误' });
   }
-  if (!new_password || new_password.length < 6) {
+  const newPwd = new_password == null ? '' : String(new_password);
+  if (newPwd.length < 6) {
     return res.status(400).json({ error: '新密码至少6位' });
   }
-  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(new_password, userId);
+  // 提示而非拦截：密码列大小写不敏感，只改大小写等于没改
+  if (newPwd.toLowerCase() === String(old_password).toLowerCase() && newPwd !== String(old_password)) {
+    return res.status(400).json({ error: '新密码与旧密码仅大小写不同，系统校验不区分大小写，请换一个' });
+  }
+  await db.prepare('UPDATE employees SET password=? WHERE id=?').run(newPwd, userId);
   await addLog(userId, '', '修改密码', '员工管理', userId, '', '修改登录密码', req.ip);
   res.json({ message: '密码修改成功' });
 });
@@ -4389,6 +5695,12 @@ app.post('/api/employees/login', async (req, res) => {
 
 // 客户登录（手机号 + 姓名）
 app.post('/api/customers/login', async (req, res) => {
+  // v2.5.2：业主端已改为「手机号 + 短信验证码」登录（POST /api/customer-auth/login-by-code）。
+  // 这个旧接口只凭手机号就能登录，等于知道客户手机号即可拿到全部档案，是已知风险。
+  // 新接口全量发版稳定后，把 .env 里 ALLOW_PHONE_ONLY_LOGIN 设为 0 即可关闭它。
+  if (process.env.ALLOW_PHONE_ONLY_LOGIN === '0') {
+    return res.status(410).json({ success: false, message: '请使用「手机号 + 短信验证码」登录' });
+  }
   const { phone, name } = req.body;
   if (!phone) {
     return res.json({ success: false, message: '请输入手机号' });
@@ -10631,6 +11943,180 @@ async function resolveCustomerByPhone(phone) {
   if (customer) return { ok: true, customer };
   return { ok: false, message: '该手机号未登记' };
 }
+
+/* ==================== 业主端：手机验证码登录（v2.5.2） ====================
+ * 为什么加这一套：原来的 /api/customers/login 只凭手机号就能登录，
+ * 知道客户手机号 = 拿到该客户全部档案。改成「手机号 + 短信验证码」。
+ *
+ * 设计要点：
+ *   - 验证码只存 sha256，不存明文；5 分钟过期、一次性、错 5 次作废
+ *   - 三重限流防短信轰炸（同号 60 秒 / 同号 1 小时 / 同 IP 1 小时）
+ *   - 发送与校验的响应不区分「手机号是否为客户」，防客户手机号枚举
+ *   - 登录成功返回结构与 /api/customers/login 完全一致，移动端可直接复用保存逻辑
+ */
+
+const SMS_CODE_TTL_MIN = 5;        // 验证码有效期（分钟）
+const SMS_CODE_MAX_FAIL = 5;       // 同一验证码最多试错次数
+const SMS_CODE_RESEND_SEC = 60;    // 同手机号重发间隔（秒）
+const SMS_CODE_PHONE_HOUR = 5;     // 同手机号每小时最多发几条
+const SMS_CODE_IP_HOUR = 20;       // 同 IP 每小时最多发几条
+
+/** 读短信配置，兼容库里 {"category":"sms","setting_value":{...}} 的双层包裹 */
+async function getSmsConfig() {
+  const [rows] = await pool.query("SELECT setting_value FROM system_settings WHERE category='sms'");
+  if (!rows.length) return null;
+  let cfg;
+  try { cfg = JSON.parse(rows[0].setting_value); } catch (e) { return null; }
+  if (cfg && cfg.setting_value) cfg = cfg.setting_value;
+  return cfg;
+}
+
+const normalizePhone = (p) => String(p || '').replace(/[^\d]/g, '').slice(-11);
+const hashCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+const isPhone = (p) => /^1[3-9]\d{9}$/.test(p);
+
+/** 发送验证码短信。模板文案要求只用 ${code} 一个变量，有效期限写在文案里。 */
+async function sendCustomerSmsCode(phone, code) {
+  const cfg = await getSmsConfig();
+  if (!cfg || cfg.provider !== 'aliyun') return { success: false, reason: 'sms_not_configured' };
+  if (!cfg.access_key_id || !cfg.access_key_secret) return { success: false, reason: 'sms_config_incomplete' };
+  const templateCode = cfg.code_template_code || '';
+  if (!templateCode) return { success: false, reason: 'code_template_not_configured' };
+
+  try {
+    const r = await sendAliyunSms({
+      accessKeyId: cfg.access_key_id,
+      accessKeySecret: cfg.access_key_secret,
+      signName: cfg.sign_name || '简逸装饰',
+      templateCode,
+      phone: phone.startsWith('+') ? phone : '+86' + phone,
+      templateParam: JSON.stringify({ code })
+    });
+    if (r && r.Code === 'OK') return { success: true };
+    return { success: false, error: (r && (r.Message || r.Code)) || 'unknown' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+// POST /api/customer-auth/send-code — 发送登录验证码
+app.post('/api/customer-auth/send-code', async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body && req.body.phone);
+    if (!isPhone(phone)) return res.json({ success: false, message: '请输入正确的手机号' });
+    const ip = String(req.ip || '').replace('::ffff:', '').slice(0, 60);
+
+    // 限流 1：同手机号 60 秒内只能发一次
+    const [recent] = await pool.query(
+      `SELECT id FROM sms_codes WHERE phone=? AND scene='login'
+        AND created_at > DATE_SUB(NOW(), INTERVAL ? SECOND) LIMIT 1`,
+      [phone, SMS_CODE_RESEND_SEC]
+    );
+    if (recent.length) {
+      return res.json({ success: false, code: 'TOO_FREQUENT', message: '发送太频繁，请稍后再试' });
+    }
+
+    // 限流 2：同手机号 1 小时上限
+    const [byPhone] = await pool.query(
+      `SELECT COUNT(*) AS n FROM sms_codes WHERE phone=? AND scene='login'
+        AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)`,
+      [phone]
+    );
+    if (Number(byPhone[0].n) >= SMS_CODE_PHONE_HOUR) {
+      return res.json({ success: false, code: 'TOO_MANY', message: '该手机号验证次数过多，请稍后再试' });
+    }
+
+    // 限流 3：同 IP 1 小时上限（公司同出口 IP，阈值放宽，只挡大规模扫描）
+    if (ip) {
+      const [byIp] = await pool.query(
+        `SELECT COUNT(*) AS n FROM sms_codes WHERE ip=? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)`,
+        [ip]
+      );
+      if (Number(byIp[0].n) >= SMS_CODE_IP_HOUR) {
+        return res.json({ success: false, code: 'IP_LIMIT', message: '请求过于频繁，请稍后再试' });
+      }
+    }
+
+    const code = String(crypto.randomInt(100000, 1000000));
+    const [ins] = await pool.query(
+      `INSERT INTO sms_codes (phone, scene, code_hash, expires_at, fail_count, ip, created_at)
+       VALUES (?, 'login', ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0, ?, NOW())`,
+      [phone, hashCode(code), SMS_CODE_TTL_MIN, ip]
+    );
+
+    const send = await sendCustomerSmsCode(phone, code);
+    if (!send.success) {
+      // 发不出去就删掉这条，别白占配额
+      await pool.query('DELETE FROM sms_codes WHERE id=?', [ins.insertId]);
+      console.error('[sms-code] 发送失败:', send.reason || send.error);
+      const msg = send.reason === 'code_template_not_configured'
+        ? '短信验证码模板未配置，请联系管理员'
+        : '短信发送失败，请稍后再试';
+      return res.json({ success: false, code: send.reason || 'SEND_FAILED', message: msg });
+    }
+
+    // 不暴露该手机号是否已登记客户
+    res.json({ success: true, message: '验证码已发送，请注意查收', ttl: SMS_CODE_TTL_MIN * 60 });
+  } catch (err) {
+    console.error('send-code error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST /api/customer-auth/login-by-code — 手机号 + 验证码登录
+app.post('/api/customer-auth/login-by-code', async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body && req.body.phone);
+    const code = String((req.body && req.body.code) || '').trim();
+    if (!isPhone(phone)) return res.json({ success: false, message: '请输入正确的手机号' });
+    if (!/^\d{6}$/.test(code)) return res.json({ success: false, message: '请输入 6 位验证码' });
+
+    // 过期判断交给 MySQL（dateStrings:true 时 JS 解析库里的时间会有时区偏差）
+    const [rows] = await pool.query(
+      `SELECT id, code_hash, fail_count, (expires_at > NOW()) AS not_expired
+         FROM sms_codes
+        WHERE phone=? AND scene='login' AND used_at IS NULL
+        ORDER BY id DESC LIMIT 1`,
+      [phone]
+    );
+    if (!rows.length) return res.json({ success: false, message: '请先获取验证码' });
+
+    const rec = rows[0];
+    if (Number(rec.not_expired) !== 1) {
+      return res.json({ success: false, message: '验证码已过期，请重新获取' });
+    }
+    if (Number(rec.fail_count) >= SMS_CODE_MAX_FAIL) {
+      return res.json({ success: false, message: '验证码错误次数过多，请重新获取' });
+    }
+    if (rec.code_hash !== hashCode(code)) {
+      await pool.query('UPDATE sms_codes SET fail_count=fail_count+1 WHERE id=?', [rec.id]);
+      return res.json({ success: false, message: '验证码错误' });
+    }
+
+    await pool.query('UPDATE sms_codes SET used_at=NOW() WHERE id=?', [rec.id]);
+
+    // 认身份：主账户 or 家庭成员（复用现有逻辑，含 is_master 处理）
+    const who = await resolveCustomerByPhone(phone);
+    if (!who || !who.ok) {
+      return res.json({ success: false, message: '该手机号未登记，请联系您的项目经理' });
+    }
+
+    const cid = who.customer && who.customer.id;
+    await addLog(0, (who.customer && who.customer.name) || '', '登录', '业主端', cid, (who.customer && who.customer.name) || '', '手机验证码登录', req.ip);
+
+    // 返回结构与 /api/customers/login 对齐，移动端 saveCustomerIdentity 可直接复用
+    const payload = { success: true, loginType: 'sms_code', customer: who.customer };
+    if (who.masterCustomer) payload.masterCustomer = who.masterCustomer;
+    if (who.masterCustomerId) payload.masterCustomerId = who.masterCustomerId;
+    if (who.isFamilyMember) payload.isFamilyMember = true;
+    if (who.familyMemberId) payload.familyMemberId = who.familyMemberId;
+    if (who.relation) payload.relation = who.relation;
+    res.json(payload);
+  } catch (err) {
+    console.error('login-by-code error:', err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 // POST /api/wechat/mini-login — 静默登录：code 换 openid，返回可用身份列表
 // v2.5.0：从「只认客户」扩展为「同时认员工 + 业主」，返回 identities 数组。

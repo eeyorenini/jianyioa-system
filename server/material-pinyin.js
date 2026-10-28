@@ -1,0 +1,34 @@
+// 汉字 → 拼音（全拼）映射表
+// 自动生成，勿手改。生成源：pypinyin，覆盖 main_materials 现有文本 + 品类/品牌常用字。
+// 只保留一个映射：首字母从全拼首字符取，避免"全拼长度不定"导致的对齐错误。
+// 新增字表外的汉字会原样保留（不参与拼音检索，不影响功能）。
+
+const MAP = {"一":"yi","丁":"ding","万":"wan","三":"san","下":"xia","不":"bu","专":"zhuan","世":"shi","丙":"bing","业":"ye","东":"dong","丝":"si","中":"zhong","丰":"feng","临":"lin","主":"zhu","丽":"li","事":"shi","二":"er","于":"yu","云":"yun","五":"wu","亚":"ya","享":"xiang","亿":"yi","他":"ta","代":"dai","以":"yi","件":"jian","仿":"fang","优":"you","伟":"wei","传":"chuan","伦":"lun","伯":"bo","位":"wei","体":"ti","供":"gong","信":"xin","倒":"dao","元":"yuan","光":"guang","克":"ke","免":"mian","兔":"tu","入":"ru","全":"quan","公":"gong","六":"liu","兰":"lan","关":"guan","其":"qi","具":"ju","典":"dian","内":"nei","军":"jun","冰":"bing","冲":"chong","净":"jing","凉":"liang","凌":"ling","凡":"fan","凯":"kai","凸":"tu","分":"fen","切":"qie","列":"lie","利":"li","别":"bie","制":"zhi","前":"qian","力":"li","功":"gong","加":"jia","动":"dong","勒":"lei","包":"bao","化":"hua","匠":"jiang","区":"qu","升":"sheng","半":"ban","华":"hua","卑":"bei","单":"dan","博":"bo","卡":"ka","卫":"wei","印":"yin","压":"ya","厚":"hou","原":"yuan","厨":"chu","及":"ji","双":"shuang","反":"fan","发":"fa","取":"qu","变":"bian","叠":"die","口":"kou","古":"gu","叫":"jiao","可":"ke","台":"tai","号":"hao","合":"he","吉":"ji","吊":"diao","名":"ming","向":"xiang","吨":"dun","吸":"xi","呼":"hu","品":"pin","哑":"ya","商":"shang","器":"qi","四":"si","国":"guo","图":"tu","圆":"yuan","圣":"sheng","地":"di","块":"kuai","坛":"tan","坯":"pi","型":"xing","垢":"gou","垫":"dian","垭":"ya","城":"cheng","基":"ji","塔":"ta","墙":"qiang","墨":"mo","壁":"bi","士":"shi","壹":"yi","复":"fu","多":"duo","夜":"ye","大":"da","天":"tian","央":"yang","头":"tou","奇":"qi","套":"tao","奥":"ao","好":"hao","姆":"mu","娜":"na","婴":"ying","子":"zi","孔":"kong","学":"xue","宁":"ning","安":"an","宋":"song","完":"wan","定":"ding","宝":"bao","实":"shi","室":"shi","家":"jia","密":"mi","寸":"cun","封":"feng","射":"she","将":"jiang","尊":"zun","小":"xiao","尔":"er","尚":"shang","尼":"ni","层":"ceng","屉":"ti","屏":"ping","属":"shu","山":"shan","岚":"lan","岛":"dao","岩":"yan","峡":"xia","嵌":"qian","巢":"chao","工":"gong","布":"bu","师":"shi","帘":"lian","带":"dai","干":"gan","平":"ping","床":"chuang","底":"di","庚":"geng","度":"du","座":"zuo","庭":"ting","建":"jian","开":"kai","式":"shi","弧":"hu","弹":"dan","强":"qiang","归":"gui","形":"xing","彩":"cai","影":"ying","待":"dai","律":"lv","微":"wei","德":"de","心":"xin","性":"xing","恒":"heng","恩":"en","息":"xi","悦":"yue","意":"yi","感":"gan","慕":"mu","戊":"wu","成":"cheng","户":"hu","房":"fang","扁":"bian","扇":"shan","手":"shou","托":"tuo","扣":"kou","承":"cheng","技":"ji","投":"tou","抗":"kang","折":"zhe","抛":"pao","护":"hu","抽":"chou","拉":"la","拖":"tuo","挂":"gua","指":"zhi","换":"huan","排":"pai","接":"jie","控":"kong","推":"tui","提":"ti","插":"cha","握":"wo","摩":"mo","故":"gu","整":"zheng","料":"liao","斜":"xie","斯":"si","新":"xin","方":"fang","无":"wu","时":"shi","昊":"hao","昌":"chang","明":"ming","星":"xing","显":"xian","晓":"xiao","普":"pu","晶":"jing","智":"zhi","暖":"nuan","暗":"an","暮":"mu","曲":"qu","月":"yue","朝":"chao","木":"mu","未":"wei","末":"mo","本":"ben","术":"shu","机":"ji","杆":"gan","杏":"xing","材":"cai","条":"tiao","来":"lai","松":"song","板":"ban","极":"ji","林":"lin","枫":"feng","架":"jia","柏":"bai","柔":"rou","柜":"gui","栀":"zhi","栅":"zha","标":"biao","树":"shu","根":"gen","格":"ge","框":"kuang","案":"an","桌":"zhuo","档":"dang","桶":"tong","梨":"li","梵":"fan","检":"jian","棠":"tang","椅":"yi","楣":"mei","槟":"bin","模":"mo","橙":"cheng","橡":"xiang","橱":"chu","欧":"ou","款":"kuan","止":"zhi","正":"zheng","母":"mu","氏":"shi","气":"qi","氧":"yang","水":"shui","池":"chi","污":"wu","沐":"mu","沙":"sha","油":"you","泓":"hong","泡":"pao","波":"bo","泥":"ni","泳":"yong","洁":"jie","洒":"sa","洗":"xi","洞":"dong","洲":"zhou","活":"huo","派":"pai","流":"liu","浅":"qian","浴":"yu","海":"hai","涂":"tu","润":"run","混":"hun","清":"qing","温":"wen","源":"yuan","溪":"xi","滑":"hua","滚":"gun","滤":"lv","漆":"qi","漏":"lou","潜":"qian","澜":"lan","火":"huo","灯":"deng","灰":"hui","灵":"ling","烁":"shuo","烟":"yan","烤":"kao","热":"re","然":"ran","熔":"rong","爵":"jue","片":"pian","版":"ban","牌":"pai","牙":"ya","牛":"niu","特":"te","猫":"mao","玉":"yu","玛":"ma","玫":"mei","玻":"bo","珐":"fa","珠":"zhu","球":"qiu","琅":"lang","理":"li","瑰":"gui","璃":"li","瓦":"wa","瓷":"ci","生":"sheng","用":"yong","甲":"jia","电":"dian","画":"hua","番":"fan","登":"deng","白":"bai","百":"bai","皓":"hao","皮":"pi","盆":"pen","盐":"yan","盖":"gai","盘":"pan","盛":"sheng","直":"zhi","眼":"yan","石":"shi","砂":"sha","砖":"zhuan","础":"chu","碟":"die","磁":"ci","磨":"mo","福":"fu","禾":"he","科":"ke","空":"kong","穿":"chuan","窄":"zhai","窗":"chuang","窝":"wo","立":"li","端":"duan","等":"deng","筒":"tong","管":"guan","箱":"xiang","篮":"lan","米":"mi","类":"lei","精":"jing","系":"xi","索":"suo","紫":"zi","繁":"fan","红":"hong","级":"ji","纯":"chun","纱":"sha","纳":"na","纷":"fen","纹":"wen","线":"xian","经":"jing","绒":"rong","统":"tong","维":"wei","绸":"chou","综":"zong","缤":"bin","罗":"luo","置":"zhi","羊":"yang","美":"mei","羽":"yu","耀":"yao","耐":"nai","联":"lian","胶":"jiao","能":"neng","脑":"nao","脚":"jiao","腾":"teng","自":"zi","至":"zhi","致":"zhi","航":"hang","艇":"ting","色":"se","艺":"yi","节":"jie","芝":"zhi","芯":"xin","花":"hua","英":"ying","范":"fan","茶":"cha","荣":"rong","莎":"sha","莫":"mo","莱":"lai","莹":"ying","菲":"fei","落":"luo","蒂":"di","蓝":"lan","藤":"teng","虹":"hong","蜂":"feng","蝶":"die","衣":"yi","装":"zhuang","裤":"ku","西":"xi","视":"shi","角":"jiao","触":"chu","议":"yi","讯":"xun","诗":"shi","话":"hua","语":"yu","诺":"nuo","调":"diao","豆":"dou","象":"xiang","豪":"hao","贝":"bei","财":"cai","费":"fei","贺":"he","赫":"he","超":"chao","越":"yue","路":"lu","跷":"qiao","踢":"ti","轨":"gui","转":"zhuan","软":"ruan","轻":"qing","辅":"fu","辛":"xin","边":"bian","达":"da","过":"guo","运":"yun","进":"jin","远":"yuan","连":"lian","适":"shi","逆":"ni","选":"xuan","途":"tu","通":"tong","造":"zao","道":"dao","部":"bu","配":"pei","酸":"suan","采":"cai","釉":"you","里":"li","量":"liang","金":"jin","钛":"tai","钟":"zhong","钢":"gang","钩":"gou","铝":"lv","银":"yin","铺":"pu","锁":"suo","锈":"xiu","镜":"jing","镶":"xiang","长":"zhang","门":"men","间":"jian","阀":"fa","阁":"ge","阔":"kuo","防":"fang","阻":"zu","阿":"a","陆":"lu","陶":"tao","隆":"long","隐":"yin","雅":"ya","集":"ji","雨":"yu","雪":"xue","雷":"lei","霉":"mei","霸":"ba","青":"qing","静":"jing","面":"mian","音":"yin","韵":"yun","顶":"ding","顺":"shun","顾":"gu","飞":"fei","餐":"can","饮":"yin","饰":"shi","香":"xiang","马":"ma","骑":"qi","高":"gao","鸥":"ou","鸿":"hong","鹅":"e","麒":"qi","麟":"lin","黄":"huang","黑":"hei","黒":"hei","龙":"long"};
+
+const _map = new Map(Object.entries(MAP));
+
+/** 全拼：瓷砖 → cizhuan（表外字符原样保留） */
+function toFull(text) {
+  let out = '';
+  for (const ch of String(text == null ? '' : text)) {
+    out += _map.get(ch) || ch;
+  }
+  return out.toLowerCase();
+}
+
+/** 首字母：瓷砖 → cz（表外字符原样保留） */
+function toAbbr(text) {
+  let out = '';
+  for (const ch of String(text == null ? '' : text)) {
+    const py = _map.get(ch);
+    out += py ? py[0] : ch;
+  }
+  return out.toLowerCase();
+}
+
+/** 一次生成 pinyin / pinyin_abbr 两列，写入主材表 */
+function buildPinyin(text) {
+  return { pinyin: toFull(text), pinyin_abbr: toAbbr(text) };
+}
+
+module.exports = { toFull, toAbbr, buildPinyin, MAP };
