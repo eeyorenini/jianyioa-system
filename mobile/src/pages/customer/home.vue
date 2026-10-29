@@ -44,8 +44,8 @@
     <customer-empty-state
       v-else-if="!hasProject"
       type="no-project"
-      title="暂无关联项目"
-      description="请联系工作人员为您绑定项目"
+      title="暂无可查看的项目"
+      description="未查询到您名下的装修项目，请联系为您服务的销售人员或设计师为您添加"
       :show-contact="true"
       @contact="handleContact"
     />

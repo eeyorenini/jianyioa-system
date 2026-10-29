@@ -22,6 +22,18 @@ onLaunch(() => {
     // 后端靠这个头区分「员工」与「业主」，缺了它撞号的客户会被当成员工处理。
     const userType = uni.getStorageSync('userType');
     if (userType) headers['x-user-type'] = userType;
+    // v2.5.3 项目级授权：副账户（家庭成员）必须用**自己那条 family_members.id**
+    // 当 x-user-id，并额外声明 x-user-scope=member。
+    // ⚠️ 不能再用主账户 customers.id —— 后端拿它查 customers 表会把副账号认成主账号，
+    //    权限直接放大成整个家族（能看主账号名下所有项目的合同金额）。
+    //    后端见到 x-user-scope=member 就只查 family_members、跳过 customers，
+    //    从根上避开 family_members.id 与 customers.id 的撞号。
+    //    伪造这个头只会让权限变小（查不到成员行 → 401），不构成提权。
+    const familyMemberId = uni.getStorageSync('familyMemberId');
+    if (familyMemberId && userType === 'customer') {
+      headers['x-user-id'] = String(familyMemberId);
+      headers['x-user-scope'] = 'member';
+    }
     options.header = headers;
     return _origRequest(options);
   };

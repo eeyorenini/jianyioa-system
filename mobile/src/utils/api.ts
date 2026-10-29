@@ -1,3 +1,4 @@
+import { authHeader } from "./permission";
 /**
  * 后端地址统一出口
  *
@@ -115,6 +116,7 @@ export function uploadImage(filePath: string): Promise<string> {
       url: '/api/upload-image',
       filePath,
       name: 'file',
+      header: authHeader(),  // v2.5.3: uni.uploadFile 不走 request 拦截器
       success: (res) => {
         try {
           const data = JSON.parse(res.data) as { url?: string; path?: string };

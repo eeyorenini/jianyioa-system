@@ -112,6 +112,7 @@
 </template>
 
 <script setup>
+import { authHeader } from "@/utils/permission";
 import { ref, reactive, onMounted } from "vue";
 
 const projectId = ref(0);
@@ -194,7 +195,7 @@ const uploadOne = (filePath, placeholder) => {
       url: '/api/upload-image',
       filePath,
       name: 'file',
-      header: { Authorization: uni.getStorageSync('token') },
+      header: authHeader(),  // v2.5.3: 后端只认 x-user-id，Authorization 无效
       success: (res) => {
         let serverUrl = '';
         try {

@@ -93,6 +93,32 @@ onLoad(async () => {
     return;
   }
 
+  // v2.5.3：当前微信的手机号被某位业主登记为家庭成员，但本人还没确认过加入。
+  // 静默登录不能替用户点这个确认（业主填错号码就等于自动放人进来），
+  // 所以这里只做提示，让用户去「手机号 + 验证码」走一次本人确认。
+  if (r.pendingFamily) {
+    const fam = r.pendingFamily;
+    const list = Array.isArray(fam.pendingProjects) ? fam.pendingProjects : [];
+    // 项目级授权：说清楚是「查看哪个项目」，不是笼统的「加入家庭」
+    const projectText = list.length
+      ? (list.length > 1
+          ? `（${list.map((p) => p.projectName || '未命名项目').join('、')}）`
+          : `（${list[0].projectName || '未命名项目'}）`)
+      : '';
+    checking.value = false;
+    uni.showModal({
+      title: "查看项目邀请",
+      content: `${fam.masterName || '业主'} 邀请您查看项目${projectText}，请用手机号 + 验证码登录并确认。`,
+      confirmText: "去登录",
+      cancelText: "稍后",
+      success: (res) => {
+        if (res.confirm) uni.redirectTo({ url: "/pages/login/login?type=customer" });
+        else uni.reLaunch({ url: "/pages/customer/home" });
+      },
+    });
+    return;
+  }
+
   // 没有业主身份、但有员工身份：说明这台微信是员工，误点了「微信一键登录」。
   // 不能让他继续去填头像昵称（那套流程只服务业主），直接送进工作台。
   const emps = (Array.isArray(r.identities) ? r.identities : []).filter((i) => i.type === "employee");
