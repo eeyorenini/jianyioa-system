@@ -464,6 +464,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import axios from 'axios'
+import { authHeaders } from '@/utils/authHeaders'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 /* ---------------- 常量 ---------------- */
@@ -501,17 +502,9 @@ const f = reactive({
 const expanded = reactive(new Set())
 
 /* el-upload 走的是自己的 XHR，不经过 main.js 的 axios 拦截器，
-   必须显式补权限头，否则导入 / 上传会被后端当游客拒掉。 */
-const uploadHeaders = computed(() => {
-  const h = {}
-  try {
-    const u = JSON.parse(localStorage.getItem('user') || '{}')
-    if (u && u.id) h['x-user-id'] = String(u.id)
-    const role = u && (u.role_code || u.role_name)
-    if (role) h['x-user-role'] = role
-  } catch (e) { /* 未登录时留空，由后端 401 兜底 */ }
-  return h
-})
+   必须显式补权限头，否则导入 / 上传会被后端当游客拒掉。
+   v2.5.3：取值逻辑已抽到 utils/authHeaders.js，和全局 axios 拦截器共用一份口径。 */
+const uploadHeaders = computed(() => authHeaders())
 
 /* ---------------- 工具 ---------------- */
 const assetUrl = (p) => {

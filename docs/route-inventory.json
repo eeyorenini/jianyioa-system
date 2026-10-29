@@ -1,0 +1,3414 @@
+{
+  "generatedAt": "2026-10-29T04:20:09.324Z",
+  "source": "server/server.js",
+  "totalLines": 1338,
+  "totalRoutes": 353,
+  "totalNoPerm": 169,
+  "totalNoAuth": 59,
+  "writeOps": 214,
+  "duplicates": [],
+  "modules": [
+    {
+      "name": "项目",
+      "count": 40,
+      "noPerm": 19,
+      "publicOk": 0,
+      "approxLines": 1134,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/project-profit",
+          "line": 466,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-files",
+          "line": 283,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-files/:id",
+          "line": 371,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/project-files",
+          "line": 400,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/project-files/:id/review",
+          "line": 476,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/project-files/:id/revoke",
+          "line": 517,
+          "file": "server/api/project-files.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/project-files/:id",
+          "line": 535,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-files/:id/download",
+          "line": 565,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/progress-node-templates",
+          "line": 17,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/progress-node-templates",
+          "line": 27,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/progress-node-templates/:id",
+          "line": 42,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/progress-node-templates/:id",
+          "line": 57,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/progress-node-template-nodes/:templateId",
+          "line": 72,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/progress-node-template-nodes",
+          "line": 86,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/progress-node-template-nodes/:id",
+          "line": 101,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/progress-node-template-nodes/:id",
+          "line": 116,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/progress-nodes/:projectId",
+          "line": 129,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/progress-nodes/init/:projectId",
+          "line": 141,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/progress-nodes",
+          "line": 203,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/progress-nodes/:id",
+          "line": 218,
+          "file": "server/api/project-nodes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/progress-nodes/:id",
+          "line": 233,
+          "file": "server/api/project-nodes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/projects",
+          "line": 35,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/projects/:id",
+          "line": 116,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/projects",
+          "line": 137,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/projects/:id",
+          "line": 161,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/projects/:id",
+          "line": 186,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-stages",
+          "line": 235,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/project-stages",
+          "line": 244,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/project-stages/:id",
+          "line": 285,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/project-stages/:id",
+          "line": 342,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-logs",
+          "line": 358,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-logs/:projectId",
+          "line": 412,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-gallery",
+          "line": 424,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/project-logs",
+          "line": 469,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/project-logs/:id",
+          "line": 499,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/project-logs/:id",
+          "line": 539,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/project-log/:id",
+          "line": 559,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/quotes",
+          "line": 578,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/quotes",
+          "line": 591,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/quotes/:id",
+          "line": 602,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "主材",
+      "count": 37,
+      "noPerm": 12,
+      "publicOk": 0,
+      "approxLines": 1569,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/material-acceptances/meta",
+          "line": 246,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-acceptances/material-search",
+          "line": 299,
+          "file": "server/api/acceptance.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-acceptances",
+          "line": 325,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-acceptances/:id",
+          "line": 389,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/material-acceptances",
+          "line": 426,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-acceptances/:id",
+          "line": 496,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/material-acceptances/:id",
+          "line": 554,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-categories/tree",
+          "line": 167,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/material-categories",
+          "line": 211,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-categories/:id",
+          "line": 242,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/main-materials/categories",
+          "line": 268,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-brands",
+          "line": 282,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/material-brands",
+          "line": 325,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-brands/:id",
+          "line": 347,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/main-materials",
+          "line": 383,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/main-materials/facets",
+          "line": 451,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/main-materials",
+          "line": 703,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/main-materials/:id",
+          "line": 718,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/main-materials/:id/cover",
+          "line": 759,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/main-materials/:id",
+          "line": 777,
+          "file": "server/api/main-materials.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/main-materials/batch-upsert",
+          "line": 795,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/main-materials/import",
+          "line": 853,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/main-materials/export",
+          "line": 969,
+          "file": "server/api/main-materials.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-orders",
+          "line": 606,
+          "file": "server/api/mall.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/material-orders",
+          "line": 619,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-orders/:id",
+          "line": 682,
+          "file": "server/api/mall.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-orders/my",
+          "line": 55,
+          "file": "server/api/mobile-misc.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-orders/pending",
+          "line": 79,
+          "file": "server/api/mobile-misc.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/material-orders/by-status",
+          "line": 107,
+          "file": "server/api/mobile-misc.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-orders/:id/approve",
+          "line": 130,
+          "file": "server/api/mobile-misc.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/material-orders/:id/complete",
+          "line": 168,
+          "file": "server/api/mobile-misc.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/materials",
+          "line": 616,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/materials",
+          "line": 633,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/materials/:id",
+          "line": 644,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/materials/:id",
+          "line": 659,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/materials/in",
+          "line": 673,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/materials/out",
+          "line": 722,
+          "file": "server/api/projects.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "合同",
+      "count": 26,
+      "noPerm": 12,
+      "publicOk": 0,
+      "approxLines": 910,
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/api/contracts/:id",
+          "line": 48,
+          "file": "server/api/contract-attachments.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contract-changes",
+          "line": 140,
+          "file": "server/api/contract-changes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contract-changes",
+          "line": 166,
+          "file": "server/api/contract-changes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/contract-changes/:id",
+          "line": 202,
+          "file": "server/api/contract-changes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/contract-changes/:id/review",
+          "line": 223,
+          "file": "server/api/contract-changes.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contract-templates",
+          "line": 19,
+          "file": "server/api/contract-templates.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contract-templates",
+          "line": 51,
+          "file": "server/api/contract-templates.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/contract-templates/:id",
+          "line": 68,
+          "file": "server/api/contract-templates.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/contract-templates/:id",
+          "line": 91,
+          "file": "server/api/contract-templates.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contracts/upload-word",
+          "line": 17,
+          "file": "server/api/contract-upload.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contracts/upload",
+          "line": 18,
+          "file": "server/api/contracts-mobile.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contract-reviews/pending",
+          "line": 58,
+          "file": "server/api/contracts-mobile.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/contracts/:id/review",
+          "line": 84,
+          "file": "server/api/contracts-mobile.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/contracts/:id/revert",
+          "line": 159,
+          "file": "server/api/contracts-mobile.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contracts/by-project/:projectId",
+          "line": 189,
+          "file": "server/api/contracts-mobile.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contracts",
+          "line": 198,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contracts/:id",
+          "line": 253,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contracts",
+          "line": 307,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/contracts/:id",
+          "line": 410,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/contract-variables",
+          "line": 502,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/contract-variables",
+          "line": 507,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/contract-variables/:id",
+          "line": 519,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/signers",
+          "line": 15,
+          "file": "server/api/signers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/signers",
+          "line": 33,
+          "file": "server/api/signers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/signers/:id",
+          "line": 56,
+          "file": "server/api/signers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/signers/:id",
+          "line": 77,
+          "file": "server/api/signers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "其他业务",
+      "count": 26,
+      "noPerm": 20,
+      "publicOk": 0,
+      "approxLines": 622,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/attendance",
+          "line": 315,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/attendance",
+          "line": 326,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/attendance/:id",
+          "line": 335,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/design-measurements",
+          "line": 380,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/design-measurements",
+          "line": 385,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/design-measurements/:id",
+          "line": 394,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/design-measurements/:id",
+          "line": 403,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/family-members",
+          "line": 240,
+          "file": "server/api/family-members.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/family-members",
+          "line": 283,
+          "file": "server/api/family-members.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/family-members/:id",
+          "line": 355,
+          "file": "server/api/family-members.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/family-members/:id",
+          "line": 403,
+          "file": "server/api/family-members.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/material/purchase",
+          "line": 631,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/buildings",
+          "line": 36,
+          "file": "server/api/marketing-base.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/buildings",
+          "line": 44,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/buildings/:id",
+          "line": 56,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/buildings/:id",
+          "line": 67,
+          "file": "server/api/marketing-base.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/channels",
+          "line": 80,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/channels",
+          "line": 85,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/channels/:id",
+          "line": 97,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/channels/:id",
+          "line": 108,
+          "file": "server/api/marketing-base.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/marketing-cases",
+          "line": 121,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/marketing-cases",
+          "line": 126,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/marketing-cases/:id",
+          "line": 138,
+          "file": "server/api/marketing-base.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/marketing-cases/:id",
+          "line": 149,
+          "file": "server/api/marketing-base.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mobile/home-stats",
+          "line": 184,
+          "file": "server/api/mobile-misc.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/report/stats",
+          "line": 19,
+          "file": "server/api/report-mobile.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "财务",
+      "count": 24,
+      "noPerm": 15,
+      "publicOk": 0,
+      "approxLines": 781,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/budgets",
+          "line": 17,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/budgets",
+          "line": 30,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/budgets/:id",
+          "line": 41,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance",
+          "line": 55,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance",
+          "line": 68,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/finance/add",
+          "line": 82,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/finance/:id",
+          "line": 102,
+          "file": "server/api/budgets-finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/collection-records",
+          "line": 36,
+          "file": "server/api/collection.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/collection-records",
+          "line": 56,
+          "file": "server/api/collection.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/collection-records/:id/confirm",
+          "line": 92,
+          "file": "server/api/collection.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/change-orders/list",
+          "line": 63,
+          "file": "server/api/contract-changes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/change-orders",
+          "line": 101,
+          "file": "server/api/contract-changes.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/cost-records",
+          "line": 60,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/cost-records/project/:projectId",
+          "line": 65,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/cost-records",
+          "line": 70,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/cost-records/:id",
+          "line": 79,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/payment-records",
+          "line": 43,
+          "file": "server/api/finance.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/payment-records",
+          "line": 60,
+          "file": "server/api/finance.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/payment-records/:id/confirm",
+          "line": 82,
+          "file": "server/api/finance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance/summary",
+          "line": 110,
+          "file": "server/api/finance.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance/receivable-by-project",
+          "line": 179,
+          "file": "server/api/finance.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance/dashboard",
+          "line": 270,
+          "file": "server/api/finance.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance/stats",
+          "line": 88,
+          "file": "server/api/report-mobile.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/finance/list",
+          "line": 102,
+          "file": "server/api/report-mobile.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "微信集成",
+      "count": 23,
+      "noPerm": 13,
+      "publicOk": 3,
+      "approxLines": 907,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/wechat/config",
+          "line": 219,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/wechat/config",
+          "line": 250,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/oauth-url",
+          "line": 262,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/callback",
+          "line": 278,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/bind",
+          "line": 336,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/wechat/bind/:id",
+          "line": 375,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/users",
+          "line": 385,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/users/:id",
+          "line": 470,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/push",
+          "line": 490,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/push-by-unionid",
+          "line": 533,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/bind-status/:phone",
+          "line": 566,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/mini-login",
+          "line": 811,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/mini-bind-by-ticket",
+          "line": 928,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/my-bind-status",
+          "line": 1033,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/mini-bind",
+          "line": 1208,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/mini-profile",
+          "line": 1248,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/config",
+          "line": 53,
+          "file": "server/api/wechat.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/identity",
+          "line": 69,
+          "file": "server/api/wechat.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/identity",
+          "line": 81,
+          "file": "server/api/wechat.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/templates",
+          "line": 102,
+          "file": "server/api/wechat.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/templates",
+          "line": 109,
+          "file": "server/api/wechat.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/wechat/subscribe",
+          "line": 127,
+          "file": "server/api/wechat.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/wechat/subscribe",
+          "line": 139,
+          "file": "server/api/wechat.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "工程质检",
+      "count": 22,
+      "noPerm": 10,
+      "publicOk": 0,
+      "approxLines": 614,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/dispatches",
+          "line": 21,
+          "file": "server/api/dispatches.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/dispatches",
+          "line": 56,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/dispatches/my",
+          "line": 79,
+          "file": "server/api/dispatches.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/dispatches/pending",
+          "line": 95,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/dispatches/:id/approve",
+          "line": 115,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/dispatches/:id/complete",
+          "line": 170,
+          "file": "server/api/dispatches.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/dispatches/:id/revert",
+          "line": 187,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/dispatches/:id",
+          "line": 215,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/dispatches/:id",
+          "line": 238,
+          "file": "server/api/dispatches.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/rectification-issues",
+          "line": 90,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/rectification-issues/:id",
+          "line": 110,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/rectification-issues",
+          "line": 128,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/rectification-issues/:id",
+          "line": 202,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/rectification-issues/:id",
+          "line": 304,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/warranties",
+          "line": 346,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/warranties",
+          "line": 351,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/warranties/:id",
+          "line": 360,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/warranties/:id",
+          "line": 369,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/inspections",
+          "line": 100,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/inspections",
+          "line": 148,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/inspections/:id",
+          "line": 170,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/inspections/:id",
+          "line": 199,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "系统",
+      "count": 21,
+      "noPerm": 2,
+      "publicOk": 0,
+      "approxLines": 1101,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/health",
+          "line": 572,
+          "file": "server/server.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/impersonate-targets",
+          "line": 133,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/impersonate",
+          "line": 151,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/impersonate/stop",
+          "line": 177,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/debug-perms",
+          "line": 26,
+          "file": "server/api/mobile-misc.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/operation-logs",
+          "line": 17,
+          "file": "server/api/operation-logs.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/operation-logs",
+          "line": 53,
+          "file": "server/api/operation-logs.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/system-logs",
+          "line": 22,
+          "file": "server/api/system-logs.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/system-logs",
+          "line": 55,
+          "file": "server/api/system-logs.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/debug/add-type-column",
+          "line": 76,
+          "file": "server/api/system-logs.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/system-settings",
+          "line": 83,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/system-settings/sms",
+          "line": 102,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/system-settings/wechat",
+          "line": 126,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/system-settings/email",
+          "line": 143,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/system-settings/notifications",
+          "line": 267,
+          "file": "server/api/system.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/system-settings/notifications",
+          "line": 276,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/system-settings/customer_visibility",
+          "line": 305,
+          "file": "server/api/system.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/system-settings/customer_visibility",
+          "line": 315,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/employees/:id/bind-qrcode",
+          "line": 1078,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/admin/wechat/unbind-employee",
+          "line": 1142,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/admin/employees/bind-status",
+          "line": 1178,
+          "file": "server/api/wechat-mini.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "采购",
+      "count": 21,
+      "noPerm": 6,
+      "publicOk": 0,
+      "approxLines": 863,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/purchases",
+          "line": 22,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchases",
+          "line": 27,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/purchases/:id",
+          "line": 38,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/purchases/:id",
+          "line": 49,
+          "file": "server/api/erp-ext.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests",
+          "line": 35,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchase-requests",
+          "line": 107,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/my",
+          "line": 208,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/pending",
+          "line": 248,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/reimburse",
+          "line": 276,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/to-reimburse",
+          "line": 304,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/finance",
+          "line": 345,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/purchase-requests/:id",
+          "line": 382,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/purchase-requests/:id",
+          "line": 417,
+          "file": "server/api/purchase-requests.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/purchase-requests/:id",
+          "line": 454,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/purchase-requests/:id/approve",
+          "line": 500,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/purchase-requests/:id/unapprove",
+          "line": 559,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchase-requests/:id/reimburse",
+          "line": 605,
+          "file": "server/api/purchase-requests.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/purchase-requests/:id/finance-reject",
+          "line": 672,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchase-requests/:id/finance-accept",
+          "line": 723,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchase-requests/:id/finance-confirm",
+          "line": 775,
+          "file": "server/api/purchase-requests.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/purchase-requests/:id/resubmit",
+          "line": 823,
+          "file": "server/api/purchase-requests.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "消息通知",
+      "count": 19,
+      "noPerm": 8,
+      "publicOk": 2,
+      "approxLines": 617,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/notifications",
+          "line": 35,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/notifications/:id/read",
+          "line": 74,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": true
+        },
+        {
+          "method": "PUT",
+          "path": "/api/notifications/read-all",
+          "line": 90,
+          "file": "server/api/messages.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/messages",
+          "line": 241,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/messages/unread-count",
+          "line": 330,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/messages/:id/read",
+          "line": 359,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": true
+        },
+        {
+          "method": "PUT",
+          "path": "/api/messages/read-all",
+          "line": 382,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/messages/:id",
+          "line": 412,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/messages/:id",
+          "line": 457,
+          "file": "server/api/messages.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/notices",
+          "line": 60,
+          "file": "server/api/reports-notices.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/notices",
+          "line": 65,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/notices/:id",
+          "line": 76,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/notices/:id",
+          "line": 87,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/notifications/unread-count",
+          "line": 167,
+          "file": "server/api/system.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/notifications",
+          "line": 191,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/notifications/:id",
+          "line": 210,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/notifications",
+          "line": 224,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/notifications/admin-list",
+          "line": 240,
+          "file": "server/api/system.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/notify/dispatch",
+          "line": 158,
+          "file": "server/api/wechat.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "商城",
+      "count": 14,
+      "noPerm": 11,
+      "publicOk": 0,
+      "approxLines": 533,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/mall/products",
+          "line": 73,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/categories",
+          "line": 116,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/products/:id",
+          "line": 133,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/payinfo",
+          "line": 149,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/mall/orders",
+          "line": 171,
+          "file": "server/api/mall.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/orders",
+          "line": 294,
+          "file": "server/api/mall.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/orders/:id",
+          "line": 327,
+          "file": "server/api/mall.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/admin/products",
+          "line": 348,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/mall/admin/products/:id",
+          "line": 391,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/admin/orders",
+          "line": 438,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/mall/admin/orders/:id",
+          "line": 484,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/admin/settings",
+          "line": 526,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/mall/admin/settings",
+          "line": 547,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/mall/admin/stats",
+          "line": 580,
+          "file": "server/api/mall.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "报表",
+      "count": 11,
+      "noPerm": 7,
+      "publicOk": 0,
+      "approxLines": 184,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/boss-dashboard",
+          "line": 414,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/monthly-trend",
+          "line": 483,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/dashboard/stats",
+          "line": 24,
+          "file": "server/api/org.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/invoices",
+          "line": 599,
+          "file": "server/api/project-files.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/invoices",
+          "line": 604,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/invoices/:id",
+          "line": 615,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/invoices/:id",
+          "line": 626,
+          "file": "server/api/project-files.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/reports",
+          "line": 20,
+          "file": "server/api/reports-notices.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/reports",
+          "line": 25,
+          "file": "server/api/reports-notices.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/reports/:id",
+          "line": 36,
+          "file": "server/api/reports-notices.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/reports/:id",
+          "line": 47,
+          "file": "server/api/reports-notices.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "员工",
+      "count": 11,
+      "noPerm": 3,
+      "publicOk": 1,
+      "approxLines": 223,
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/employees/login",
+          "line": 18,
+          "file": "server/api/login.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/departments",
+          "line": 55,
+          "file": "server/api/org.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/departments",
+          "line": 60,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/departments/:id",
+          "line": 71,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees",
+          "line": 107,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/employees/grouped-by-department",
+          "line": 148,
+          "file": "server/api/org.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/employees",
+          "line": 171,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/employees/:id",
+          "line": 195,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/employees/:id/reset-password",
+          "line": 215,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/employees/:id/password",
+          "line": 233,
+          "file": "server/api/org.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/employees/:id",
+          "line": 266,
+          "file": "server/api/org.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "客户资源",
+      "count": 10,
+      "noPerm": 5,
+      "publicOk": 0,
+      "approxLines": 150,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/customer-pool",
+          "line": 18,
+          "file": "server/api/customer-pool.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/customer-pool",
+          "line": 26,
+          "file": "server/api/customer-pool.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/customer-pool/:id",
+          "line": 41,
+          "file": "server/api/customer-pool.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/customer-pool/:id",
+          "line": 54,
+          "file": "server/api/customer-pool.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/customer-follow/:customerId",
+          "line": 181,
+          "file": "server/api/customers.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/customer-follow",
+          "line": 186,
+          "file": "server/api/customers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/external-contacts",
+          "line": 38,
+          "file": "server/api/external-contacts.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/external-contacts",
+          "line": 72,
+          "file": "server/api/external-contacts.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/external-contacts/:id",
+          "line": 87,
+          "file": "server/api/external-contacts.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/external-contacts/:id",
+          "line": 113,
+          "file": "server/api/external-contacts.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "业主档案",
+      "count": 7,
+      "noPerm": 3,
+      "publicOk": 1,
+      "approxLines": 230,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/customers",
+          "line": 22,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/customers",
+          "line": 52,
+          "file": "server/api/customers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/customers/check-phone",
+          "line": 107,
+          "file": "server/api/customers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/customers/:id",
+          "line": 132,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/customers/:id/overwrite",
+          "line": 147,
+          "file": "server/api/customers.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/customers/:id",
+          "line": 166,
+          "file": "server/api/customers.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/customers/login",
+          "line": 37,
+          "file": "server/api/login.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        }
+      ]
+    },
+    {
+      "name": "短信",
+      "count": 7,
+      "noPerm": 3,
+      "publicOk": 0,
+      "approxLines": 255,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/sms-templates",
+          "line": 41,
+          "file": "server/api/sms.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/sms-templates",
+          "line": 51,
+          "file": "server/api/sms.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/sms-templates/:id",
+          "line": 71,
+          "file": "server/api/sms.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/sms-templates/:id",
+          "line": 93,
+          "file": "server/api/sms.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/sms-templates/sync-aliyun",
+          "line": 109,
+          "file": "server/api/sms.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/sms-send",
+          "line": 176,
+          "file": "server/api/sms.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/sms-send-logs",
+          "line": 279,
+          "file": "server/api/sms.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "审批",
+      "count": 6,
+      "noPerm": 6,
+      "publicOk": 0,
+      "approxLines": 192,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/approvals/my",
+          "line": 40,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/approvals/todo",
+          "line": 64,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/approvals/:id",
+          "line": 88,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/approvals",
+          "line": 102,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/approvals/:id/approve",
+          "line": 152,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/approvals/:id/reject",
+          "line": 194,
+          "file": "server/api/approvals.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "角色权限",
+      "count": 6,
+      "noPerm": 2,
+      "publicOk": 0,
+      "approxLines": 82,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/roles",
+          "line": 53,
+          "file": "server/api/identity.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/roles",
+          "line": 58,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/roles/:id",
+          "line": 75,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/roles/:id",
+          "line": 99,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/permissions",
+          "line": 190,
+          "file": "server/api/identity.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/permissions",
+          "line": 211,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "验收",
+      "count": 5,
+      "noPerm": 0,
+      "publicOk": 0,
+      "approxLines": 219,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/acceptance",
+          "line": 27,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/acceptance/:id",
+          "line": 88,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/acceptance",
+          "line": 112,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "PUT",
+          "path": "/api/acceptance/:id",
+          "line": 136,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/acceptance/:id",
+          "line": 170,
+          "file": "server/api/acceptance.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "个人中心",
+      "count": 5,
+      "noPerm": 4,
+      "publicOk": 0,
+      "approxLines": 87,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/me",
+          "line": 115,
+          "file": "server/api/identity.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/my-permissions",
+          "line": 196,
+          "file": "server/api/identity.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/user/info",
+          "line": 84,
+          "file": "server/api/org.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/my/logs",
+          "line": 566,
+          "file": "server/api/projects.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/my/inspections",
+          "line": 215,
+          "file": "server/api/reports-notices.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "文件上传",
+      "count": 4,
+      "noPerm": 4,
+      "publicOk": 0,
+      "approxLines": 167,
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/upload-contract-file",
+          "line": 45,
+          "file": "server/api/contract-upload.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/upload-image",
+          "line": 35,
+          "file": "server/api/upload.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/delete-images",
+          "line": 85,
+          "file": "server/api/upload.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/upload-pdf",
+          "line": 123,
+          "file": "server/api/upload.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "工具",
+      "count": 3,
+      "noPerm": 3,
+      "publicOk": 0,
+      "approxLines": 276,
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/ai/recognize-variables",
+          "line": 568,
+          "file": "server/api/erp-ext.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/export-pdf",
+          "line": 115,
+          "file": "server/api/pdf-service.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "POST",
+          "path": "/api/export-pdf-multi",
+          "line": 171,
+          "file": "server/api/pdf-service.js",
+          "perm": false,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "待办",
+      "count": 2,
+      "noPerm": 0,
+      "publicOk": 0,
+      "approxLines": 491,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/todo/count",
+          "line": 206,
+          "file": "server/api/todo.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        },
+        {
+          "method": "GET",
+          "path": "/api/todo/center",
+          "line": 229,
+          "file": "server/api/todo.js",
+          "perm": true,
+          "auth": true,
+          "publicAllowed": false
+        }
+      ]
+    },
+    {
+      "name": "业主认证",
+      "count": 2,
+      "noPerm": 0,
+      "publicOk": 2,
+      "approxLines": 122,
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/customer-auth/send-code",
+          "line": 689,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/customer-auth/login-by-code",
+          "line": 753,
+          "file": "server/api/wechat-mini.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": true
+        }
+      ]
+    },
+    {
+      "name": "兜底路由",
+      "count": 1,
+      "noPerm": 1,
+      "publicOk": 0,
+      "approxLines": 157,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "*",
+          "line": 1182,
+          "file": "server/server.js",
+          "perm": false,
+          "auth": false,
+          "publicAllowed": false
+        }
+      ]
+    }
+  ]
+}

@@ -112,68 +112,174 @@ async function relatedProjectIds(userId) {
 
 /**
  * 解析「业主（客户）身份」—— 业主端 x-user-id 存的不是 employees.id，
- * 而是 customers.id（主账户）或 family_members.id（家庭成员），两套编号互不相干。
+ * 而是 customers.id（有自己客户档案的人）或 family_members.id（纯家庭成员）。
  *
- * 判定顺序：
- *   1) 显式声明 x-user-type === 'customer' → 直接按客户查（优先；employees/customers 存在 id 撞号，
- *      实测 id 6/11/13/14 同时命中两表，不能只靠 id 推断）
- *   2) 未声明时先排除员工：employees 表有此 id → 视为员工，返回 null（保持原 RBAC 路径不变）
- *   3) customers 表有此 id → 主账户
- *   4) family_members 表有此 id → 家庭成员，返回其主账户 customer_id
+ * 2026-10-29 v2.5.3 改造为「项目级授权」后的口径：
  *
- * @returns {null | {customerId:number, isFamilyMember:boolean, familyMemberId:number|null, name:string, phone:string}}
+ *   ① 一个手机号代表一个**人**，不是一条记录。同一个人可能既有自己的客户档案
+ *      （名下有自己的项目），又被别人邀请进某个项目。这两种身份**并存**，
+ *      可见项目取并集 —— 这就是「从账号未来行使主账号权利」的落地方式。
+ *
+ *   ② 授权粒度是**项目**，不是客户。family_members 一行 = 一个手机号对一个项目的
+ *      查看授权（project_id）。业主有两套房时，只邀请家人看其中一套，
+ *      家人就只能看到那一套，不会顺带看到另一套的合同金额。
+ *
+ *   ③ scope === 'member' 时只查 family_members、跳过 customers。
+ *      原因：两套自增序列会撞号（库里 family_members.id=5 与 customers.id=5 同时存在），
+ *      副账号若先查 customers，会被误认成那个主账号。前端在「我是成员」时注入
+ *      x-user-scope: member。伪造这个头只会让权限变小（查不到 family_members 行 → 401），
+ *      不构成提权。
+ *
+ * @param {number} userId   x-user-id 的值
+ * @param {string} userType x-user-type（customer / employee / 空）
+ * @param {string} scope    x-user-scope（member / 空）
+ * @returns {null | {
+ *   customerId:number,          // 锚点 id（兼容旧调用方；有自己档案=自己，否则=成员行指向的主账号）
+ *   ownCustomerId:number|null,  // ★ 自己客户档案 id；纯家庭成员为 null（决定"自己名下项目"的范围）
+ *   isFamilyMember:boolean,     // 是否没有自己的客户档案（纯成员）
+ *   familyMemberId:number|null,
+ *   familyMemberIds:number[],
+ *   name:string, phone:string,
+ *   grantedProjectIds:number[],       // ★ 被授权查看的项目
+ *   legacyGrantCustomerIds:number[],  // 老数据兜底：project_id 为 NULL 的已绑成员行（按客户级给全项目）
+ * }}
  */
-async function resolveCustomerIdentity(userId, userType = '') {
+async function resolveCustomerIdentity(userId, userType = '', scope = '') {
   if (!userId) return null;
   try {
     const declaredCustomer = String(userType || '').toLowerCase() === 'customer';
-    if (!declaredCustomer) {
-      const [emp] = await pool.query('SELECT id FROM employees WHERE id = ? LIMIT 1', [userId]);
-      if (emp && emp.length) return null; // 是员工，走原有权限体系
+    const asMember = String(scope || '').toLowerCase() === 'member';
+
+    let phone = null;
+    let ownCustomer = null;
+    let memberRows = [];
+
+    if (asMember) {
+      // 副账号：只认 family_members，绝不查 customers（消除撞号误判）
+      const [fm] = await pool.query(
+        'SELECT id, customer_id, name, phone FROM family_members WHERE id = ? LIMIT 1', [userId]
+      );
+      if (!fm || !fm.length) return null;
+      phone = fm[0].phone;
+      memberRows = fm;
+    } else {
+      // 员工优先排除（只在未显式声明 customer 时；employees/customers id 会撞号）
+      if (!declaredCustomer) {
+        const [emp] = await pool.query('SELECT id FROM employees WHERE id = ? LIMIT 1', [userId]);
+        if (emp && emp.length) return null; // 是员工，走原有权限体系
+      }
+      const [cus] = await pool.query(
+        'SELECT id, name, phone FROM customers WHERE id = ? LIMIT 1', [userId]
+      );
+      if (cus && cus.length) {
+        ownCustomer = cus[0];
+        phone = cus[0].phone;
+      } else {
+        const [fm] = await pool.query(
+          'SELECT id, customer_id, name, phone FROM family_members WHERE id = ? LIMIT 1', [userId]
+        );
+        if (!fm || !fm.length) return null;
+        phone = fm[0].phone;
+        memberRows = fm;
+      }
     }
-    const [cus] = await pool.query(
-      'SELECT id, name, phone FROM customers WHERE id = ? LIMIT 1', [userId]
-    );
-    if (cus && cus.length) {
-      return {
-        customerId: cus[0].id,
-        isFamilyMember: false,
-        familyMemberId: null,
-        name: cus[0].name || '',
-        phone: cus[0].phone || '',
-      };
+
+    // ---- 有了手机号，把这个「人」的完整身份算齐 ----
+    if (phone) {
+      // 自己有没有客户档案（副账号登陆时也会查，决定他能不能用主账号权利）
+      if (!ownCustomer) {
+        const [cus2] = await pool.query(
+          'SELECT id, name, phone FROM customers WHERE phone = ? LIMIT 1', [phone]
+        );
+        if (cus2 && cus2.length) ownCustomer = cus2[0];
+      }
+      // 该手机号被授权过的全部记录（可能跨多个主账号、多个项目）
+      const [rows] = await pool.query(
+        `SELECT id, customer_id, name, phone, relation, project_id, bound_at, is_master
+           FROM family_members WHERE phone = ? AND status = 1`, [phone]
+      );
+      if (rows && rows.length) memberRows = rows;
     }
-    const [fm] = await pool.query(
-      'SELECT id, customer_id, name, phone FROM family_members WHERE id = ? LIMIT 1', [userId]
-    );
-    if (fm && fm.length) {
-      return {
-        customerId: fm[0].customer_id,
-        isFamilyMember: true,
-        familyMemberId: fm[0].id,
-        name: fm[0].name || '',
-        phone: fm[0].phone || '',
-      };
+
+    // ---- 授权项目：只算「本人已确认」且「不是主账号自述行」 ----
+    const grantedProjectIds = [];
+    const legacyGrantCustomerIds = [];
+    for (const r of memberRows) {
+      if (Number(r.is_master) === 1) continue;   // 主账号自述行不产生授权
+      if (!r.bound_at) continue;                 // 业主登记了但本人没确认 → 无任何权限
+      if (r.project_id) grantedProjectIds.push(Number(r.project_id));
+      else legacyGrantCustomerIds.push(Number(r.customer_id)); // 老数据：客户级授权
     }
-    return null;
+
+    const ownCustomerId = ownCustomer ? Number(ownCustomer.id) : null;
+
+    // 锚点：优先自己档案；纯成员用成员行指向的主账号（仅作标识，不再拿它算全项目）
+    let anchorCustomerId = ownCustomerId;
+    if (!anchorCustomerId) {
+      const first = memberRows[0];
+      anchorCustomerId = first ? Number(first.customer_id) : null;
+    }
+    if (!anchorCustomerId) return null;
+
+    return {
+      customerId: anchorCustomerId,
+      ownCustomerId,
+      isFamilyMember: !ownCustomerId,
+      familyMemberId: memberRows.length ? Number(memberRows[0].id) : null,
+      familyMemberIds: memberRows.map((r) => Number(r.id)),
+      name: ownCustomerId
+        ? (ownCustomer.name || '')
+        : ((memberRows[0] && memberRows[0].name) || ''),
+      phone: phone || '',
+      grantedProjectIds,
+      legacyGrantCustomerIds,
+    };
   } catch (e) {
     console.error('[perm] resolveCustomerIdentity failed:', e.message);
     return null;
   }
 }
 
-/** 该客户名下的项目 ID 集合（业主端可见范围） */
+/**
+ * 该业主能看到的项目 ID 集合（业主端可见范围）。
+ *
+ * ⚠️ 2026-10-29 起是**并集**，不再是「customer_id 名下全部项目」：
+ *   ① 自己客户档案名下的项目（ownCustomerId）—— 主账号权利，副账号将来扶正后自动生效
+ *   ② 被授权查看的项目（grantedProjectIds）—— 项目级授权
+ *   ③ 历史兼容：project_id 为 NULL 的已绑成员行，按客户级给全项目
+ *
+ * 纯家庭成员（无自己档案）的 ownCustomerId 为 null，拿不到主账号的项目，
+ * 只有被授权的那些 —— 这正是「只绑特定项目」的核心保障。
+ */
 async function customerProjectIds(identity) {
-  if (!identity || !identity.customerId) return new Set();
+  if (!identity) return new Set();
+  const ids = new Set();
   try {
-    const [rows] = await pool.query(
-      'SELECT id FROM projects WHERE customer_id = ?', [identity.customerId]
-    );
-    return new Set((rows || []).map((r) => r.id));
+    // 老调用方手工构造的 identity 可能没有 ownCustomerId，回退到 customerId
+    const ownId = identity.ownCustomerId !== undefined ? identity.ownCustomerId : identity.customerId;
+
+    // ① 自己名下的项目
+    if (ownId) {
+      const [rows] = await pool.query(
+        'SELECT id FROM projects WHERE customer_id = ?', [ownId]
+      );
+      for (const r of rows || []) ids.add(Number(r.id));
+    }
+
+    // ② 被授权的项目
+    for (const pid of identity.grantedProjectIds || []) ids.add(Number(pid));
+
+    // ③ 历史兼容：客户级老授权
+    for (const cid of identity.legacyGrantCustomerIds || []) {
+      const [rows] = await pool.query(
+        'SELECT id FROM projects WHERE customer_id = ?', [cid]
+      );
+      for (const r of rows || []) ids.add(Number(r.id));
+    }
   } catch (e) {
     console.error('[perm] customerProjectIds failed:', e.message);
-    return new Set();
   }
+  return ids;
 }
 
 /** "我能看到的项目"集合 = related ∪ read_all → 全部 */

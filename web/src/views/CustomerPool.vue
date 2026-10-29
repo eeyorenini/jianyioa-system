@@ -93,6 +93,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// v2.5.3：原来用裸 fetch，不经过 main.js 给全局 axios 装的拦截器，
+// 请求里没有 x-user-id → 后端一旦校验身份就直接 401。统一改走 axios。
+import axios from 'axios'
 
 const tableData = ref([])
 const searchForm = ref({ name: '', source: '' })
@@ -112,8 +115,8 @@ const form = ref({
 
 const loadData = async () => {
   try {
-    const res = await fetch('/api/customer-pool')
-    let data = await res.json()
+    const { data: rows } = await axios.get('/api/customer-pool')
+    let data = rows
     if (searchForm.value.name) {
       data = data.filter(d => d.name.includes(searchForm.value.name))
     }
@@ -140,13 +143,11 @@ const handleEdit = (row) => {
 
 const handleSave = async () => {
   try {
-    const method = isEdit.value ? 'PUT' : 'POST'
-    const url = isEdit.value ? `/api/customer-pool/${form.value.id}` : '/api/customer-pool'
-    await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
-    })
+    if (isEdit.value) {
+      await axios.put(`/api/customer-pool/${form.value.id}`, form.value)
+    } else {
+      await axios.post('/api/customer-pool', form.value)
+    }
     ElMessage.success('保存成功')
     dialogVisible.value = false
     loadData()
@@ -158,7 +159,7 @@ const handleSave = async () => {
 const handleDelete = async (id) => {
   try {
     await ElMessageBox.confirm('确定要删除吗?', '提示', { type: 'warning' })
-    await fetch(`/api/customer-pool/${id}`, { method: 'DELETE' })
+    await axios.delete(`/api/customer-pool/${id}`)
     ElMessage.success('删除成功')
     loadData()
   } catch (error) {

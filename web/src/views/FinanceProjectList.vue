@@ -260,7 +260,7 @@
           <div class="image-upload-row">
             <el-upload
               :action="'/api/upload-image'"
-              :headers="{ Authorization: axios.defaults.headers.common['Authorization'] }"
+              :headers="authHeaders()"
               :show-file-list="false"
               :before-upload="beforeImageUpload"
               :on-success="onImageUploadSuccess"
@@ -300,6 +300,8 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Close } from '@element-plus/icons-vue'
 import { PAYMENT_CATEGORY_LABELS, PAYMENT_STATUS_LABELS, dictLabel } from '@/utils/dicts'
+// v2.5.3：el-upload 不走 axios 拦截器，权限头要显式给（原来给的是 Authorization，一直是空的）
+import { authHeaders } from '@/utils/authHeaders'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()

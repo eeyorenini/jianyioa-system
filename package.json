@@ -1,6 +1,6 @@
 {
   "name": "jianyioa-system",
-  "version": "2.5.2",
+  "version": "2.6.0",
   "description": "简逸ERP (MySQL版)",
   "main": "server/server.js",
   "scripts": {
@@ -10,7 +10,11 @@
     "install:server": "cd server && npm install --legacy-peer-deps",
     "install:web": "cd web && npm install --legacy-peer-deps",
     "build:mobile": "cd jianyioa-app/mobile && rm -rf dist && npm run build:h5 && rsync -a --delete dist/build/h5/ ../../server/public-mobile-h5/",
-    "build:all": "npm run build && npm run build:mobile"
+    "build:all": "npm run build && npm run build:mobile",
+    "smoke": "node scripts/smoke-test.js",
+    "routes": "node scripts/route-inventory.js",
+    "release": "bash scripts/make-release.sh",
+    "backup": "bash scripts/backup-all.sh"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

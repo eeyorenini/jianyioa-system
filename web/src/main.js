@@ -7,19 +7,14 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import axios from 'axios'
+import { authHeaders } from './utils/authHeaders'
 
 // 全局 axios 拦截器：自动注入权限头（所有页面共用）
+// v2.5.3：取值逻辑统一收拢到 utils/authHeaders.js，
+// 让 el-upload / 裸 fetch / 裸 XHR 也能用同一份口径（它们不走 axios）。
 axios.interceptors.request.use(config => {
-  const userStr = localStorage.getItem('user')
-  if (userStr) {
-    try {
-      const user = JSON.parse(userStr)
-      if (user?.id) config.headers['x-user-id'] = user.id
-      if (user?.role_code || user?.role_name) {
-        config.headers['x-user-role'] = user.role_code || user.role_name || ''
-      }
-    } catch (e) {}
-  }
+  const h = authHeaders()
+  Object.keys(h).forEach(k => { config.headers[k] = h[k] })
   return config
 })
 

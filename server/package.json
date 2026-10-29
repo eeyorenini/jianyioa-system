@@ -1,6 +1,6 @@
 {
   "name": "jianyioa-system-server",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "简逸ERP 后端服务 (MySQL版)",
   "type": "commonjs",
   "main": "server.js",

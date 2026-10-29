@@ -1,0 +1,119 @@
+{
+  "time": "2026-10-29T04:19:34.962Z",
+  "base": "http://127.0.0.1:3002",
+  "account": "admin(id=1)",
+  "infra": [
+    {
+      "path": "/api/health",
+      "want": [
+        200
+      ],
+      "label": "后端健康检查",
+      "level": "green",
+      "status": 200,
+      "ms": 32,
+      "note": "",
+      "pass": true
+    },
+    {
+      "path": "/",
+      "label": "PC 首页 web/dist",
+      "level": "green",
+      "status": 200,
+      "ms": 20,
+      "note": "",
+      "pass": true
+    },
+    {
+      "path": "/m/",
+      "label": "H5 首页 public-mobile-h5",
+      "level": "green",
+      "status": 200,
+      "ms": 20,
+      "note": "",
+      "pass": true
+    }
+  ],
+  "summary": {
+    "green": 126,
+    "yellow": 6,
+    "skip": 5,
+    "red": 0,
+    "total": 137
+  },
+  "baseline": {
+    "removed": [],
+    "added": []
+  },
+  "reds": [],
+  "yellows": [
+    {
+      "method": "GET",
+      "path": "/api/material-acceptances/meta",
+      "status": 400,
+      "module": "主材"
+    },
+    {
+      "method": "GET",
+      "path": "/api/material-orders/by-status",
+      "status": 400,
+      "module": "主材"
+    },
+    {
+      "method": "GET",
+      "path": "/api/family-members",
+      "status": 401,
+      "module": "其他业务"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wechat/oauth-url",
+      "status": 400,
+      "module": "微信集成"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wechat/callback",
+      "status": 400,
+      "module": "微信集成"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wechat/subscribe",
+      "status": 400,
+      "module": "微信集成"
+    }
+  ],
+  "skips": [
+    {
+      "method": "GET",
+      "path": "/api/wechat/users/:id",
+      "url": "/api/wechat/users/1",
+      "module": "微信集成"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mall/products/:id",
+      "url": "/api/mall/products/1",
+      "module": "商城"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mall/orders/:id",
+      "url": "/api/mall/orders/1",
+      "module": "商城"
+    },
+    {
+      "method": "GET",
+      "path": "/api/approvals/:id",
+      "url": "/api/approvals/1",
+      "module": "审批"
+    },
+    {
+      "method": "GET",
+      "path": "/api/acceptance/:id",
+      "url": "/api/acceptance/1",
+      "module": "验收"
+    }
+  ]
+}

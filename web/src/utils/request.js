@@ -10,6 +10,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '../router'
+import { authHeaders } from './authHeaders'
 
 // 创建 axios 实例
 const request = axios.create({
@@ -43,18 +44,9 @@ request.interceptors.request.use(
     }
 
     // 自动携带 x-user-id 和 x-user-role（用于后端权限过滤）
-    const userStr = localStorage.getItem('user')
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr)
-        if (user?.id) {
-          config.headers['x-user-id'] = user.id
-        }
-        if (user?.role_code || user?.role_name) {
-          config.headers['x-user-role'] = user.role_code || user.role_name || ''
-        }
-      } catch (e) { /* ignore */ }
-    }
+    // v2.5.3：取值逻辑与 main.js 的全局 axios 拦截器、el-upload 共用 utils/authHeaders.js
+    const h = authHeaders()
+    Object.keys(h).forEach(k => { config.headers[k] = h[k] })
 
     return config
   },
