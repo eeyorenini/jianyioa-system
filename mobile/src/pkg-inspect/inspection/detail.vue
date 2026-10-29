@@ -12,7 +12,8 @@
     </view>
 
     <view v-else-if="!detail" class="empty-state">
-      <text class="empty-text">巡检记录不存在</text>
+      <text class="empty-text">巡检记录不存在或已被删除</text>
+      <text class="empty-hint">请返回列表下拉刷新后再试</text>
     </view>
 
     <view v-else class="detail-wrap">
@@ -276,10 +277,18 @@ function fetchDetail(id) {
     success: (res) => {
       if (res.data && (res.data.id || res.data.data)) {
         detail.value = res.data.data || res.data;
-      } else if (Array.isArray(res.data) && res.data[0]) {
+        return;
+      }
+      if (Array.isArray(res.data) && res.data[0]) {
         detail.value = res.data[0];
-      } else {
-        detail.value = null;
+        return;
+      }
+      detail.value = null;
+      // 2026-10-30：记录已被删除时后端返回 404 {"error":"记录不存在"}。
+      // 页面虽有「记录不存在」空态，但用户分不清是"被删了"还是"系统坏了"，
+      // 这里补一句明确提示。触发场景：列表页停留在旧数据上，点了已删除的整改单。
+      if (res.statusCode === 404) {
+        uni.showToast({ title: '该巡检记录已被删除', icon: 'none' });
       }
     },
     fail: () => { detail.value = null },
@@ -562,8 +571,9 @@ const goBack = () => {
 .loading-wrap { display: flex; justify-content: center; padding: 160rpx 0; }
 .loading-icon { font-size: 60rpx; color: #1E3A5F; animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.empty-state { display: flex; justify-content: center; padding: 160rpx 0; }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 160rpx 0; }
 .empty-text { font-size: 28rpx; color: #9AA3B2; }
+.empty-hint { font-size: 24rpx; color: #C3C9D4; margin-top: 12rpx; }
 
 .detail-wrap {
   padding: 24rpx;

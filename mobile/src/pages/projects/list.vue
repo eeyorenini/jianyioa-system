@@ -131,7 +131,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
-import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
+import { onPullDownRefresh, onReachBottom, onShow } from "@dcloudio/uni-app";
 import { useUserStore } from "@/stores/user";
 import { useListPager, runPullRefresh } from "@/utils/listPager";
 import ListFooter from "@/components/list-footer.vue";
@@ -237,6 +237,15 @@ const fetchList = async () => {
 };
 
 onMounted(() => {
+  fetchList();
+});
+
+// 2026-10-30：tabBar 页面用 switchTab 切换时不会重新 mounted，只有 onShow 触发。
+// 原来只在 onMounted 拉一次，切回「项目」tab 看到的永远是首次进入的数据
+// （新建/删除项目、改了进度都不会刷新）。这里非首次显示时重新拉一次。
+let firstShow = true;
+onShow(() => {
+  if (firstShow) { firstShow = false; return; }
   fetchList();
 });
 

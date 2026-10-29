@@ -110,7 +110,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from "vue";
-import { onPullDownRefresh, onReachBottom } from "@dcloudio/uni-app";
+import { onPullDownRefresh, onReachBottom, onShow } from "@dcloudio/uni-app";
 import { absAsset } from "@/utils/api";
 import { guardTab } from "@/utils/permission";
 import { pickProject } from "@/utils/projectPicker";
@@ -242,6 +242,17 @@ const goBack = () => {
 
 onMounted(() => {
   if (!guardTab('inspection:read')) return;
+  loadData();
+});
+
+// 2026-10-30 修复：巡检列表是 tabBar 页面，从别处 switchTab 切回来时
+// **不会重新 mounted**，只有 onShow 触发。原来这里没有任何 onShow 刷新逻辑，
+// 导致列表一直停在首次进入时的数据：期间被删除/新增的整改单都反映不出来，
+// 用户点到已删除的记录就会报 GET /api/rectification-issues/94 404（记录不存在）。
+// 这里在非首次显示时重新拉一次，切回 tab 即是最新数据。
+let firstShow = true;
+onShow(() => {
+  if (firstShow) { firstShow = false; return; }
   loadData();
 });
 

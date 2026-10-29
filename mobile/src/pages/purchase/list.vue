@@ -230,6 +230,8 @@ import { absAsset } from '@/utils/api'
 import { useUserStore } from '@/stores/user'
 import { useListPager } from '@/utils/listPager'
 import { guardTab } from '@/utils/permission'
+// 2026-10-30：tabBar 页面需要 onShow 才能在切回 tab 时刷新（switchTab 不重新 mounted）
+import { onShow } from '@dcloudio/uni-app'
 
 const userStore = useUserStore()
 const activeTab = ref('my')
@@ -761,6 +763,16 @@ function submitAction() {
 
 onMounted(() => {
   if (!guardTab('purchase:read')) return
+  loadData()
+  loadCounts()
+})
+
+// 2026-10-30：切回「采购」tab 时刷新。switchTab 不会重新 mounted，只有 onShow 触发，
+// 原来只在 onMounted 拉一次 → 审批/删除后切回 tab 看到的还是旧列表和旧角标数。
+// 注意这里不重复调 guardTab：它内部的 switchTab 跳转会在 onShow 里造成来回弹。
+let firstShow = true;
+onShow(() => {
+  if (firstShow) { firstShow = false; return; }
   loadData()
   loadCounts()
 })

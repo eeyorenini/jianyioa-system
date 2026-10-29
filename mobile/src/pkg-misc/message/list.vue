@@ -60,6 +60,17 @@
               <text class="msg-time">{{ formatTime(msg.created_at) }}</text>
             </view>
             <text class="msg-desc">{{ msg.content }}</text>
+
+            <!-- 查看详情：直接跳到对应业务模块（不再先跑一趟消息详情页）。
+                 没有关联页面的消息（公告、系统通知等）不显示按钮。 -->
+            <view
+              v-if="msgTarget(msg)"
+              class="msg-detail-btn"
+              @click.stop="openTarget(msg)"
+            >
+              <text class="msg-detail-btn-text">查看详情</text>
+              <text class="msg-detail-btn-arrow">›</text>
+            </view>
           </view>
           
           <!-- 删除按钮（显示在左滑后） -->
@@ -81,6 +92,7 @@ import { toDate } from '@/utils/date'
 import { syncMessageBadge } from '@/utils/tabbar'
 import { authHeader } from '@/utils/permission'
 import { useListPager } from '@/utils/listPager'
+import { resolveMessageTarget, openMessageTarget } from '@/utils/pageUrl'
 
 const messages = ref([])
 const loading = ref(false)
@@ -187,23 +199,37 @@ function formatTime(str) {
   return `${d.getMonth()+1}月${d.getDate()}日`
 }
 
+// 标已读（卡片点击与「查看详情」按钮共用）
+// 2026-10-21 修复：原来这条请求没带 x-user-id，服务端拿不到身份直接 401，
+// 界面看着已读、实际没落库 → 下次进来又变成未读
+function markRead(msg) {
+  if (msg.is_read) return
+  msg.is_read = true
+  uni.request({
+    url: `/api/messages/${msg.id}/read`,
+    method: 'PUT',
+    header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') }
+  })
+  setTimeout(() => refreshUnreadBadge(), 100)
+}
+
+// 这条消息有没有对应的业务页面（决定卡片上是否显示「查看详情」）
+// 映射表在 utils/pageUrl，与消息详情页共用同一份，避免两边漂移。
+const msgTarget = (msg) => resolveMessageTarget(msg)
+
+// 「查看详情」：标记已读 + 直接跳对应业务模块（不再先跑一趟消息详情页）
+function openTarget(msg) {
+  msg._translateX = 0
+  markRead(msg)
+  openMessageTarget(resolveMessageTarget(msg))
+}
+
 // 处理消息点击
 function handleClick(msg) {
   // 重置滑动位置
   msg._translateX = 0
 
-  // 标记已读
-  if (!msg.is_read) {
-    msg.is_read = true
-    // 2026-10-21 修复：原来这条请求没带 x-user-id，服务端拿不到身份直接 401，
-    // 界面看着已读、实际没落库 → 下次进来又变成未读
-    uni.request({
-      url: `/api/messages/${msg.id}/read`,
-      method: 'PUT',
-      header: { 'x-user-id': String(uni.getStorageSync('userInfo')?.id || '') }
-    })
-    setTimeout(() => refreshUnreadBadge(), 100)
-  }
+  markRead(msg)
   
   // 跳转：一律进「消息详情」，详情页里再提供「查看XX」按钮跳对应业务模块。
   // ⚠️ 必须带 src：列表是 messages + notifications 两表 UNION，两表 id 会撞号，
@@ -375,7 +401,21 @@ const refreshUnreadBadge = () => {
   flex-shrink: 0;
 }
 .msg-time { font-size: 22rpx; color: #999; flex-shrink: 0; margin-left: 12rpx; }
-.msg-desc { font-size: 26rpx; color: #666; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; }
+.msg-desc { font-size: 26rpx; color: #666; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; }
+
+/* 「查看详情」轻量按钮：不抢卡片的点击面积，点了直接进业务模块 */
+.msg-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4rpx;
+  margin-top: 12rpx;
+  padding: 6rpx 18rpx;
+  border: 1rpx solid rgba(30, 58, 95, 0.3);
+  border-radius: 999rpx;
+  background: rgba(30, 58, 95, 0.05);
+}
+.msg-detail-btn-text { font-size: 22rpx; color: #1E3A5F; font-weight: 500; }
+.msg-detail-btn-arrow { font-size: 24rpx; color: #1E3A5F; line-height: 1; }
 
 /* 删除按钮 */
 .delete-btn {

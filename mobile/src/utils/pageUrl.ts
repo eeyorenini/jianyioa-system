@@ -80,6 +80,15 @@ const BY_SOURCE_TYPE: Record<string, (id: string, msg?: any) => MessageTarget> =
   dispatch: (id) => ({ path: `/pages/dispatch/detail?id=${id}`, label: '查看派工', needId: true }),
   // 移动端「巡检」写的是 rectification_issues，详情页即整改详情
   rectification_issue: (id) => ({ path: `/pages/inspection/detail?id=${id}`, label: '查看整改详情', needId: true }),
+  // PC「巡检记录」写的是 inspections 表，小程序端没有对应的独立详情页，
+  // 落到「项目详情 → 巡检 tab」（tab 由 inspection:read 把守，没权限会自动回落到第一个 tab）。
+  // project_id 由后端 /api/messages 的 attachProjectInfo() 反查补上；拿不到就退回巡检列表。
+  inspection: (id, msg) => {
+    const pid = parseInt(msg && msg.project_id) || 0
+    return pid
+      ? { path: `/pages/projects/detail`, label: '查看巡检', needId: false, query: `id=${pid}&tab=inspect` }
+      : { path: `/pages/inspection/list`, label: '查看巡检', needId: false }
+  },
   acceptance: (id) => ({ path: `/pages/acceptance/detail?id=${id}`, label: '查看验收', needId: true }),
   // v2.4.1 主材验收（工长进场材料逐项验收）
   material_acceptance: (id) => ({ path: `/pages/material-accept/detail?id=${id}`, label: '查看材料验收', needId: true }),

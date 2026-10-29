@@ -1856,13 +1856,45 @@ const previewImage = (images, index) => {
   uni.previewImage({ urls: images, current: index });
 };
 
+// ⚠️ 兼容旧版后端：v2.6.0 及更早的 /api/projects/:id 只返回项目主体，
+//    不附带 nodes / progress / current_node_name（只有列表接口 /api/projects 才拼这三个字段）。
+//    后端若未升级，直接改用单条接口会让「进度节点」tab 变空白。
+//    这里兜底回退到列表接口取该项目的节点，后端升级后 Array.isArray(data.nodes) 为真，自然不再触发。
+const fetchNodesFallback = async () => {
+  try {
+    const token = uni.getStorageSync('token');
+    const res = await uni.request({
+      url: '/api/projects',
+      header: {
+        Authorization: token,
+        'x-user-role': userStore.state.role_name,
+        'x-user-id': String(userStore.state.id),
+      },
+    });
+    const list = res.data;
+    if (!Array.isArray(list)) return;
+    const found = list.find((p) => Number(p.id) === Number(projectId.value));
+    if (!found) return;
+    project.value = {
+      ...project.value,
+      nodes: found.nodes || [],
+      progress: found.progress,
+      current_node_name: found.current_node_name,
+    };
+  } catch (e) {
+    console.warn('节点兜底加载失败:', e);
+  }
+};
+
 const fetchDetail = async () => {
   try {
     uni.showLoading({ title: "加载中..." });
     const token = uni.getStorageSync("token");
-    const userInfo = uni.getStorageSync('userInfo');
     const res = await uni.request({
-      url: "/api/projects",
+      // v2.6.1：改为按 id 拉单条。原来拉 /api/projects 全量列表再 find，
+      // 项目多时（read_all 角色能看到全部）要传几百 KB JSON，小程序解析慢，
+      // 是"点开项目详情慢"的主因。单条接口字段与列表一致（同样的 SELECT p.* + 4 个 JOIN）。
+      url: `/api/projects/${projectId.value}`,
       header: {
         Authorization: token,
         'x-user-role': userStore.state.role_name,
@@ -1871,17 +1903,23 @@ const fetchDetail = async () => {
     });
     uni.hideLoading();
     const data = res.data;
-    if (Array.isArray(data)) {
-      const found = data.find((p) => p.id === projectId.value);
-      if (found) project.value = found;
+    if (data && !data.error && data.id) {
+      project.value = data;
+      // 旧版后端不返回 nodes → 回退列表接口补齐，否则进度节点 tab 空白
+      if (!Array.isArray(data.nodes)) {
+        await fetchNodesFallback();
+      }
     }
     // 加载日志、巡检、派工
-    fetchLogs();
-    fetchInspections();
-    fetchAcceptances();
-    loadPurchase();
-    loadDispatches();
-    loadFinanceData();
+    // ⚠️ 必须按 tab 权限守卫：tabs 已被 canSeeTab 过滤，但没有权限的 tab 数据若照样请求，
+    //    后端会按 RBAC 直接回 403（例：财务角色无 acceptance:read，进项目详情就报
+    //    GET /api/acceptance?project_id=x 403）。既刷错误又白白多几个必失败的请求。
+    if (userStore.canSee('project_log:read')) fetchLogs();
+    if (userStore.canSee('inspection:read')) fetchInspections();
+    if (userStore.canSee('acceptance:read')) fetchAcceptances();
+    if (userStore.canSee('purchase:read')) loadPurchase();
+    if (userStore.canSee('dispatch:read')) loadDispatches();
+    if (userStore.canSee('finance:read') || userStore.canSee('collection:read')) loadFinanceData();
   } catch (e) {
     uni.hideLoading();
     uni.showToast({ title: "加载失败", icon: "none" });
@@ -1941,6 +1979,12 @@ const fetchInspections = async () => {
 // 加载验收记录
 const fetchAcceptances = async () => {
   if (!projectId.value) return;
+  // 无 acceptance:read 的角色（如财务）后端会 403，直接跳过，不发必失败的请求
+  if (!userStore.canSee('acceptance:read')) {
+    acceptances.value = [];
+    acceptancesLoading.value = false;
+    return;
+  }
   acceptancesLoading.value = true;
   try {
     const token = uni.getStorageSync("token");
