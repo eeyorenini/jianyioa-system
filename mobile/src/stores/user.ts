@@ -238,6 +238,8 @@ export const useUserStore = () => {
     uni.removeStorageSync("userType");
     uni.removeStorageSync("masterCustomerId");
     uni.removeStorageSync("masterPhone");
+    // v2.5.3：副账户自己的成员 id，留着会让下一个登录的人被当成这家的成员
+    uni.removeStorageSync("familyMemberId");
     uni.reLaunch({ url: "/pages/login/login" });
   };
 

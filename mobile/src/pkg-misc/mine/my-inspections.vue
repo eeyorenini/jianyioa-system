@@ -132,6 +132,7 @@
 </template>
 
 <script setup>
+import { authHeader } from "@/utils/permission";
 import { ref, onMounted } from "vue";
 import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
@@ -247,6 +248,7 @@ const addPhoto = () => {
             url: '/api/upload-image',
             filePath: path,
             name: 'file',
+            header: authHeader(),  // v2.5.3: uni.uploadFile 不走 request 拦截器
           });
           const data = JSON.parse(uploadRes.data);
           if (data.url) {

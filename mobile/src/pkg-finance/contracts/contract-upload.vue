@@ -98,6 +98,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import BottomPicker from '@/components/bottom-picker.vue'
+// v2.5.3：XHR / uni.uploadFile 都不走 App.vue 的 uni.request 拦截器，
+// 必须手动带 x-user-id，否则后端加了上传鉴权后会 401。
+import { authHeader } from '@/utils/permission'
 
 const selectedProject = ref(null)
 const projectName = ref('')
@@ -212,6 +215,9 @@ const doUpload = (file, pendingUrl) => {
   // H5 fetch 无 onprogress，用 XMLHttpRequest 才能拿到进度
   const xhr = new XMLHttpRequest()
   xhr.open('POST', '/api/upload-contract-file')
+  // v2.5.3：补鉴权头（XHR 不经过 uni.request 拦截器）
+  const _authH = authHeader()
+  Object.keys(_authH).forEach(k => xhr.setRequestHeader(k, _authH[k]))
   xhr.upload.onprogress = (e) => {
     if (e.lengthComputable) {
       uploadProgress.value = Math.round((e.loaded / e.total) * 100)
@@ -264,6 +270,8 @@ const doUpload = (file, pendingUrl) => {
     url: '/api/upload-contract-file',
     filePath,
     name: 'file',
+    // v2.5.3：补鉴权头（uni.uploadFile 不走 uni.request 拦截器）
+    header: authHeader(),
     // 小程序/APP 平台进度回调（uni.uploadFile 原生支持）
     onProgressUpdate: (res) => {
       if (res && typeof res.progress === 'number') {

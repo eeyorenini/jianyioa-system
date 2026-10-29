@@ -41,7 +41,8 @@
 
     <view class="empty-state" v-else>
       <text class="empty-icon">🏠</text>
-      <text class="empty-text">{{ keyword ? '未找到匹配项目' : '暂无关联项目' }}</text>
+      <text class="empty-text">{{ keyword ? '未找到匹配项目' : '暂无可查看的项目' }}</text>
+      <text class="empty-hint" v-if="!keyword">如需查看装修进度，请联系为您服务的销售人员或设计师为您添加项目</text>
     </view>
 
     <!-- 客户专属底部导航 -->
@@ -285,5 +286,15 @@ onMounted(() => {
 .empty-text {
   font-size: 14px;
   color: #9CA3AF;
+}
+
+.empty-hint {
+  font-size: 12px;
+  /* 红字：这是「你不能看」的唯一出口，灰色会被当装饰品忽略掉 */
+  color: #E54D42;
+  margin-top: 8px;
+  padding: 0 24px;
+  text-align: center;
+  line-height: 1.5;
 }
 </style>

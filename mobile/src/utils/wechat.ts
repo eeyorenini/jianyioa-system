@@ -9,6 +9,8 @@
 //
 // H5 / App 端没有 wx.login，函数直接返回 null，走原有的手机号登录。
 
+import { authHeader } from "./permission";
+
 /** 调用 wx.login 拿 code */
 function wxCode(): Promise<string> {
   return new Promise((resolve) => {
@@ -82,6 +84,7 @@ export async function uploadAvatar(filePath: string): Promise<string> {
       url: "/api/upload-image",
       filePath,
       name: "file",
+      header: authHeader(),  // v2.5.3: uni.uploadFile 不走 request 拦截器
     });
     const raw = res && res.data;
     const data = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -208,6 +211,7 @@ export function saveEmployeeIdentity(emp: any): void {
   // 员工身份下不能残留业主的家庭成员标记，否则查项目会串号
   uni.removeStorageSync("masterCustomerId");
   uni.removeStorageSync("masterPhone");
+  uni.removeStorageSync("familyMemberId");
 }
 
 /** 保存客户身份到本地（与 login.vue 的客户登录保持一致） */
@@ -216,11 +220,16 @@ export function saveCustomerIdentity(data: any): void {
   uni.setStorageSync("userInfo", data.customer);
   uni.setStorageSync("token", "logged-in");
   uni.setStorageSync("userType", "customer");
+  // v2.5.3 项目级授权：副账户的 customer.id 是**自己那条 family_members.id**，
+  //    同时 App.vue 会注入 x-user-scope=member，后端据此只查成员表、跳过 customers，
+  //    避免 family_members.id 与 customers.id 撞号误判成主账号。
   if (data.isFamilyMember && data.masterCustomerId) {
     uni.setStorageSync("masterCustomerId", data.masterCustomerId);
     uni.setStorageSync("masterPhone", (data.masterCustomer && data.masterCustomer.phone) || "");
+    if (data.familyMemberId) uni.setStorageSync("familyMemberId", data.familyMemberId);
   } else {
     uni.removeStorageSync("masterCustomerId");
     uni.removeStorageSync("masterPhone");
+    uni.removeStorageSync("familyMemberId");
   }
 }

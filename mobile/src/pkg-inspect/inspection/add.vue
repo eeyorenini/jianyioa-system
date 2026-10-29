@@ -127,6 +127,7 @@
 </template>
 
 <script setup>
+import { authHeader } from "@/utils/permission";
 import { ref, reactive, watch, onMounted } from "vue";
 
 const projectId = ref(0);
@@ -238,6 +239,7 @@ const asyncUploadPhoto = (filePath, index, total, placeholder) => {
       url: '/api/upload-image',
       filePath,
       name: 'file',
+      header: authHeader(),  // v2.5.3: uni.uploadFile 不走 request 拦截器
       success: (res) => {
         let serverUrl = '';
         try {

@@ -1,11 +1,11 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyleCapsule">
+    <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">家庭成员</text>
       <!-- 只有主账户才能添加家庭成员 -->
-      <view class="nav-btn" v-if="isMasterAccount" @click="showAddModal">添加</view>
+      <view class="nav-btn" v-if="canManage" @click="showAddModal">添加</view>
       <view v-else class="nav-placeholder"></view>
     </view>
 
@@ -17,30 +17,39 @@
     <!-- 家庭成员列表 -->
     <view v-else class="page-content">
       <view class="family-intro">
-        <text class="intro-text">家庭成员可共享查看项目装修进度，主账户可管理家庭成员</text>
+        <text class="intro-text" v-if="canManage">家庭成员可共享查看项目装修进度。添加后请让 TA 用该手机号登录并确认，确认后才正式加入。</text>
+        <text class="intro-text" v-else>您是这个家庭的家庭成员，可查看家里的装修进度。成员由主账号管理。</text>
       </view>
 
       <!-- 成员列表 -->
       <view class="member-list" v-if="members.length > 0">
-        <view class="member-card" v-for="member in members" :key="member.id">
+        <view class="member-card"
+              v-for="member in members"
+              :key="member.id"
+              :class="{ 'is-pending': member.is_master === 0 && !member.is_bound }">
           <view class="member-avatar" :class="{ master: member.is_master === 1 }">
             {{ getAvatarText(member.name) }}
           </view>
           <view class="member-info">
             <view class="member-header">
+              <!-- 主账号：姓名后紧跟「（主账号）」 -->
               <text class="member-name">{{ member.name }}</text>
+              <text class="master-suffix" v-if="member.is_master === 1">（主账号）</text>
               <view class="member-badges">
-                <!-- 副账户看时：is_master=1显示"主账户"，is_master=0显示关系 -->
-                <view class="badge master" v-if="!isMaster && member.is_master === 1">主账户</view>
-                <view class="badge relation" v-if="!isMaster && member.is_master === 0 && member.relation">{{ member.relation }}</view>
-                <!-- 主账户看时：显示关系 -->
-                <view class="badge relation" v-if="isMaster && member.relation && member.relation !== '本人'">{{ member.relation }}</view>
+                <view class="badge pending" v-if="member.is_master === 0 && !member.is_bound">待加入</view>
+                <view class="badge relation" v-else-if="member.is_master === 0 && member.relation">{{ member.relation }}</view>
+                <view class="badge me" v-if="member.is_self && member.is_master === 0">我</view>
               </view>
             </view>
             <text class="member-phone">{{ member.phone }}</text>
+            <!-- v2.5.3 项目级授权：被授权的项目逐条列出，让业主一眼看清「这个人能看哪几套房」 -->
+            <view class="member-projects" v-if="member.is_master === 0 && member.projects && member.projects.length">
+              <text class="project-chip" v-for="pj in member.projects" :key="pj.id">{{ pj.name }}</text>
+            </view>
+            <text class="member-hint" v-if="canManage && member.is_master === 0 && !member.is_bound">还没登录确认，暂不能查看项目</text>
           </view>
           <view class="member-actions" v-if="canDelete(member)">
-            <text class="delete-btn" @click="deleteMember(member)">删除</text>
+            <text class="delete-btn" @click="deleteMember(member)">移除</text>
           </view>
         </view>
       </view>
@@ -49,7 +58,7 @@
       <view v-else class="empty-state">
         <text class="empty-icon">👨‍👩‍👧</text>
         <text class="empty-text">暂无家庭成员</text>
-        <text class="empty-hint">点击右上角"添加"邀请家人加入</text>
+        <text class="empty-hint" v-if="canManage">点击右上角"添加"邀请家人加入</text>
       </view>
     </view>
 
@@ -63,22 +72,34 @@
         <view class="modal-body">
           <view class="form-item">
             <text class="form-label">姓名</text>
-            <input class="form-input" v-model="formData.name" placeholder="请输入成员姓名" />
+            <input class="form-input" v-model="formData.name" placeholder="请输入成员姓名" maxlength="30" />
           </view>
           <view class="form-item">
             <text class="form-label">手机号</text>
             <input class="form-input" v-model="formData.phone" type="number" placeholder="请输入手机号" maxlength="11" />
+            <text class="field-tip">手机号是唯一认证标识，请填写对方正在使用的号码</text>
           </view>
           <view class="form-item">
             <text class="form-label">关系</text>
             <picker class="form-picker" mode="selector" :range="relationOptions" @change="onRelationChange">
-              <view class="picker-value">{{ formData.relation || '请选择关系' }}</view>
+              <view class="picker-value" :class="{ picked: !!formData.relation }">{{ formData.relation || '请选择关系' }}</view>
             </picker>
+          </view>
+          <!-- 项目级授权：名下有多个项目时必须选一个；只有一个项目时自动带，不显示这一行 -->
+          <view class="form-item" v-if="myProjects.length > 1">
+            <text class="form-label">可查看项目</text>
+            <picker class="form-picker" mode="selector" :range="projectNames" @change="onProjectChange">
+              <view class="picker-value" :class="{ picked: !!formData.projectName }">{{ formData.projectName || '请选择项目' }}</view>
+            </picker>
+            <text class="field-tip">TA 只能看到你选中的这个项目，其他项目看不到</text>
+          </view>
+          <view class="bind-note">
+            <text class="bind-note-text">添加后，TA 用这个手机号登录时会看到「XX 邀请您查看某个项目」的确认提示，确认后才能看到该项目的装修进度。</text>
           </view>
         </view>
         <view class="modal-footer">
           <button class="btn-cancel" @click="closeModal">取消</button>
-          <button class="btn-confirm" @click="submitAdd" :disabled="!canSubmit">添加</button>
+          <button class="btn-confirm" @click="submitAdd" :disabled="!canSubmit || submitting">{{ submitting ? '添加中...' : '添加' }}</button>
         </view>
       </view>
     </view>
@@ -95,91 +116,105 @@ import customerTabbar from "@/components/customer-tabbar.vue";
 const loading = ref(true);
 const members = ref([]);
 const showModal = ref(false);
-const customerId = ref(0);
-const currentPhone = ref('');
-// 当前登录者是否是主账户（用于控制是否显示"主账户"标签）
-const isMaster = ref(false);
-// 是否是主账户账号（用于控制添加按钮）
-const isMasterAccount = ref(false);
+const submitting = ref(false);
+// 当前登录者能不能管理成员（只有主账号能增删改，服务端也拦了）
+const canManage = ref(false);
 
 // 表单数据
 const formData = ref({
   name: '',
   phone: '',
-  relation: ''
+  relation: '',
+  projectId: 0,
+  projectName: ''
 });
+
+// 我名下可以授权的项目（项目级授权：成员只能看被指定的那一个）
+const myProjects = ref([]);
+const projectNames = computed(() => myProjects.value.map((p) => p.name || `项目${p.id}`));
 
 // 关系选项
 const relationOptions = ['配偶', '父母', '子女', '兄弟姐妹', '其他'];
 
 // 计算属性：是否可以提交
 const canSubmit = computed(() => {
-  return formData.value.name.trim() && 
-         formData.value.phone.length === 11 &&
-         /^1[3-9]\d{9}$/.test(formData.value.phone);
+  const base = !!formData.value.name.trim() &&
+    formData.value.phone.length === 11 &&
+    /^1[3-9]\d{9}$/.test(formData.value.phone);
+  if (!base) return false;
+  // 多个项目必须选一个；只有一个项目由后端自动带
+  if (myProjects.value.length > 1 && !formData.value.projectId) return false;
+  return true;
 });
 
-// 判断是否可以删除（主账户可以删除非主账户成员）
+// 判断是否可以删除：主账号 + 不是主账号行 + 不是虚拟行（id 为 'master'）
+// 待加入的成员也可以移除（业主填错号码时要能撤回来）
 const canDelete = (member) => {
-  // 不能删除自己（主账户）
+  if (!canManage.value) return false;
   if (member.is_master === 1) return false;
+  if (typeof member.id !== 'number') return false;
   return true;
 };
 
 // 获取头像文字
 const getAvatarText = (name) => {
   if (!name) return '?';
-  return name.substring(0, 1);
+  return String(name).substring(0, 1);
 };
 
 // 获取家庭成员列表
+// 身份（x-user-id / x-user-type / x-user-scope）由 App.vue 的请求拦截器统一注入，
+// 这里不再手拼 x-customer-id —— 服务端已不采信客户端传来的客户 id。
 const loadMembers = async () => {
   loading.value = true;
-  
   try {
-    const userInfo = uni.getStorageSync('userInfo');
-    // 家庭成员用主账户ID查，主账户用自己的ID
-    const masterCustomerId = uni.getStorageSync('masterCustomerId');
-    const effectiveCustomerId = masterCustomerId || userInfo?.id;
-    
-    if (userInfo?.id) {
-      customerId.value = userInfo.id;
-    }
-    
-    // 判断是否是主账户（有masterCustomerId说明是副账户，没有则是主账户）
-    isMasterAccount.value = !masterCustomerId;
-    
-    const res = await uni.request({
-      url: '/api/family-members',
-      header: {
-        'x-customer-id': effectiveCustomerId
-      }
-    });
-    
-    if (Array.isArray(res.data)) {
-      members.value = res.data;
-      // 判断当前登录者是否是主账户（用于显示"主账户"标签）
-      // 用手机号匹配当前登录者，因为 customer_id 对于副账户来说是主账户的ID
-      const currentPhone = userInfo?.phone;
-      const currentMember = res.data.find(m => m.phone === currentPhone);
-      isMaster.value = currentMember?.is_master === 1;
-    } else {
+    const res = await uni.request({ url: '/api/family-members' });
+    if (res.statusCode === 401) {
+      uni.showToast({ title: '请先登录业主账号', icon: 'none' });
       members.value = [];
-      isMaster.value = false;
+      return;
     }
+    const data = Array.isArray(res.data) ? res.data : [];
+    members.value = data;
+    // can_manage 由服务端下发（副账户一律 false），前端不自己猜
+    canManage.value = data.some((m) => m.can_manage === true);
   } catch (e) {
     console.error('加载家庭成员失败:', e);
     members.value = [];
-    isMaster.value = false;
-    isMasterAccount.value = false;
+    canManage.value = false;
   } finally {
     loading.value = false;
   }
 };
 
+// 拉取「我名下可授权的项目」
+// 只有主账号需要（副账号不能添加成员，取到空也无所谓）
+const loadMyProjects = async () => {
+  try {
+    const res = await uni.request({ url: '/api/projects' });
+    const data = Array.isArray(res.data) ? res.data : [];
+    myProjects.value = data.map((p) => ({ id: Number(p.id), name: p.name || '' }));
+    // 只有一个项目时直接带进表单，界面上就不用让业主再选一次
+    if (myProjects.value.length === 1) {
+      formData.value.projectId = myProjects.value[0].id;
+      formData.value.projectName = myProjects.value[0].name;
+    }
+  } catch (e) {
+    console.error('加载我的项目失败:', e);
+    myProjects.value = [];
+  }
+};
+
 // 显示添加弹窗
 const showAddModal = () => {
-  formData.value = { name: '', phone: '', relation: '' };
+  const auto = myProjects.value.length === 1 ? myProjects.value[0] : null;
+  formData.value = {
+    name: '',
+    phone: '',
+    relation: '',
+    projectId: auto ? auto.id : 0,
+    projectName: auto ? auto.name : ''
+  };
   showModal.value = true;
 };
 
@@ -194,87 +229,87 @@ const onRelationChange = (e) => {
   formData.value.relation = relationOptions[index];
 };
 
+// 选择可授权项目
+const onProjectChange = (e) => {
+  const index = Number(e.detail.value);
+  const p = myProjects.value[index];
+  if (p) {
+    formData.value.projectId = p.id;
+    formData.value.projectName = p.name;
+  }
+};
+
 // 提交添加
 const submitAdd = async () => {
-  if (!canSubmit.value) return;
-  
+  if (!canSubmit.value || submitting.value) return;
+  submitting.value = true;
   uni.showLoading({ title: '添加中...' });
-  
   try {
-    const userInfo = uni.getStorageSync('userInfo');
-    // 家庭成员用主账户ID添加
-    const masterCustomerId = uni.getStorageSync('masterCustomerId');
-    const effectiveCustomerId = masterCustomerId || userInfo?.id;
-    
     const res = await uni.request({
       url: '/api/family-members',
       method: 'POST',
-      header: {
-        'x-customer-id': effectiveCustomerId,
-        'Content-Type': 'application/json'
-      },
+      header: { 'Content-Type': 'application/json' },
       data: {
         name: formData.value.name.trim(),
         phone: formData.value.phone.trim(),
-        relation: formData.value.relation
+        relation: formData.value.relation,
+        project_id: formData.value.projectId || undefined
       }
     });
-    
-    if (res.data.success || res.statusCode === 200) {
-      uni.showToast({ title: '添加成功', icon: 'success' });
+    const d = res.data || {};
+    if (res.statusCode === 200 && d.success) {
+      uni.showToast({ title: d.updated ? '已更新该成员' : '已添加，待对方登录确认', icon: 'none' });
       closeModal();
       loadMembers();
     } else {
-      uni.showToast({ title: res.data.error || '添加失败', icon: 'none' });
+      // 后端可能回「请选择要授权的项目」并附项目列表，直接用它的文案
+      uni.showToast({ title: d.error || d.message || '添加失败', icon: 'none' });
     }
   } catch (e) {
     console.error('添加失败:', e);
     uni.showToast({ title: '添加失败', icon: 'none' });
   } finally {
+    submitting.value = false;
     uni.hideLoading();
   }
 };
 
 // 删除成员
 const deleteMember = (member) => {
+  const pjCount = (member.projects && member.projects.length) || 0;
+  const tip = member.is_bound
+    ? (pjCount > 1
+        ? `移除后，「${member.name}」将无法再查看您名下全部 ${pjCount} 个项目。`
+        : `移除后，「${member.name}」将无法再查看本项目的装修进度。`)
+    : `确定不再邀请「${member.name}」查看项目吗？`;
   uni.showModal({
-    title: '确认删除',
-    content: `确定要删除成员"${member.name}"吗？`,
+    title: '确认移除',
+    content: tip,
+    confirmText: '移除',
     success: async (res) => {
-      if (res.confirm) {
-        await confirmDelete(member);
-      }
+      if (res.confirm) await confirmDelete(member);
     }
   });
 };
 
 // 确认删除
 const confirmDelete = async (member) => {
-  uni.showLoading({ title: '删除中...' });
-  
+  uni.showLoading({ title: '处理中...' });
   try {
-    const userInfo = uni.getStorageSync('userInfo');
-    // 家庭成员用主账户ID删除
-    const masterCustomerId = uni.getStorageSync('masterCustomerId');
-    const effectiveCustomerId = masterCustomerId || userInfo?.id;
-    
     const res = await uni.request({
       url: `/api/family-members/${member.id}`,
-      method: 'DELETE',
-      header: {
-        'x-customer-id': effectiveCustomerId
-      }
+      method: 'DELETE'
     });
-    
-    if (res.data.success || res.statusCode === 200) {
-      uni.showToast({ title: '删除成功', icon: 'success' });
+    const d = res.data || {};
+    if (res.statusCode === 200 && d.success) {
+      uni.showToast({ title: '已移除', icon: 'success' });
       loadMembers();
     } else {
-      uni.showToast({ title: res.data.error || '删除失败', icon: 'none' });
+      uni.showToast({ title: d.error || d.message || '移除失败', icon: 'none' });
     }
   } catch (e) {
     console.error('删除失败:', e);
-    uni.showToast({ title: '删除失败', icon: 'none' });
+    uni.showToast({ title: '移除失败', icon: 'none' });
   } finally {
     uni.hideLoading();
   }
@@ -286,8 +321,10 @@ const goBack = () => {
 };
 
 // 页面加载
-onMounted(() => {
-  loadMembers();
+onMounted(async () => {
+  await loadMembers();
+  // 只有主账号需要项目列表（添加成员时要指定授权哪个项目）
+  if (canManage.value) loadMyProjects();
 });
 </script>
 
@@ -432,6 +469,59 @@ onMounted(() => {
   color: #6B7280;
 }
 
+/* 「（主账号）」紧跟姓名，做成弱化的后缀而不是彩色 badge */
+.master-suffix {
+  font-size: 12px;
+  color: #1E40AF;
+  margin-left: 2px;
+}
+
+/* 待加入：还没登录确认过的成员 */
+.badge.pending {
+  background: #FEF3C7;
+  color: #B45309;
+}
+
+/* 副账户列表里标出「我」 */
+.badge.me {
+  background: #DCFCE7;
+  color: #15803D;
+}
+
+/* 待加入的成员整行弱化，和已加入的区分开 */
+.member-card.is-pending {
+  background: #FAFAFA;
+}
+
+.member-card.is-pending .member-avatar {
+  opacity: 0.6;
+}
+
+.member-hint {
+  display: block;
+  font-size: 11px;
+  color: #D97706;
+  margin-top: 4px;
+}
+
+/* 被授权的项目标签（项目级授权：一个人可以看多套房） */
+.member-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.project-chip {
+  font-size: 11px;
+  color: #1D4ED8;
+  background: #EFF6FF;
+  border: 1px solid #DBEAFE;
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 16px;
+}
+
 .member-phone {
   font-size: 13px;
   color: #9CA3AF;
@@ -558,6 +648,32 @@ onMounted(() => {
 .picker-value {
   font-size: 15px;
   color: #9CA3AF;
+}
+
+.picker-value.picked {
+  color: #1A1F36;
+}
+
+/* 字段下方的小字说明 */
+.field-tip {
+  display: block;
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+/* 弹窗底部的绑定说明块 */
+.bind-note {
+  background: #EFF6FF;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.bind-note-text {
+  font-size: 12px;
+  color: #1D4ED8;
+  line-height: 1.6;
 }
 
 .form-hint {

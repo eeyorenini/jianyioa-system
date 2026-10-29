@@ -135,6 +135,13 @@
             <text v-if="!loading">登 录</text>
             <text v-else>登录中...</text>
           </view>
+          <!-- 没有项目时的出口（常驻）：
+               短信登录只会认「已在本公司建档的手机号」，销售还没建档的新客户必然登录失败。
+               不给出口的话用户只会以为系统坏了。将来这块会扩成主动引导（客户开发客户），
+               所以文案里把「销售 / 设计师」两个角色都点明，方便对方找人。 -->
+          <view class="no-project-tip">
+            <text class="no-project-tip-text">未查询到项目？请联系为您服务的销售人员或设计师为您添加</text>
+          </view>
           <!-- 条款勾选 -->
           <view class="agree-row">
             <view class="agree-check" :class="{ checked: agreed }" @click="agreed = !agreed">
@@ -343,6 +350,100 @@ const sendCode = async () => {
   }
 };
 
+// 把登录结果写进本地存储（主账户 / 副账户通用）
+//
+// v2.5.3 项目级授权：副账户的 customer.id 是**自己那条 family_members.id**，
+// 前端同时注入 x-user-scope: member（见 App.vue），后端见到它只查家庭成员表、
+// 跳过 customers，从根上避开 family_members.id 与 customers.id 的撞号。
+// 副账户能看到哪些项目由服务端按项目授权算，不由前端决定。
+const saveCustomerSession = (data) => {
+  uni.setStorageSync('userInfo', data.customer);
+  uni.setStorageSync('token', 'logged-in');
+  uni.setStorageSync('userType', 'customer');
+  if (data.isFamilyMember && data.masterCustomerId) {
+    uni.setStorageSync('masterCustomerId', data.masterCustomerId);
+    uni.setStorageSync('masterPhone', (data.masterCustomer && data.masterCustomer.phone) || '');
+    if (data.familyMemberId) uni.setStorageSync('familyMemberId', data.familyMemberId);
+  } else {
+    uni.removeStorageSync('masterCustomerId');
+    uni.removeStorageSync('masterPhone');
+    uni.removeStorageSync('familyMemberId');
+  }
+};
+
+// 家庭成员确认查看项目（服务端用一次性 bindToken 认人，前端造不出来）
+const confirmBindFamily = async (bindToken) => {
+  try {
+    const r = await uni.request({
+      url: '/api/family-members/confirm-bind',
+      method: 'POST',
+      data: { bindToken },
+    });
+    const d = r.data || {};
+    if (d.success && d.customer) {
+      saveCustomerSession(d);
+      const n = Number(d.boundCount || 0);
+      uni.showToast({ title: n > 1 ? `已加入 ${n} 个项目` : '已确认', icon: 'success' });
+      setTimeout(() => uni.reLaunch({ url: '/pages/customer/home' }), 700);
+      return true;
+    }
+    uni.showToast({ title: d.message || '确认失败，请重新登录', icon: 'none' });
+    return false;
+  } catch (e) {
+    console.error('确认查看项目失败:', e);
+    uni.showToast({ title: '网络错误', icon: 'none' });
+    return false;
+  }
+};
+
+// 有待确认的项目邀请时弹窗
+//
+// 为什么必须让本人点一次：业主在家庭成员页只填了手机号，填错一位数字就可能把陌生人
+// 拉进项目（能看到地址、施工进度、合同金额）。所以绑定动作只能由本人在验证码登录后确认。
+//
+// v2.5.3 项目级授权：一次列出**全部**待确认项目，点一次确认全部绑定，
+// 不再为每个项目各弹一次（一个人可能同时被几个项目邀请）。
+const promptBindFamily = (data) => new Promise((resolve) => {
+  const list = Array.isArray(data.pendingProjects) ? data.pendingProjects : [];
+  const fam = data.family || {};
+  const masterName = fam.masterName || '家人';
+  const relText = fam.relation ? `以「${fam.relation}」身份` : '';
+
+  let content;
+  if (list.length > 1) {
+    const names = list.map((p, i) => `${i + 1}. ${p.projectName || '未命名项目'}`).join('\n');
+    content = `${masterName} 邀请您${relText}查看以下 ${list.length} 个项目：\n${names}\n\n确认后可查看施工进度、验收记录。`;
+  } else if (list.length === 1) {
+    content = `${masterName} 邀请您${relText}查看项目「${list[0].projectName || '未命名项目'}」，确认后可查看施工进度、验收记录。`;
+  } else {
+    content = `${masterName} 邀请您${relText}查看项目，确认后可查看施工进度。`;
+  }
+
+  uni.showModal({
+    title: '确认查看项目',
+    content,
+    confirmText: '确认查看',
+    cancelText: '暂不查看',
+    success: (res) => {
+      if (!res.confirm) {
+        // 取消 = 这次邀请作废，用户此时**一个可见项目都没有**。
+        // 只 toast 一句就留在原地会让人以为系统坏了，必须说清楚下一步找谁。
+        // 登录态不落库（没绑定就没有身份），但验证码已用掉，所以提示「稍后可重新登录」。
+        uni.showModal({
+          title: '已取消',
+          content: '您暂时无法查看项目进度。如需查看，请联系为您服务的销售人员或设计师为您添加，之后重新登录并点「确认查看」即可。',
+          showCancel: false,
+          confirmText: '知道了',
+        });
+        resolve(false);
+        return;
+      }
+      confirmBindFamily(data.bindToken).then(resolve);
+    },
+    fail: () => resolve(false),
+  });
+});
+
 // 客户登录：手机号 + 验证码
 const handleCustomerLogin = async () => {
   if (!checkAgreed()) return;
@@ -365,26 +466,48 @@ const handleCustomerLogin = async () => {
       data: { phone, code },
     });
     const data = res.data || {};
+
+    // 被业主登记为家庭成员、但本人还没确认过 → 先弹窗，确认后才拿身份
+    if (data.success && data.needBindFamily) {
+      loading.value = false;
+      await promptBindFamily(data);
+      return;
+    }
+
     if (data.success && data.customer) {
-      // 保存用户信息
-      uni.setStorageSync('userInfo', data.customer);
-      uni.setStorageSync('token', 'logged-in');
-      uni.setStorageSync('userType', 'customer');
-      // 如果是家庭成员，额外保存主账户ID和手机号用于查项目和消息
-      if (data.isFamilyMember && data.masterCustomerId) {
-        uni.setStorageSync('masterCustomerId', data.masterCustomerId);
-        // 保存主账户手机号用于消息查询
-        uni.setStorageSync('masterPhone', data.masterCustomer?.phone || '');
-      } else {
-        uni.removeStorageSync('masterCustomerId');
-        uni.removeStorageSync('masterPhone');
+      saveCustomerSession(data);
+
+      // 主账号也可能被别人邀请（比如同时是另一套房子的家属）→ 提醒但不拦。
+      // 待确认的项目确认前没有任何权限，所以这里只提示一句，不阻塞进首页。
+      const pending = Array.isArray(data.pendingProjects) ? data.pendingProjects : [];
+      if (pending.length) {
+        uni.showToast({
+          title: `另有 ${pending.length} 个项目邀请待确认`,
+          icon: 'none',
+          duration: 2500,
+        });
       }
+
       // 客户 → 客户首页（不用 switchTab，因为不在 tabBar）
       // 小程序端顺手把当前微信 openid 绑上，下次进入免输手机号（失败不影响登录）
       bindOpenidQuietly(phone);
       uni.reLaunch({ url: '/pages/customer/home' });
     } else {
-      uni.showToast({ title: data.message || '登录失败', icon: 'none' });
+      // 三种「进不去」要分开说，否则用户分不清是自己号码错了还是销售还没建档：
+      //   ① 完全没登记（没客户档案、也没被邀请）→ 找销售
+      //   ② 被邀请但没确认 → 理论上走上面的 needBindFamily 分支，走不到这里
+      //   ③ 其他（验证码错、验证码过期等）→ 照后端原文
+      const msg = data.message || '登录失败';
+      if (data.code === 'NO_PROJECT' || /未登记|未查询到/.test(msg)) {
+        uni.showModal({
+          title: '暂无可查看的项目',
+          content: '未查询到您名下的装修项目。如果您在本公司确有装修工程，请联系为您服务的销售人员或设计师为您添加。',
+          showCancel: false,
+          confirmText: '知道了',
+        });
+      } else {
+        uni.showToast({ title: msg, icon: 'none' });
+      }
     }
   } catch (e) {
     console.error('登录错误:', e);
@@ -707,6 +830,19 @@ const goBack = () => {
   align-items: flex-start;
   margin-top: 16px;
   padding: 0 4px;
+}
+
+/* 无项目出口：红字，看到就有反应，不藏在灰字里 */
+.no-project-tip {
+  margin-top: 14px;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.no-project-tip-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #E54D42;
 }
 
 .agree-check {

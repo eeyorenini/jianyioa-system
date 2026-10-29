@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <!-- 顶部导航 -->
-    <view class="nav-bar" :style="navStyleCapsule">
+    <view class="nav-bar">
       <text class="nav-back" @click="goBack">‹</text>
       <text class="nav-title">我的装修</text>
       <view class="nav-more" @click="showMore">···</view>
@@ -44,8 +44,8 @@
     <customer-empty-state
       v-else-if="!hasProject"
       type="no-project"
-      title="暂无关联项目"
-      description="请联系工作人员为您绑定项目"
+      title="暂无可查看的项目"
+      description="未查询到您名下的装修项目，请联系为您服务的销售人员或设计师为您添加"
       :show-contact="true"
       @contact="handleContact"
     />
