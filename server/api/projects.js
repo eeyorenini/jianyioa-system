@@ -39,7 +39,35 @@ module.exports = function registerProjectRoutes(app, deps) {
       const userId = getUserId(req);
       const userRole = req.headers['x-user-role'] || '';
       const userIsAdmin = userRole === 'admin' || userRole === '管理员' || userRole === '超级管理员' || userRole === '系统管理员';
-      const hasAll = userIsAdmin || await hasReadAllPermission(userId, 'project');
+
+      // ============================================================
+      // 2026-10-29 新增「选择器模式」?picker=1
+      //
+      // 业务规则（用户明确要求）：
+      //   「项目实际关联谁，谁才能在提交数据时选到这个项目；admin 可以看到所有。」
+      //
+      // 与普通模式的区别：
+      //   普通模式（项目列表 / 财务汇总 / 看板）：尊重 read_all 权限 ——
+      //     项目经理、财务、主材三个角色配了 project:read_all，本来就要看全部项目；
+      //   选择器模式（提交表单里的「关联项目」下拉）：**忽略 read_all**，
+      //     只认 admin(*) 与「实际关联」——
+      //     关联 = creator_id / designer_id / supervisor_id / manager_id / foreman_id
+      //            / 客户手机号与员工手机号一致（见 perm.relatedProjectIds）。
+      //
+      // admin 判定走数据库（loadUserPermissions 对 role_code='admin' 或 username='admin'
+      // 直接给 '*'），不信任客户端 x-user-role 头 —— 否则谁都能加个头冒充管理员。
+      // ============================================================
+      const pickerMode = req.query.picker === '1' || req.query.picker === 'true';
+      let dbIsAdmin = false;
+      if (pickerMode) {
+        try {
+          const perms = await permCore.loadUserPermissions(userId);
+          dbIsAdmin = perms.has('*');
+        } catch (_) { /* 查不到权限就按普通员工处理，最保守 */ }
+      }
+      const hasAll = pickerMode
+        ? dbIsAdmin
+        : (userIsAdmin || await hasReadAllPermission(userId, 'project'));
 
       let sql = `SELECT p.*, 
                  c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
@@ -111,23 +139,35 @@ module.exports = function registerProjectRoutes(app, deps) {
       const projects = await stmt.all(...params);
 
       // 附加每个项目的节点列表
-      const nodeStmt = db.prepare(`SELECT ps.*, s.name as sms_template_name
-        FROM project_progress_nodes ps
-        LEFT JOIN sms_templates s ON s.id = ps.sms_template_id
-        WHERE ps.project_id = ?
-        ORDER BY ps.sort_order ASC, ps.id ASC`);
-      for (const p of projects) {
-        p.nodes = await nodeStmt.all(p.id);
-        // 计算进度百分比
-        if (p.nodes && p.nodes.length > 0) {
-          const completedNodes = p.nodes.filter(n => n.status === 'completed').length;
-          p.progress = Math.round((completedNodes / p.nodes.length) * 100);
-          // 当前节点名称：第一个未完成的节点，全部完成则显示最后一个
-          const pendingNodes = p.nodes.filter(n => n.status !== 'completed');
-          p.current_node_name = pendingNodes.length > 0 ? pendingNodes[0].node_name : p.nodes[p.nodes.length - 1].node_name;
-        } else {
-          p.progress = 0;
-          p.current_node_name = '';
+      // v2.6.1 性能修复：原来是 for 循环里逐个 project_id 查一次（N+1），
+      // 100 个项目 = 1 + 100 次数据库往返，这是"项目列表 / 项目详情打开慢"的主因。
+      // 改为按 id 集合一次 IN 查询，再在内存里分组。
+      if (projects.length) {
+        const ids = projects.map((p) => p.id);
+        const allNodes = await db.prepare(`SELECT ps.*, s.name as sms_template_name
+          FROM project_progress_nodes ps
+          LEFT JOIN sms_templates s ON s.id = ps.sms_template_id
+          WHERE ps.project_id IN (${ids.map(() => '?').join(',')})
+          ORDER BY ps.sort_order ASC, ps.id ASC`).all(...ids);
+        const nodesByProject = new Map();
+        for (const n of allNodes) {
+          const key = Number(n.project_id);
+          if (!nodesByProject.has(key)) nodesByProject.set(key, []);
+          nodesByProject.get(key).push(n);
+        }
+        for (const p of projects) {
+          p.nodes = nodesByProject.get(Number(p.id)) || [];
+          // 计算进度百分比
+          if (p.nodes.length > 0) {
+            const completedNodes = p.nodes.filter(n => n.status === 'completed').length;
+            p.progress = Math.round((completedNodes / p.nodes.length) * 100);
+            // 当前节点名称：第一个未完成的节点，全部完成则显示最后一个
+            const pendingNodes = p.nodes.filter(n => n.status !== 'completed');
+            p.current_node_name = pendingNodes.length > 0 ? pendingNodes[0].node_name : p.nodes[p.nodes.length - 1].node_name;
+          } else {
+            p.progress = 0;
+            p.current_node_name = '';
+          }
         }
       }
 
@@ -152,6 +192,25 @@ module.exports = function registerProjectRoutes(app, deps) {
         WHERE p.id = ?`);
       const project = await stmt.get(req.params.id);
       if (!project) return res.status(404).json({ error: '项目不存在' });
+      // v2.6.1：单条接口补齐 nodes / progress / current_node_name，
+      // 与 /api/projects 列表保持同一数据结构 —— 小程序项目详情页已改为调本接口
+      // （不再拉全量列表再 find），若这里不返回 nodes，进度节点 tab 会变空。
+      project.nodes = await db.prepare(`SELECT ps.*, s.name as sms_template_name
+        FROM project_progress_nodes ps
+        LEFT JOIN sms_templates s ON s.id = ps.sms_template_id
+        WHERE ps.project_id = ?
+        ORDER BY ps.sort_order ASC, ps.id ASC`).all(req.params.id);
+      if (project.nodes.length > 0) {
+        const completedNodes = project.nodes.filter(n => n.status === 'completed').length;
+        project.progress = Math.round((completedNodes / project.nodes.length) * 100);
+        const pendingNodes = project.nodes.filter(n => n.status !== 'completed');
+        project.current_node_name = pendingNodes.length > 0
+          ? pendingNodes[0].node_name
+          : project.nodes[project.nodes.length - 1].node_name;
+      } else {
+        project.progress = 0;
+        project.current_node_name = '';
+      }
       res.json(project);
     } catch (err) {
       res.status(500).json({ error: err.message });

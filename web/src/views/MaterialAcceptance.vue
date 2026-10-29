@@ -387,7 +387,8 @@ const resultTagType = (r = '') => {
 // ===== 数据加载 =====
 async function loadProjects() {
   try {
-    const res = await axios.get('/api/projects')
+    // ?picker=1：选择器只返回「我实际关联的项目」（admin 返回全部）
+    const res = await axios.get('/api/projects?picker=1')
     projects.value = Array.isArray(res.data) ? res.data : (res.data?.data || [])
   } catch (e) {
     projects.value = []

@@ -180,14 +180,22 @@ const loadMaterials = async () => {
 
 const loadProjects = async () => {
   try {
-    const res = await axios.get('/api/projects/list')
-    if (res.data.code === 0) {
-      projectList.value = res.data.data?.list || []
-    } else if (Array.isArray(res.data)) {
+    // ⚠️ 原来打的是 /api/projects/list —— 后端没有这个路由（404），项目下拉一直是空的。
+    // 正确接口是 /api/projects，返回纯数组（2026-10-29 修复）。
+    // ?picker=1：只返回「我实际关联的项目」（admin 返回全部），见 server/api/projects.js
+    const res = await axios.get('/api/projects?picker=1')
+    if (Array.isArray(res.data)) {
       projectList.value = res.data
+    } else if (res.data?.list) {
+      projectList.value = res.data.list
+    } else if (res.data?.data) {
+      projectList.value = Array.isArray(res.data.data) ? res.data.data : (res.data.data.list || [])
+    } else {
+      projectList.value = []
     }
   } catch (error) {
     console.error('加载项目失败:', error)
+    projectList.value = []
   }
 }
 

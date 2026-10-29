@@ -42,6 +42,22 @@ if (fs.existsSync(POPPLER_BIN)) {
   console.log('[ecosystem] 注入 poppler PATH:', POPPLER_BIN);
 }
 
+// 本机 python3 指向「CommandLineTools」的解释器（3.9.6），
+// 主材 Excel 导入/导出（main-materials.js）用 spawnSync('python3') 调它，
+// 需要 openpyxl / pandas —— 已装进该解释器的 user-site。
+//
+// ⚠️ 为什么必须显式指定：
+// PM2 daemon 由 launchd 拉起，PATH 是系统默认（/usr/bin:/bin:...），
+// 但 `pm2 restart --update-env` 会把**当前 shell 的 PATH** 灌进进程，
+// 而 WorkBuddy 环境里托管的 python3（3.13.12）排在 /usr/bin 前面，
+// 后端就会 spawn 到那个没有 openpyxl 的解释器 → 导出报 ModuleNotFoundError。
+// 这里把 CLT 解释器目录提到 PATH 最前面，保证无论怎么重启都命中同一个 python。
+const CLT_PYTHON_DIR = '/Library/Developer/CommandLineTools/usr/bin';
+if (fs.existsSync(path.join(CLT_PYTHON_DIR, 'python3'))) {
+  BACKEND_ENV.PATH = `${CLT_PYTHON_DIR}:${BACKEND_ENV.PATH || process.env.PATH}`;
+  console.log('[ecosystem] 注入 python3 PATH:', CLT_PYTHON_DIR);
+}
+
 module.exports = {
   apps: [
     {
@@ -92,6 +108,10 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
+      // ⚠️ 必须清掉代理环境变量：frpc 会把 HTTP_PROXY/http_proxy 当成
+      // server_addr 的默认值，导致「dial tcp 127.0.0.1:51614: connection refused」
+      // 而连不上真正的 frps（116.204.19.53:7000），进程秒退反复重启。
+      env: { HTTP_PROXY: '', HTTPS_PROXY: '', http_proxy: '', https_proxy: '' },
       // frpc 二进制没装就 disabled=true，跳过
       enabled: require('fs').existsSync('/Users/gtamer/bin/frpc')
     }

@@ -127,6 +127,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// 2026-10-29 修复：本页用裸 fetch，不走 axios 拦截器，请求无 x-user-id →
+// 后端 getUserId()=0 → /api/projects 判为「无关联项目」直接 return []，
+// 「项目」下拉与筛选因此一直是空的。
+import { authHeaders } from '@/utils/authHeaders'
 
 const tableData = ref([])
 const projects = ref([])
@@ -146,9 +150,15 @@ const getTypeColor = (type) => {
 
 const loadData = async () => {
   try {
-    const [costRes, projectRes] = await Promise.all([fetch('/api/cost-records'), fetch('/api/projects')])
+    const H = authHeaders()
+    const [costRes, projectRes] = await Promise.all([
+      fetch('/api/cost-records', { headers: { ...H } }),
+      fetch('/api/projects?picker=1', { headers: { ...H } })
+    ])
     let data = await costRes.json()
-    projects.value = await projectRes.json()
+    const projData = await projectRes.json()
+    // 后端 /api/projects 返回纯数组，这里做形态兜底
+    projects.value = Array.isArray(projData) ? projData : (projData?.list || projData?.data || [])
     if (searchForm.value.project_id) data = data.filter(d => d.project_id === searchForm.value.project_id)
     if (searchForm.value.type) data = data.filter(d => d.type === searchForm.value.type)
     tableData.value = data
@@ -167,7 +177,7 @@ const handleAdd = () => {
 
 const handleSave = async () => {
   try {
-    await fetch('/api/cost-records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.value) })
+    await fetch('/api/cost-records', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(form.value) })
     ElMessage.success('保存成功'); dialogVisible.value = false; loadData()
   } catch (error) { ElMessage.error('保存失败') }
 }
@@ -175,7 +185,7 @@ const handleSave = async () => {
 const handleDelete = async (id) => {
   try {
     await ElMessageBox.confirm('确定要删除吗?', '提示', { type: 'warning' })
-    await fetch(`/api/cost-records/${id}`, { method: 'DELETE' })
+    await fetch(`/api/cost-records/${id}`, { method: 'DELETE', headers: { ...authHeaders() } })
     ElMessage.success('删除成功'); loadData()
   } catch (error) { if (error !== 'cancel') ElMessage.error('删除失败') }
 }

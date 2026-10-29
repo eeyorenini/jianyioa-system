@@ -192,11 +192,47 @@ module.exports = function registerMessageRoutes(app, deps) {
     const idOf = (m) => parseInt(m.source_id != null ? m.source_id : m.related_id) || 0;
 
     const collectIds = [];
+    // 2026-10-30：巡检类消息（PC「巡检记录」写 related_type=inspection，
+    // 小程序整改写 rectification_issue）本来拿不到 project_id，
+    // 消息卡片上的「查看详情」就只能回到列表页而定位不到具体项目。
+    // 这里按实体反查项目，前端才能跳「项目详情 → 巡检 tab」。
+    const inspIds = [];
+    const rectIds = [];
     for (const m of list) {
       const sid = idOf(m);
       if (!sid) continue;
       if (sourceOf(m) === 'collection') collectIds.push(sid);
       else if (sourceOf(m) === 'project') m.project_id = sid;
+      else if (sourceOf(m) === 'inspection') inspIds.push(sid);
+      else if (sourceOf(m) === 'rectification_issue') rectIds.push(sid);
+    }
+
+    if (inspIds.length || rectIds.length) {
+      try {
+        const pm = {};
+        const groups = [
+          ['inspections', inspIds],
+          ['rectification_issues', rectIds],
+        ];
+        for (const [table, ids] of groups) {
+          if (!ids.length) continue;
+          const uniq = [...new Set(ids)];
+          const [rows] = await pool.query(
+            `SELECT id, project_id FROM ${table} WHERE id IN (${uniq.map(() => '?').join(',')})`,
+            uniq
+          );
+          for (const r of rows) pm[`${table}:${r.id}`] = r.project_id;
+        }
+        for (const m of list) {
+          const st = sourceOf(m);
+          if (st !== 'inspection' && st !== 'rectification_issue') continue;
+          const table = st === 'inspection' ? 'inspections' : 'rectification_issues';
+          const pid = pm[`${table}:${idOf(m)}`];
+          if (pid) m.project_id = pid;
+        }
+      } catch (e) {
+        console.error('[attachProjectInfo] 巡检记录反查项目失败:', e.message);
+      }
     }
 
     if (collectIds.length) {

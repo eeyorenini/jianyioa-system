@@ -129,6 +129,22 @@ module.exports = function registerErpExtRoutes(app, deps) {
     const userId = getUserId(req);
     const { inspection_id, project_id, project_name, issue_desc, priority, status, responsible_id, responsible_name, due_date, images, remark, title, category, location, level, description } = req.body;
     const nowStr = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    // 2026-10-29 防重复提交（幂等）：同项目 + 同标题 + 同位置 + 同创建人，60 秒内重复 POST
+    // 直接返回已有记录，不再新建。
+    // 起因：移动端「新建巡检问题」提交成功后要等 1.5s 才 navigateBack，页面没跳走时用户会连点，
+    // 柏林山水 2026-10-29 21:50 就因此 10 秒内建了 8 条一模一样的「卫生问题」。
+    if (project_id && (title || issue_desc)) {
+      try {
+        const cutoff = new Date(Date.now() - 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+        const dup = await db.prepare(`SELECT id FROM rectification_issues
+          WHERE project_id = ? AND creator_id = ? AND title = ? AND COALESCE(location, '') = ? AND created_at >= ?
+          ORDER BY id DESC LIMIT 1`)
+          .get(project_id, userId, title || issue_desc || '', location || '', cutoff);
+        if (dup && dup.id) {
+          return res.json({ id: dup.id, message: '重复提交已忽略', duplicate: true });
+        }
+      } catch (_) { /* 去重查询失败不影响正常提交 */ }
+    }
     // 2026-10-23 修复：移动端巡检提交页只带了 project_id，project_name 取不到就是空串，
     // 导致整改表落库后项目名为空 → 待办中心/巡检列表副标题显示空白。
     // 服务端按 project_id 反查项目名兜底，不依赖客户端是否传对。

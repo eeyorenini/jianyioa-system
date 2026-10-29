@@ -17,6 +17,32 @@ module.exports = function registerReportNoticeRoutes(app, deps) {
     notifyProject,
   } = deps;
 
+  /**
+   * 巡检提交消息的正文摘要。
+   * 只取「这条记录本身的基本内容」，不放模板套话，也不放并不存在的「得分」字段。
+   * issues 在 PC 端会被拼成「问题\n\n巡检日期：…\n巡检地点：…\n备注：…」的多行串，
+   * 摘要只取首行（真正的 issue_desc），地点/备注单独抽出来用。
+   */
+  function buildInspectionSummary({ inspector_name, result, issues, status } = {}) {
+    const raw = String(issues || '').trim();
+    const firstLine = raw.split('\n').map((s) => s.trim()).filter(Boolean)[0] || '';
+    const locMatch = raw.match(/巡检地点[：:]\s*([^\n]*)/);
+    const place = locMatch ? locMatch[1].trim() : '';
+
+    const parts = [];
+    if (inspector_name) parts.push(`巡检人：${inspector_name}`);
+    if (result) parts.push(`结果：${String(result).trim().slice(0, 40)}`);
+    if (firstLine && firstLine !== String(result || '').trim()) {
+      parts.push(`问题：${firstLine.slice(0, 50)}`);
+    }
+    if (place) parts.push(`地点：${place.slice(0, 30)}`);
+    if (status) parts.push(`状态：${status}`);
+
+    return parts.length
+      ? `工地巡检已提交，${parts.join('，')}。请及时查看。`
+      : '工地巡检已提交，请及时查看。';
+  }
+
   app.get('/api/reports', async (req, res) => {
     const stmt = db.prepare('SELECT * FROM reports ORDER BY created_at DESC');
     res.json(await stmt.all());
@@ -155,11 +181,14 @@ module.exports = function registerReportNoticeRoutes(app, deps) {
     await addLog(userId, '', '新增', '验房管理', result2.lastInsertRowid, project_name, `项目: ${project_name}`, req.ip);
 
     // 通知：巡检验收提交
+    // 2026-10-30：PC「巡检记录」表单并没有「得分」字段（见 web/src/views/InspectionLogs.vue），
+    //   原来模板写 `得分：${score || '未评分'}` → 每条消息永远显示「得分：未评分」，纯噪音。
+    //   改成把这条记录的真实内容摘要出来：巡检人 / 结果 / 问题首行 / 地点。
     notifyProject(
       'inspection_submit',
       project_id,
-    `工地巡检提交：${project_name}`,
-    `工地巡检已提交，巡检人：${inspector_name}，得分：${score || '未评分'}。请及时查看。`,
+      `工地巡检提交：${project_name}`,
+      buildInspectionSummary({ inspector_name, result, issues, status }),
       result2.lastInsertRowid,
       'inspection'
     ).catch(console.error);

@@ -104,6 +104,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+// 2026-10-29 修复：本页用的是裸 fetch，不走 main.js 的 axios 拦截器，
+// 请求里没有 x-user-id → 后端 getUserId() 返回 0 → /api/projects 走「非全量」分支，
+// relatedProjectIds(0) 为空直接 return []，导致「关联项目」下拉一个项目都没有。
+import { authHeaders } from '@/utils/authHeaders'
 
 const tableData = ref([])
 const suppliers = ref([])
@@ -124,17 +128,20 @@ const getStatusType = (status) => {
 const loadData = async () => {
   try {
     // v2.3.1：供应商已合并到外部联系人，按 category=供应商 过滤
+    // 2026-10-29：三个请求都补上鉴权头（原来裸 fetch 不带 x-user-id，项目下拉恒为空）
+    const H = authHeaders()
     const [purchasesRes, suppliersRes, projectsRes] = await Promise.all([
-      fetch('/api/purchases'),
-      fetch('/api/external-contacts?category=' + encodeURIComponent('供应商') + '&is_active=1'),
-      fetch('/api/projects')
+      fetch('/api/purchases', { headers: { ...H } }),
+      fetch('/api/external-contacts?category=' + encodeURIComponent('供应商') + '&is_active=1', { headers: { ...H } }),
+      fetch('/api/projects?picker=1', { headers: { ...H } })
     ])
     let data = await purchasesRes.json()
     const supplierData = (await suppliersRes.json())?.list || []
     const projectData = await projectsRes.json()
     // 适配主材页：保留 {id, name} 形态；外部联系人表 id 主键足够
     suppliers.value = supplierData
-    projects.value = projectData
+    // 后端 /api/projects 返回纯数组，这里做一次形态兜底，避免以后再变结构就静默变空
+    projects.value = Array.isArray(projectData) ? projectData : (projectData?.list || projectData?.data || [])
     if (searchForm.value.purchase_no) data = data.filter(d => d.purchase_no?.includes(searchForm.value.purchase_no))
     if (searchForm.value.status) data = data.filter(d => d.status === searchForm.value.status)
     tableData.value = data
@@ -163,7 +170,7 @@ const handleSave = async () => {
   try {
     const method = isEdit.value ? 'PUT' : 'POST'
     const url = isEdit.value ? `/api/purchases/${form.value.id}` : '/api/purchases'
-    await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form.value) })
+    await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(form.value) })
     ElMessage.success('保存成功'); dialogVisible.value = false; loadData()
   } catch (error) { ElMessage.error('保存失败') }
 }
@@ -171,7 +178,7 @@ const handleSave = async () => {
 const handleDelete = async (id) => {
   try {
     await ElMessageBox.confirm('确定要删除吗?', '提示', { type: 'warning' })
-    await fetch(`/api/purchases/${id}`, { method: 'DELETE' })
+    await fetch(`/api/purchases/${id}`, { method: 'DELETE', headers: { ...authHeaders() } })
     ElMessage.success('删除成功'); loadData()
   } catch (error) { if (error !== 'cancel') ElMessage.error('删除失败') }
 }

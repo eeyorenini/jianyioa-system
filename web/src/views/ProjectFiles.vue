@@ -336,7 +336,8 @@ const loadList = async () => {
 
 const loadProjects = async () => {
   try {
-    const res = await axios.get('/api/projects')
+    // ?picker=1：上传/筛选用的项目下拉只返回「我实际关联的项目」（admin 返回全部）
+    const res = await axios.get('/api/projects?picker=1')
     projectList.value = Array.isArray(res.data) ? res.data : (res.data.list || [])
   } catch (e) {
     // 只有 project_file 权限、没有 project 权限时这里会 403，下拉为空但关键词检索仍可用

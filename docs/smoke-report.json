@@ -1,5 +1,5 @@
 {
-  "time": "2026-10-29T04:19:34.962Z",
+  "time": "2026-10-29T12:48:09.770Z",
   "base": "http://127.0.0.1:3002",
   "account": "admin(id=1)",
   "infra": [
@@ -11,7 +11,7 @@
       "label": "后端健康检查",
       "level": "green",
       "status": 200,
-      "ms": 32,
+      "ms": 58,
       "note": "",
       "pass": true
     },
@@ -20,7 +20,7 @@
       "label": "PC 首页 web/dist",
       "level": "green",
       "status": 200,
-      "ms": 20,
+      "ms": 3,
       "note": "",
       "pass": true
     },
@@ -29,14 +29,14 @@
       "label": "H5 首页 public-mobile-h5",
       "level": "green",
       "status": 200,
-      "ms": 20,
+      "ms": 3,
       "note": "",
       "pass": true
     }
   ],
   "summary": {
-    "green": 126,
-    "yellow": 6,
+    "green": 125,
+    "yellow": 7,
     "skip": 5,
     "red": 0,
     "total": 137
@@ -47,6 +47,12 @@
   },
   "reds": [],
   "yellows": [
+    {
+      "method": "GET",
+      "path": "/api/project-files/:id/download",
+      "status": 404,
+      "module": "项目"
+    },
     {
       "method": "GET",
       "path": "/api/material-acceptances/meta",
