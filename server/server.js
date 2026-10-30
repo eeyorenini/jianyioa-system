@@ -1041,6 +1041,14 @@ require('./api/acceptance')(app, {
   permCore, pool, db, getUserId, checkPermission,
   hasReadAllPermission, isAdmin, addLog, notifyProject,
 });
+// ==================== 通用验收单（验收类型来自《施工服务手册》，与旧 acceptance 并存） ====================
+require('./api/acceptance-sheets')(app, {
+  pool, db, getUserId, checkPermission, isAdmin, addLog,
+});
+// ==================== 手写签名库（员工/业主个人中心签名，验收签字调用） ====================
+require('./api/signatures')(app, {
+  pool, getUserId, addLog,
+});
 // ==================== 派工管理 ====================
 // 239 行已抽到 ./api/dispatches.js（2026-10-29 渐进拆分第 15 轮，注册顺序不变）
 require('./api/dispatches')(app, {

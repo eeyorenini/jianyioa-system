@@ -186,10 +186,11 @@ module.exports = function registerProjectNodeRoutes(app, deps) {
 
       for (const n of templateNodes) {
         await db.prepare(
-          'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, plan_date, plan_end_date, sms_template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+          'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, plan_date, plan_end_date, sms_template_id, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
         ).run([
           req.params.projectId, n.node_name, n.node_key, n.sort_order, 'pending',
-          n._plan_start || null, n._plan_end || null, n.default_sms_template_id || null
+          n._plan_start || null, n._plan_end || null, n.default_sms_template_id || null,
+          n.note || null
         ]);
       }
       await addLog(userId, '', '新增', '节点管理', parseInt(req.params.projectId), project.name, `从模板初始化项目节点，共${templateNodes.length}个节点`, req.ip);
@@ -203,10 +204,10 @@ module.exports = function registerProjectNodeRoutes(app, deps) {
   app.post('/api/progress-nodes', async (req, res) => {
     try {
       const userId = getUserId(req);
-      const { project_id, node_name, node_key, sort_order, sms_template_id } = req.body;
+      const { project_id, node_name, node_key, sort_order, sms_template_id, note } = req.body;
       const result = await db.prepare(
-        'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())'
-      ).run([project_id, node_name, node_key, sort_order || 0, 'pending', sms_template_id || null]);
+        'INSERT INTO project_progress_nodes (project_id, node_name, node_key, sort_order, status, sms_template_id, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+      ).run([project_id, node_name, node_key, sort_order || 0, 'pending', sms_template_id || null, note || null]);
       await addLog(userId, '', '新增', '节点管理', result.lastInsertRowid, node_name, `新增节点: ${node_name}`, req.ip);
       res.json({ id: result.lastInsertRowid, message: '节点添加成功' });
     } catch (err) {
