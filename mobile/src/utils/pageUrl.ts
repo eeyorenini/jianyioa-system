@@ -89,7 +89,7 @@ const BY_SOURCE_TYPE: Record<string, (id: string, msg?: any) => MessageTarget> =
       ? { path: `/pages/projects/detail`, label: '查看巡检', needId: false, query: `id=${pid}&tab=inspect` }
       : { path: `/pages/inspection/list`, label: '查看巡检', needId: false }
   },
-  acceptance: (id) => ({ path: `/pages/acceptance/detail?id=${id}`, label: '查看验收', needId: true }),
+  acceptance: (id) => ({ path: `/pages/acceptance/report?id=${id}`, label: '查看验收报告', needId: true }),
   // v2.4.1 主材验收（工长进场材料逐项验收）
   material_acceptance: (id) => ({ path: `/pages/material-accept/detail?id=${id}`, label: '查看材料验收', needId: true }),
   purchase: (id) => ({ path: `/pages/purchase/detail?id=${id}`, label: '查看采购', needId: true }),

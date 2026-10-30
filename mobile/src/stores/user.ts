@@ -164,6 +164,12 @@ export const useUserStore = () => {
     "pages/bind/index",
     "pages/bind/scan",
     "pages/identity/select",
+    // 验收报告分享页：业主 / 潜在客户点开分享卡片直接看，凭 ?token= 免登录。
+    // 不带 token 时接口 401，页面提示「报告不存在」，不会泄露数据。
+    // ⚠️ 小程序端该页在 pkg-inspect 分包，构建期 subpackagePaths 会把路径改写成
+    //    pkg-inspect/acceptance/report，所以两种写法都要在白名单里，否则业主被踢回登录页。
+    "pages/acceptance/report",
+    "pkg-inspect/acceptance/report",
   ];
 
   /** 安全取页面栈（小程序 / H5 都可用，取不到返回空数组） */

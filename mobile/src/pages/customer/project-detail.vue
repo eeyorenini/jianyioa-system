@@ -138,6 +138,10 @@
                       <text class="node-date-text muted">未排期</text>
                     </view>
                     <view class="node-note" v-if="node.note">
+                      <view class="note-head">
+                        <text class="note-badge">验收标准</text>
+                        <text class="note-hint">本节点需达到以下要求</text>
+                      </view>
                       <text class="note-text">{{ node.note }}</text>
                     </view>
                   </view>
@@ -1033,6 +1037,27 @@ onMounted(() => {
   padding: 6px 8px;
   background: #fff;
   border-radius: 6px;
+}
+
+.note-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.note-badge {
+  font-size: 10px;
+  color: #1D4ED8;
+  background: #DBEAFE;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
+.note-hint {
+  font-size: 10px;
+  color: #9CA3AF;
 }
 
 .note-text {

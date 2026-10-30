@@ -44,6 +44,12 @@
     <view class="menu-section">
       <view class="menu-title">系统</view>
       <view class="menu-list">
+        <view class="menu-row" @click="goPage('/pages/mine/signature')">
+          <text class="menu-row-icon">✍️</text>
+          <text class="menu-row-label">我的签名</text>
+          <text class="sign-tag" :class="signTagClass">{{ signTagText }}</text>
+          <text class="menu-row-arrow">›</text>
+        </view>
         <view class="menu-row" @click="goPage('/pages/todo/index')">
           <text class="menu-row-icon">📥</text>
           <text class="menu-row-label">待办中心</text>
@@ -242,8 +248,29 @@ const onWxBindTap = () => {
 const syncUser = () => {
   loadUnread();
   loadWxBind();
+  loadSignature();
   // 权限以服务端为准：刷新后重新应用 tabBar（角色/借权变化即时生效）
   userStore.fetchMe().then(() => applyRoleTabBar());
+};
+
+// ====== 手写签名状态（验收签字要用，没签就提示） ======
+const signState = ref({ loaded: false, exists: false });
+const signTagText = computed(() => {
+  if (!signState.value.loaded) return '检测中';
+  return signState.value.exists ? '已保存' : '未签写';
+});
+const signTagClass = computed(() => (signState.value.exists ? 'is-ok' : 'is-warn'));
+
+const loadSignature = () => {
+  uni.request({
+    url: '/api/signatures/me',
+    header: authHeader(),
+    success: (res) => {
+      const d = res.data || {};
+      signState.value = { loaded: true, exists: !!d.exists };
+    },
+    fail: () => { signState.value = { loaded: true, exists: false }; },
+  });
 };
 onMounted(syncUser);
 onShow(syncUser);
@@ -544,6 +571,26 @@ const goBack = () => {
 .menu-row-arrow {
   font-size: 20px;
   color: #D1D5DB;
+}
+
+/* 签名状态标签 */
+.sign-tag {
+  font-size: 22rpx;
+  line-height: 1;
+  padding: 8rpx 14rpx;
+  border-radius: 20rpx;
+  margin-right: 12rpx;
+  flex-shrink: 0;
+}
+
+.sign-tag.is-ok {
+  background: #E8F8F0;
+  color: #10B981;
+}
+
+.sign-tag.is-warn {
+  background: #FEF6E7;
+  color: #D97706;
 }
 
 /* 微信绑定状态标签（仅小程序「我的」页） */

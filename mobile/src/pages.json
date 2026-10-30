@@ -169,6 +169,13 @@
       }
     },
     {
+      "path": "pages/mine/signature",
+      "style": {
+        "navigationBarTitleText": "我的签名",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/agreement/service",
       "style": {
         "navigationBarTitleText": "用户服务协议",
@@ -333,21 +340,28 @@
         "enablePullDownRefresh": true,
         "backgroundTextStyle": "dark",
         "onReachBottomDistance": 80,
-            "navigationBarTitleText": "验收管理",
+            "navigationBarTitleText": "验收记录",
             "navigationStyle": "custom"
           }
         },
         {
-          "path": "acceptance/add",
+          "path": "acceptance/types",
           "style": {
-            "navigationBarTitleText": "新建验收",
+            "navigationBarTitleText": "验收中心",
             "navigationStyle": "custom"
           }
         },
         {
-          "path": "acceptance/detail",
+          "path": "acceptance/fill",
           "style": {
-            "navigationBarTitleText": "验收详情",
+            "navigationBarTitleText": "填写验收单",
+            "navigationStyle": "custom"
+          }
+        },
+        {
+          "path": "acceptance/report",
+          "style": {
+            "navigationBarTitleText": "验收报告",
             "navigationStyle": "custom"
           }
         },
