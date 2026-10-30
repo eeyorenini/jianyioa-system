@@ -164,6 +164,9 @@ export const useUserStore = () => {
     "pages/bind/index",
     "pages/bind/scan",
     "pages/identity/select",
+    // 验收报告分享页：业主 / 潜在客户点开短链直接看，凭 ?token= 免登录。
+    // 不带 token 时接口会 401，页面自己提示「报告不存在」，不会泄露数据。
+    "pages/acceptance/report",
   ];
 
   /** 安全取页面栈（小程序 / H5 都可用，取不到返回空数组） */

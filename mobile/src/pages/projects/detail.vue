@@ -287,20 +287,21 @@
               </view>
               <view class="log-user-info">
                 <view class="log-user-line">
-                  <text class="log-operator">✅ {{ a.stage || '验收' }}</text>
+                  <text class="log-operator">✅ {{ a.template_name || '验收' }}</text>
                   <text class="log-time">{{ formatFullTime(a.created_at) }}</text>
                 </view>
                 <view class="log-tags-row">
-                  <text class="log-tag-icon status-tag">{{ a.accept_status || '待验收' }}</text>
-                  <text class="log-tag-icon" v-if="a.quality_score != null">⭐ {{ a.quality_score }} 分</text>
+                  <text class="log-tag-icon status-tag">{{ resultLabel(a.result) }}</text>
+                  <text class="log-tag-icon">{{ a.item_count }} 项 · 合格 {{ a.pass_count }}</text>
+                  <text class="log-tag-icon" v-if="a.area">{{ a.area }}</text>
                 </view>
               </view>
             </view>
 
-            <view class="log-content-area" v-if="a.issues">
+            <view class="log-content-area" v-if="a.remark">
               <view class="log-content-row">
-                <view class="log-tag-box">问题</view>
-                <view class="log-content-text">{{ a.issues }}</view>
+                <view class="log-tag-box">备注</view>
+                <view class="log-content-text">{{ a.remark }}</view>
               </view>
             </view>
 
@@ -847,6 +848,7 @@
 <script setup >
 import { ref, computed, onMounted, watch } from "vue";
 import { absAsset } from "@/utils/api";
+import { authHeader } from "@/utils/permission";
 import { useUserStore } from "@/stores/user";
 import { toDate } from "@/utils/date";
 import StatusWheel from "@/components/status-wheel.vue";
@@ -1952,17 +1954,17 @@ const fetchInspections = async () => {
   }
 };
 
-// 加载验收记录
+// 加载验收记录（2026-10-30 改走新验收单接口，旧 acceptance 表在移动端不再展示）
 const fetchAcceptances = async () => {
   if (!projectId.value) return;
   acceptancesLoading.value = true;
   try {
-    const token = uni.getStorageSync("token");
     const res = await uni.request({
-      url: `/api/acceptance?project_id=${projectId.value}`,
-      header: { Authorization: token },
+      url: `/api/acceptance-sheets?project_id=${projectId.value}`,
+      header: authHeader(),
     });
-    acceptances.value = Array.isArray(res.data) ? res.data : [];
+    const d = res.data || {};
+    acceptances.value = Array.isArray(d.list) ? d.list : [];
   } catch (e) {
     console.error('加载验收失败:', e);
     acceptances.value = [];
@@ -1971,14 +1973,13 @@ const fetchAcceptances = async () => {
   }
 };
 
-// 验收附件图片（JSON 字符串数组）
+// 验收附件图片（新接口 photos 为 JSON 字符串数组，统一补绝对地址）
 const getAcceptPhotos = (a) => {
-  if (!a || !a.attachment) return [];
+  if (!a || !a.photos) return [];
   try {
-    let p = a.attachment;
+    let p = a.photos;
     if (typeof p === 'string') p = JSON.parse(p);
-    if (typeof p === 'string') p = JSON.parse(p);
-    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()) : [];
+    return Array.isArray(p) ? p.filter((x) => x && String(x).trim()).map(absAsset) : [];
   } catch { return []; }
 };
 
@@ -1987,12 +1988,14 @@ const previewAcceptPhoto = (a, idx) => {
   uni.previewImage({ urls: photos, current: photos[idx] });
 };
 
+const resultLabel = (r) => ({ pass: '合格', fail: '不合格', rectify: '整改中', pending: '未完成' }[r] || r || '');
+
 const goAcceptAdd = () => {
-  uni.navigateTo({ url: `/pages/acceptance/add?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
+  uni.navigateTo({ url: `/pages/acceptance/types?projectId=${projectId.value}&projectName=${encodeURIComponent(project.value.name || '')}` });
 };
 
 const goAcceptDetail = (a) => {
-  uni.navigateTo({ url: `/pages/acceptance/detail?id=${a.id}` });
+  uni.navigateTo({ url: `/pages/acceptance/report?id=${a.id}` });
 };
 
 // ===== 主材验收（v2.4.1）=====

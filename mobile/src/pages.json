@@ -464,6 +464,13 @@
       }
     },
     {
+      "path": "pages/mine/signature",
+      "style": {
+        "navigationBarTitleText": "我的签名",
+        "navigationStyle": "custom"
+      }
+    },
+    {
       "path": "pages/mine/my-inspections",
       "style": {
         "navigationBarTitleText": "我的巡检",
@@ -494,21 +501,28 @@
     {
       "path": "pages/acceptance/list",
       "style": {
-        "navigationBarTitleText": "验收管理",
+        "navigationBarTitleText": "验收记录",
         "navigationStyle": "custom"
       }
     },
     {
-      "path": "pages/acceptance/add",
+      "path": "pages/acceptance/types",
       "style": {
-        "navigationBarTitleText": "新建验收",
+        "navigationBarTitleText": "验收中心",
         "navigationStyle": "custom"
       }
     },
     {
-      "path": "pages/acceptance/detail",
+      "path": "pages/acceptance/fill",
       "style": {
-        "navigationBarTitleText": "验收详情",
+        "navigationBarTitleText": "填写验收单",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/acceptance/report",
+      "style": {
+        "navigationBarTitleText": "验收报告",
         "navigationStyle": "custom"
       }
     },

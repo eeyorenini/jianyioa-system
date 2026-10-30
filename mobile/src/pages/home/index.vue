@@ -427,8 +427,8 @@ const handleQuick = (item) => {
       uni.navigateTo({ url: `/pages/dispatch/add?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'newMaterial': openMaterialPicker(); break;
-    case 'newAccept': openProjectPicker('选择项目后查看进度验收', (p) => {
-      uni.navigateTo({ url: `/pages/acceptance/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
+    case 'newAccept': openProjectPicker('选择项目后开始验收', (p) => {
+      uni.navigateTo({ url: `/pages/acceptance/types?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });
     }); break;
     case 'newMatAccept': openProjectPicker('选择项目后查看主材验收', (p) => {
       uni.navigateTo({ url: `/pages/material-accept/list?projectId=${p.id}&projectName=${encodeURIComponent(p.name)}` });

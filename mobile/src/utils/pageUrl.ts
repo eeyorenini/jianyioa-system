@@ -80,7 +80,7 @@ const BY_SOURCE_TYPE: Record<string, (id: string, msg?: any) => MessageTarget> =
   dispatch: (id) => ({ path: `/pages/dispatch/detail?id=${id}`, label: '查看派工', needId: true }),
   // 移动端「巡检」写的是 rectification_issues，详情页即整改详情
   rectification_issue: (id) => ({ path: `/pages/inspection/detail?id=${id}`, label: '查看整改详情', needId: true }),
-  acceptance: (id) => ({ path: `/pages/acceptance/detail?id=${id}`, label: '查看验收', needId: true }),
+  acceptance: (id) => ({ path: `/pages/acceptance/report?id=${id}`, label: '查看验收报告', needId: true }),
   // v2.4.1 主材验收（工长进场材料逐项验收）
   material_acceptance: (id) => ({ path: `/pages/material-accept/detail?id=${id}`, label: '查看材料验收', needId: true }),
   purchase: (id) => ({ path: `/pages/purchase/detail?id=${id}`, label: '查看采购', needId: true }),
