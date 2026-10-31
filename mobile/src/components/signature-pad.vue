@@ -1,69 +1,36 @@
 <template>
-  <view class="sig-wrap" :class="{ 'is-fs': fs }">
-    <!-- ───────── 内联模式 ───────── -->
-    <template v-if="!fs">
-      <canvas
-        class="sig-canvas"
-        :canvas-id="canvasId"
-        :id="canvasId"
-        :style="{ height: height + 'px' }"
-        disable-scroll="true"
-        @touchstart="onStart"
-        @touchmove="onMove"
-        @touchend="onEnd"
-        @touchcancel="onEnd"
-      />
-      <!-- 空板提示 + 签名横线，只在没下笔时显示 -->
-      <view class="sig-placeholder" v-if="!hasInk" @click.stop>
-        <text class="ph-text">请在此处签名</text>
-        <view class="ph-line"></view>
+  <view class="sig-wrap">
+    <canvas
+      class="sig-canvas"
+      :canvas-id="canvasId"
+      :id="canvasId"
+      :style="{ height: height + 'px' }"
+      disable-scroll="true"
+      @touchstart="onStart"
+      @touchmove="onMove"
+      @touchend="onEnd"
+      @touchcancel="onEnd"
+    />
+    <!-- 空板提示 + 签名横线，只在没下笔时显示 -->
+    <view class="sig-placeholder" v-if="!hasInk">
+      <text class="ph-text">请在此处签名</text>
+      <view class="ph-line"></view>
+    </view>
+    <view class="sig-tools">
+      <view class="style-switch">
+        <view
+          class="style-btn"
+          :class="{ on: variant === 'brush' }"
+          @click="setVariant('brush')"
+        >书法</view>
+        <view
+          class="style-btn"
+          :class="{ on: variant === 'pen' }"
+          @click="setVariant('pen')"
+        >签字笔</view>
       </view>
-      <view class="sig-tools">
-        <view class="style-switch">
-          <view
-            class="style-btn"
-            :class="{ on: variant === 'brush' }"
-            @click="setVariant('brush')"
-          >书法</view>
-          <view
-            class="style-btn"
-            :class="{ on: variant === 'pen' }"
-            @click="setVariant('pen')"
-          >签字笔</view>
-        </view>
-        <view class="tool-btn" :class="{ off: !hasInk }" @click="undo">
-          <text>撤销</text>
-        </view>
-        <view class="tool-btn" :class="{ off: !hasInk }" @click="clear">
-          <text>清空</text>
-        </view>
-        <view class="tool-btn fs-entry" @click="enterFs">
-          <text>横屏手写</text>
-        </view>
-      </view>
-    </template>
-
-    <!-- ───────── 全屏横屏模式 ─────────
-         整层用 CSS 旋转 90°，画布像素仍是横的，导出即横版签名。
-         用户把手机逆时针转过来（机头朝左）就是正的。 -->
-    <view v-else class="fs-layer">
-      <canvas
-        class="fs-canvas"
-        :canvas-id="canvasId"
-        :id="canvasId"
-        :style="{ height: fsCanvasH + 'px' }"
-        disable-scroll="true"
-        @touchstart="onFsStart"
-        @touchmove="onFsMove"
-        @touchend="onFsEnd"
-        @touchcancel="onFsEnd"
-      />
-      <view class="fs-bar">
-        <text class="fs-hint">把手机横过来（机头朝左），写大一点更好看</text>
-        <view class="fs-act" :class="{ off: !hasInk }" @click="undo">撤销</view>
-        <view class="fs-act" :class="{ off: !hasInk }" @click="clear">清空</view>
-        <view class="fs-act primary" @click="exitFs">完成</view>
-      </view>
+      <view class="tool-btn" :class="{ off: !hasInk }" @click="undo">撤销</view>
+      <view class="tool-btn" :class="{ off: !hasInk }" @click="clear">清空</view>
     </view>
   </view>
 </template>
@@ -72,32 +39,31 @@
 /**
  * 手写签名板（H5 / 小程序共用，不使用三方库）
  *
- * ── 为什么笔迹不像书法？根子不在「笔锋参数」，在「画法」──
- * 旧实现：把折线拆成几百条短线段，每段单独 setLineWidth + stroke()。
- *   问题一：每次 stroke() 都是独立的圆头笔段，接缝处反复叠加，
- *           放大看是一节一节的「香肠」，永远不会有笔锋那种连续边缘。
- *   问题二：动态范围只有 6.2 → 0.8，且默认就细，写出来像中性笔。
+ * ⚠️ 不要给 canvas 加 CSS 旋转做「横屏」。
+ *   canvas 在微信里是原生组件，transform 之后 WeChat 上报的触摸坐标
+ *   与画布坐标系的对应关系不稳定（不同基础库表现不一致），
+ *   表现为「笔画不跟着手指走」。横屏必须走系统级旋转：
+ *   页面 pages.json 配 pageOrientation: 'landscape'，
+ *   canvas 本身不做任何变换，坐标就天然正确。
  *
- * 现在改成「轮廓填充」：
- *   1. 平滑原始采样点（3 点加权，跑 2 遍）
+ * ── 笔迹画法：轮廓填充（不是逐段描边）──
+ *   1. 3 点加权平滑跑 2 遍，去掉手指高频抖动
  *   2. Catmull-Rom 插值重采样成等距细点，曲线天然圆顺，没有折角
  *   3. 每个点按法线向两侧各偏移「半宽」，得到左右两条边
- *   4. 左边界去 + 首尾圆弧 + 右边界回，合成一个闭合多边形，一次 fill()
- *   → 整笔只有一次 fill，边缘是连续矢量曲线，粗细变化自然过渡。
+ *   4. 左边界 + 首尾圆弧 + 右边界回，合成闭合多边形，整笔一次 fill()
  *
- * ── 笔锋怎么来的 ──
- *   起笔：前 7% 加粗 55%（顿笔入纸）
- *   行笔：宽度由运笔速度决定，慢则沉、快则轻（v 归一化后存盘，与画布尺寸无关）
- *   收笔：后 26% 收到 8%（出锋），所以尾巴是尖的
- *   墨感：宽度叠加两路低频正弦微扰，边缘不再像 CAD 图那样死直
- *   宽度随画布尺寸等比放大，横屏大写时比例一致
+ * ── 笔锋 ──
+ *   起笔：前 9% 加粗 45%（顿笔入纸）
+ *   行笔：宽度由运笔速度决定，慢则沉、快则轻
+ *   收笔：后 28% 收到 10%（出锋），尾巴是尖的
+ *   墨感：宽度叠加低频正弦微扰 + 左右边缘各自独立微扰 + 墨边三叠
  *
  * ── 数据结构 ──
  *   stroke = [{ x, y, v }]   v = 归一化运笔速度(0~1)，不存宽度
  *   → 切风格、换画布尺寸都能按当前参数重算，天然幂等
  */
 
-import { ref, onMounted, nextTick, getCurrentInstance } from 'vue';
+import { ref, onMounted, getCurrentInstance } from 'vue';
 
 const props = defineProps({
   height: { type: Number, default: 200 },
@@ -110,8 +76,6 @@ const emit = defineEmits(['change']);
 const hasInk = ref(false);
 const strokeCount = ref(0);
 const variant = ref(props.variant === 'pen' ? 'pen' : 'brush');
-const fs = ref(false);
-const fsCanvasH = ref(320);
 
 /** 两档笔刷参数（宽度单位为「200px 画布」基准，实际会按画布等比缩放） */
 const PRESETS = {
@@ -142,7 +106,8 @@ const JITTER = 0.075;    // 左右边缘各自的微扰幅度（像墨在纸上�
 const STEP = 2.2;        // 重采样间距(px)
 const MIN_SEG = 0.7;     // 小于此距离视为手指抖动
 const SMOOTH = 0.34;     // 速度指数平滑系数
-const FS_BAR = 44;       // 全屏模式底部工具条高度(px)
+const EXPORT_SCALE = 3;  // 导出倍率
+const EXPORT_MIN = 24;   // 导出裁剪的最小边长(px)
 
 let strokes = [];        // [[{x,y,v}]]
 let ctx = null;
@@ -152,7 +117,6 @@ let drawing = false;
 let lastSp = 0.35;
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
-function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 /** 画布尺度：以 200px 短边为基准，横屏大字时笔宽同步放大 */
 function sizeScale() {
@@ -183,7 +147,7 @@ function initCtx() {
   ctx = uni.createCanvasContext(props.canvasId, instance ? (instance.proxy || instance) : undefined);
 }
 
-/** 量当前画布尺寸（旋转后的全屏画布不能用 boundingClientRect，走系统尺寸算） */
+/** 量当前画布尺寸 */
 function measure(cb) {
   const q = uni.createSelectorQuery();
   if (instance && q.in) q.in(instance.proxy || instance);
@@ -193,56 +157,32 @@ function measure(cb) {
   }).exec();
 }
 
-function winSize() {
-  try {
-    const s = uni.getSystemInfoSync();
-    return { w: s.windowWidth || 375, h: s.windowHeight || 667 };
-  } catch (e) {
-    return { w: 375, h: 667 };
-  }
-}
-
 /* ───────────────── 取坐标 ───────────────── */
 
 function touchOf(e) {
   return (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || null;
 }
 
-/** 内联：小程序自带 x/y；H5 用 clientX 减 rect */
+/**
+ * 画布内坐标。小程序 canvas 的触摸点自带 x/y（相对画布），直接用；
+ * 拿不到时（H5）用 clientX/clientY 减画布 rect。
+ */
 function pointOf(e) {
   const t = touchOf(e);
   if (!t) return null;
   let x = t.x;
   let y = t.y;
-  // #ifdef H5
-  if (typeof x !== 'number' || isNaN(x)) {
-    const el = t.target || (e.currentTarget && e.currentTarget.$el) || null;
+  const bad = (n) => typeof n !== 'number' || isNaN(n);
+  if (bad(x) || bad(y)) {
+    const el = (e.currentTarget && e.currentTarget.$el) || t.target || null;
     if (el && el.getBoundingClientRect) {
       const r = el.getBoundingClientRect();
       x = t.clientX - r.left;
       y = t.clientY - r.top;
     }
   }
-  // #endif
-  if (typeof x !== 'number' || isNaN(x)) return null;
+  if (bad(x) || bad(y)) return null;
   return { x, y, t: Date.now() };
-}
-
-/**
- * 全屏横屏：整层被 rotate(90deg) + translateX(100vw) 旋转，
- * 所以屏幕坐标 → 画布坐标的逆变换是固定的：
- *   canvasX = clientY
- *   canvasY = windowWidth - clientX
- * （画布贴在全屏层的顶部，工具条在底部）
- */
-function fsPointOf(e) {
-  const t = touchOf(e);
-  if (!t) return null;
-  const sx = t.clientX;
-  const sy = t.clientY;
-  if (typeof sx !== 'number' || typeof sy !== 'number') return null;
-  const W = winSize().w;
-  return { x: sy, y: W - sx, t: Date.now() };
 }
 
 /* ───────────────── 笔迹几何 ───────────────── */
@@ -394,7 +334,7 @@ function buildStroke(raw) {
 
 /* ───────────────── 绘制 ───────────────── */
 
-function redrawAll(reserve) {
+function redrawAll() {
   if (!ctx) return;
   ctx.clearRect(0, 0, curSize.w || 9999, curSize.h || 9999);
   const P = preset();
@@ -411,7 +351,7 @@ function redrawAll(reserve) {
       fillRibbon(b.pts, b.ws, ly.k);
     });
   });
-  ctx.draw(!!reserve);
+  ctx.draw();
 }
 
 /** 落笔实时绘制：只补「新增这一段」，两端加圆头，和上一段自然衔接 */
@@ -480,12 +420,8 @@ function moveStroke(p) {
 function endStroke() {
   if (!drawing) return;
   drawing = false;
-  const cur = strokes[strokes.length - 1];
-  if (cur) {
-    // 抬手：整笔重算（起笔顿 + 收笔出锋），此时才看得出书法感
-    // 只有 1 个点的（轻点一下）由 redrawAll 里的 fillDot 画成墨点
-    redrawAll(false);
-  }
+  // 抬手：整笔重算（起笔顿 + 收笔出锋），此时才看得出书法感
+  if (strokes.length) redrawAll();
   if (!hasInk.value) {
     hasInk.value = true;
     emit('change', true);
@@ -502,57 +438,6 @@ function onMove(e) {
 }
 function onEnd() { endStroke(); }
 
-function onFsStart(e) {
-  const p = fsPointOf(e);
-  if (p) startStroke(p);
-}
-function onFsMove(e) {
-  const p = fsPointOf(e);
-  if (p) moveStroke(p);
-}
-function onFsEnd() { endStroke(); }
-
-/* ───────────────── 全屏横屏切换 ───────────────── */
-
-function remapStrokes(from, to) {
-  if (!from || !to || !from.w || !from.h || !to.w || !to.h) return;
-  if (from.w === to.w && from.h === to.h) return;
-  const s = Math.min(to.w / from.w, to.h / from.h);
-  const dx = (to.w - from.w * s) / 2;
-  const dy = (to.h - from.h * s) / 2;
-  strokes.forEach((st) => st.forEach((p) => {
-    p.x = p.x * s + dx;
-    p.y = p.y * s + dy;
-  }));
-}
-
-async function enterFs() {
-  const ws = winSize();
-  const prev = { ...curSize };
-  fsCanvasH.value = Math.max(160, ws.w - FS_BAR);
-  fs.value = true;
-  ctx = null;
-  await nextTick();
-  await wait(60);                       // 等新 canvas 真正挂上去
-  curSize = { w: ws.h, h: fsCanvasH.value };
-  initCtx();
-  remapStrokes(prev, curSize);
-  redrawAll(false);
-}
-
-async function exitFs() {
-  const prev = { ...curSize };
-  fs.value = false;
-  ctx = null;
-  await nextTick();
-  await wait(60);
-  initCtx();
-  measure(() => {
-    remapStrokes(prev, curSize);
-    redrawAll(false);
-  });
-}
-
 /* ───────────────── 对外操作 ───────────────── */
 
 /** 切换笔锋风格：已写的字整体重绘成新风格 */
@@ -560,7 +445,7 @@ function setVariant(v) {
   if (v !== 'brush' && v !== 'pen') return;
   if (variant.value === v) return;
   variant.value = v;
-  if (strokes.length) redrawAll(false);
+  if (strokes.length) redrawAll();
 }
 
 function undo() {
@@ -568,7 +453,7 @@ function undo() {
   strokes.pop();
   strokeCount.value = strokes.length;
   if (!strokes.length) { hasInk.value = false; emit('change', false); }
-  redrawAll(false);
+  redrawAll();
 }
 
 function clear() {
@@ -582,17 +467,57 @@ function clear() {
   emit('change', false);
 }
 
-/** 导出 PNG：返回 { tempFilePath, strokeCount }，无内容返回 null */
-function exportImage() {
+/** 画布尺寸变了（例如进横屏页、旋转设备）：重新量尺寸并重绘 */
+function resize() {
+  measure(() => {
+    if (strokes.length) redrawAll();
+  });
+}
+
+/** 墨迹外接框：导出时裁掉四周空白，签名图才紧凑（盖章时不会显得偏小） */
+function inkBBox() {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  strokes.forEach((st) => st.forEach((p) => {
+    if (p.x < x0) x0 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.x > x1) x1 = p.x;
+    if (p.y > y1) y1 = p.y;
+  }));
+  if (!isFinite(x0)) return null;
+  const m = preset().maxW * 0.8;   // 留一圈墨边，别贴死
+  return { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
+}
+
+function doExport() {
   return new Promise((resolve) => {
-    if (!strokes.length) { resolve(null); return; }
-    const w = curSize.w || 320;
-    const h = curSize.h || (fs.value ? fsCanvasH.value : props.height);
+    const cw = curSize.w || 320;
+    const ch = curSize.h || props.height || 200;
+    const bb = inkBBox();
+
+    let sx = 0;
+    let sy = 0;
+    let sw = cw;
+    let sh = ch;
+    if (bb) {
+      sx = clamp(bb.x0, 0, cw);
+      sy = clamp(bb.y0, 0, ch);
+      sw = clamp(bb.x1, 0, cw) - sx;
+      sh = clamp(bb.y1, 0, ch) - sy;
+      if (sw < EXPORT_MIN) { sx = clamp(sx - (EXPORT_MIN - sw) / 2, 0, cw); sw = Math.min(EXPORT_MIN, cw); }
+      if (sh < EXPORT_MIN) { sy = clamp(sy - (EXPORT_MIN - sh) / 2, 0, ch); sh = Math.min(EXPORT_MIN, ch); }
+    }
+
     const opts = {
       canvasId: props.canvasId,
-      x: 0, y: 0, width: w, height: h,
-      destWidth: Math.round(w * 3),
-      destHeight: Math.round(h * 3),
+      x: Math.round(sx),
+      y: Math.round(sy),
+      width: Math.round(sw),
+      height: Math.round(sh),
+      destWidth: Math.round(sw * EXPORT_SCALE),
+      destHeight: Math.round(sh * EXPORT_SCALE),
       fileType: 'png',
       quality: 1,
       success: (r) => resolve({ tempFilePath: r.tempFilePath, strokeCount: strokes.length }),
@@ -607,13 +532,22 @@ function exportImage() {
   });
 }
 
+/** 导出 PNG：返回 { tempFilePath, strokeCount }，无内容返回 null */
+function exportImage() {
+  return new Promise((resolve) => {
+    if (!strokes.length) { resolve(null); return; }
+    // 先量一次尺寸，避免画布刚挂上时 curSize 还是 0
+    measure(() => { doExport().then(resolve); });
+  });
+}
+
 onMounted(() => {
   instance = getCurrentInstance();
   initCtx();
   measure();
 });
 
-defineExpose({ clear, undo, exportImage, hasInk, strokeCount, setVariant, enterFs, exitFs });
+defineExpose({ clear, undo, exportImage, resize, hasInk, strokeCount, setVariant });
 </script>
 
 <style scoped>
@@ -623,14 +557,6 @@ defineExpose({ clear, undo, exportImage, hasInk, strokeCount, setVariant, enterF
   border: 1px dashed #CBD5E1;
   border-radius: 12px;
   overflow: hidden;
-}
-/* 全屏时父容器不能再当包含块，否则可能把 fixed 层裁掉 */
-.sig-wrap.is-fs {
-  position: static;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  overflow: visible;
 }
 
 .sig-canvas {
@@ -668,6 +594,7 @@ defineExpose({ clear, undo, exportImage, hasInk, strokeCount, setVariant, enterF
   padding: 6px 8px;
   background: #F8FAFC;
   border-top: 1px solid #EEF1F5;
+  flex-wrap: nowrap;
 }
 .style-switch {
   display: flex;
@@ -681,6 +608,7 @@ defineExpose({ clear, undo, exportImage, hasInk, strokeCount, setVariant, enterF
   color: #64748B;
   padding: 3px 8px;
   line-height: 18px;
+  white-space: nowrap;
 }
 .style-btn.on {
   background: #1E3A5F;
@@ -693,62 +621,7 @@ defineExpose({ clear, undo, exportImage, hasInk, strokeCount, setVariant, enterF
   border: 1px solid #E2E8F0;
   border-radius: 14px;
   padding: 3px 10px;
+  white-space: nowrap;
 }
 .tool-btn.off { color: #C7CDD6; }
-.tool-btn.fs-entry {
-  margin-left: auto;
-  color: #fff;
-  background: #1E3A5F;
-  border-color: #1E3A5F;
-}
-
-/* ───────── 全屏横屏层 ─────────
-   width/height 互换 + rotate(90deg)：整层转成横版铺满屏幕。
-   translateX(100vw) 把旋转后跑到屏幕左边的盒子拉回原位。 */
-.fs-layer {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 100vh;
-  height: 100vw;
-  transform-origin: 0 0;
-  transform: translateX(100vw) rotate(90deg);
-  background: #FFFFFF;
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-}
-.fs-canvas {
-  width: 100%;
-  display: block;
-  background: #fff;
-}
-.fs-bar {
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  background: #0F172A;
-  box-sizing: border-box;
-}
-.fs-hint {
-  flex: 1;
-  font-size: 11px;
-  color: #94A3B8;
-}
-.fs-act {
-  font-size: 13px;
-  color: #E2E8F0;
-  padding: 5px 14px;
-  border: 1px solid #334155;
-  border-radius: 15px;
-}
-.fs-act.off { color: #64748B; border-color: #1E293B; }
-.fs-act.primary {
-  color: #fff;
-  background: #2563EB;
-  border-color: #2563EB;
-  font-weight: 600;
-}
 </style>

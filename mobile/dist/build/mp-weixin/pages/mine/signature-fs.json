@@ -1,0 +1,10 @@
+{
+  "navigationBarTitleText": "横屏签名",
+  "navigationBarBackgroundColor": "#1E3A5F",
+  "navigationBarTextStyle": "white",
+  "pageOrientation": "landscape",
+  "disableScroll": true,
+  "usingComponents": {
+    "signature-pad": "../../components/signature-pad"
+  }
+}

@@ -27,6 +27,8 @@ export const MAIN_PAGES = [
   // 目录级映射，若签名页不在此列出，构建期会被误改写成 /pkg-misc/mine/signature，
   // 而 pages.json 实际注册在主包 /pages/mine/signature → 点击必报「页面打开失败」。
   '/pages/mine/signature',
+  // 横屏手写签名页：同样在 mine 目录下，同样必须豁免（否则被改写成 pkg-misc）
+  '/pages/mine/signature-fs',
   '/pages/projects/list',
   '/pages/inspection/list',
   '/pages/purchase/list',

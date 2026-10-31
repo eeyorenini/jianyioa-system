@@ -23,6 +23,7 @@
     "pages/purchase/list",
     "pages/mine/index",
     "pages/mine/signature",
+    "pages/mine/signature-fs",
     "pages/agreement/service",
     "pages/agreement/privacy"
   ],

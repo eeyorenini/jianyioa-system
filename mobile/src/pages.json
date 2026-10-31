@@ -176,6 +176,16 @@
       }
     },
     {
+      "path": "pages/mine/signature-fs",
+      "style": {
+        "navigationBarTitleText": "横屏签名",
+        "navigationBarBackgroundColor": "#1E3A5F",
+        "navigationBarTextStyle": "white",
+        "pageOrientation": "landscape",
+        "disableScroll": true
+      }
+    },
+    {
       "path": "pages/agreement/service",
       "style": {
         "navigationBarTitleText": "用户服务协议",

@@ -45,6 +45,12 @@
             <text class="sub">用手指在下方书写</text>
           </view>
           <SignaturePad ref="padRef" :height="200" canvas-id="sigPad" @change="onInkChange" />
+
+          <!-- 横屏全屏手写：跳到独立页面，由系统真正旋转屏幕（canvas 不做 CSS 变换） -->
+          <view class="fs-entry" @click="openFullscreen">
+            <text class="fs-entry-main">横屏全屏手写</text>
+            <text class="fs-entry-sub">把手机横过来写，字能写得更舒展 ›</text>
+          </view>
         </view>
 
         <view class="name-row">
@@ -68,7 +74,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { authHeader } from '@/utils/permission';
 import { absAsset, uploadImage } from '@/utils/api';
 import { useUserStore } from '@/stores/user';
@@ -147,15 +153,20 @@ async function save() {
   if (saving.value) return;
   if (!hasInk.value) { uni.showToast({ title: '请先手写签名', icon: 'none' }); return; }
   if (!padRef.value) return;
-  saving.value = true;
   uni.showLoading({ title: '保存中' });
+  const img = await padRef.value.exportImage();
+  await saveWithImg(img);
+  uni.hideLoading();
+}
+
+/** 上传 + 落库。横屏页签完也走这里，保存逻辑只有一份。 */
+async function saveWithImg(img) {
+  if (!img || !img.tempFilePath) {
+    uni.showToast({ title: '签名导出失败，请重新签写', icon: 'none' });
+    return;
+  }
+  saving.value = true;
   try {
-    const img = await padRef.value.exportImage();
-    if (!img || !img.tempFilePath) {
-      uni.hideLoading();
-      uni.showToast({ title: '签名导出失败，请重新签写', icon: 'none' });
-      return;
-    }
     const url = await uploadImage(img.tempFilePath);
     const res = await uni.request({
       url: '/api/signatures/me',
@@ -163,7 +174,6 @@ async function save() {
       header: { ...authHeader(), 'Content-Type': 'application/json' },
       data: { sign_url: url, stroke_count: img.strokeCount, sign_name: signName.value || userName.value },
     });
-    uni.hideLoading();
     const d = res.data || {};
     if (d.sign_url) {
       savedUrl.value = d.sign_url;
@@ -171,16 +181,27 @@ async function save() {
       savedName.value = signName.value || userName.value;
       savedAt.value = new Date().toISOString();
       editing.value = false;
+      hasInk.value = true;
       uni.showToast({ title: '签名已保存', icon: 'success' });
     } else {
       uni.showToast({ title: d.error || '保存失败', icon: 'none' });
     }
   } catch (e) {
-    uni.hideLoading();
     uni.showToast({ title: '保存失败，请重试', icon: 'none' });
   } finally {
     saving.value = false;
   }
+}
+
+/** 横屏页签完把图片回传过来（那边只负责写字和导出，不碰接口） */
+async function onCaptured(img) {
+  uni.showLoading({ title: '保存中' });
+  await saveWithImg(img);
+  uni.hideLoading();
+}
+
+function openFullscreen() {
+  uni.navigateTo({ url: '/pages/mine/signature-fs' });
 }
 
 function removeSaved() {
@@ -209,7 +230,14 @@ const goBack = () => {
   else uni.navigateBack();
 };
 
-onMounted(load);
+onMounted(() => {
+  load();
+  uni.$on('signature:captured', onCaptured);
+});
+
+onUnmounted(() => {
+  uni.$off('signature:captured', onCaptured);
+});
 </script>
 
 <style scoped>
@@ -243,7 +271,15 @@ onMounted(load);
 .meta-time { font-size: 11px; color: #9CA3AF; }
 
 .name-row { display: flex; align-items: center; background: #fff; border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
-.name-label { width: 64px; font-size: 14px; color: #6B7280; }
+
+/* 横屏全屏手写入口 */
+.fs-entry {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: #EFF6FF; border: 1px solid #DBEAFE;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.fs-entry-main { font-size: 13px; font-weight: 600; color: #1E3A5F; white-space: nowrap; }
+.fs-entry-sub { font-size: 11px; color: #60A5FA; }.name-label { width: 64px; font-size: 14px; color: #6B7280; }
 .name-input { flex: 1; font-size: 14px; color: #1A1F36; }
 
 .tip-box { background: #FFFBEB; border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
