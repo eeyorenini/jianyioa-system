@@ -17,18 +17,6 @@
       <view class="ph-line"></view>
     </view>
     <view class="sig-tools">
-      <view class="style-switch">
-        <view
-          class="style-btn"
-          :class="{ on: variant === 'brush' }"
-          @click="setVariant('brush')"
-        >书法</view>
-        <view
-          class="style-btn"
-          :class="{ on: variant === 'pen' }"
-          @click="setVariant('pen')"
-        >签字笔</view>
-      </view>
       <view class="tool-btn" :class="{ off: !hasInk }" @click="undo">撤销</view>
       <view class="tool-btn" :class="{ off: !hasInk }" @click="clear">清空</view>
     </view>
@@ -52,15 +40,15 @@
  *   3. 每个点按法线向两侧各偏移「半宽」，得到左右两条边
  *   4. 左边界 + 首尾圆弧 + 右边界回，合成闭合多边形，整笔一次 fill()
  *
- * ── 笔锋 ──
- *   起笔：前 9% 加粗 45%（顿笔入纸）
+ * ── 笔锋（签字笔档）──
+ *   起笔：前 3% 加粗 15%（轻微顿笔）
  *   行笔：宽度由运笔速度决定，慢则沉、快则轻
- *   收笔：后 28% 收到 10%（出锋），尾巴是尖的
+ *   收笔：后 9% 收到 50%，尾巴略收但不夸张
  *   墨感：宽度叠加低频正弦微扰 + 左右边缘各自独立微扰 + 墨边三叠
  *
  * ── 数据结构 ──
  *   stroke = [{ x, y, v }]   v = 归一化运笔速度(0~1)，不存宽度
- *   → 切风格、换画布尺寸都能按当前参数重算，天然幂等
+ *   → 换画布尺寸能按当前参数重算，天然幂等
  */
 
 import { ref, onMounted, getCurrentInstance } from 'vue';
@@ -68,31 +56,24 @@ import { ref, onMounted, getCurrentInstance } from 'vue';
 const props = defineProps({
   height: { type: Number, default: 200 },
   canvasId: { type: String, default: 'sigPad' },
-  // 默认风格：brush = 书法（笔锋明显），pen = 签字笔（均匀细线）
-  variant: { type: String, default: 'brush' },
 });
 const emit = defineEmits(['change']);
 
 const hasInk = ref(false);
 const strokeCount = ref(0);
-const variant = ref(props.variant === 'pen' ? 'pen' : 'brush');
 
-/** 两档笔刷参数（宽度单位为「200px 画布」基准，实际会按画布等比缩放） */
-const PRESETS = {
-  // 书法：粗、动态范围大、起收笔夸张、边缘有墨感
-  brush: {
-    maxW: 13, minW: 2.8, speedRef: 1.9, pow: 1.0,
-    inLen: 0.09, inBoost: 0.45,
-    outLen: 0.28, outMin: 0.10,
-    wobble: 0.035,
-  },
-  // 签字笔：细、变化收敛，接近真实中性笔
-  pen: {
-    maxW: 7.2, minW: 3.4, speedRef: 2.6, pow: 1.0,
-    inLen: 0.03, inBoost: 0.15,
-    outLen: 0.09, outMin: 0.5,
-    wobble: 0.02,
-  },
+/**
+ * 笔刷参数（宽度单位为「200px 画布」基准，实际会按画布等比缩放）。
+ *
+ * 只保留签字笔一档：细、变化收敛，接近真实中性笔。
+ * 书法档（maxW 13 / 出锋到 10%）已于 2026-10-31 移除 ——
+ * 实测签字笔效果够用，且少一组按钮工具条更清爽。
+ */
+const PEN = {
+  maxW: 7.2, minW: 3.4, speedRef: 2.6, pow: 1.0,
+  inLen: 0.03, inBoost: 0.15,
+  outLen: 0.09, outMin: 0.5,
+  wobble: 0.02,
 };
 
 const INK = '#111111';
@@ -125,7 +106,7 @@ function sizeScale() {
 }
 
 function preset() {
-  const P = PRESETS[variant.value] || PRESETS.brush;
+  const P = PEN;
   const k = sizeScale();
   return {
     ...P,
@@ -420,7 +401,7 @@ function moveStroke(p) {
 function endStroke() {
   if (!drawing) return;
   drawing = false;
-  // 抬手：整笔重算（起笔顿 + 收笔出锋），此时才看得出书法感
+  // 抬手：整笔重算（起笔顿 + 收笔略收），此时才看得出笔锋收放
   if (strokes.length) redrawAll();
   if (!hasInk.value) {
     hasInk.value = true;
@@ -439,14 +420,6 @@ function onMove(e) {
 function onEnd() { endStroke(); }
 
 /* ───────────────── 对外操作 ───────────────── */
-
-/** 切换笔锋风格：已写的字整体重绘成新风格 */
-function setVariant(v) {
-  if (v !== 'brush' && v !== 'pen') return;
-  if (variant.value === v) return;
-  variant.value = v;
-  if (strokes.length) redrawAll();
-}
 
 function undo() {
   if (!strokes.length) return;
@@ -547,7 +520,7 @@ onMounted(() => {
   measure();
 });
 
-defineExpose({ clear, undo, exportImage, resize, hasInk, strokeCount, setVariant });
+defineExpose({ clear, undo, exportImage, resize, hasInk, strokeCount });
 </script>
 
 <style scoped>
@@ -595,24 +568,6 @@ defineExpose({ clear, undo, exportImage, resize, hasInk, strokeCount, setVariant
   background: #F8FAFC;
   border-top: 1px solid #EEF1F5;
   flex-wrap: nowrap;
-}
-.style-switch {
-  display: flex;
-  border: 1px solid #E2E8F0;
-  background: #fff;
-  border-radius: 14px;
-  overflow: hidden;
-}
-.style-btn {
-  font-size: 12px;
-  color: #64748B;
-  padding: 3px 8px;
-  line-height: 18px;
-  white-space: nowrap;
-}
-.style-btn.on {
-  background: #1E3A5F;
-  color: #fff;
 }
 .tool-btn {
   font-size: 12px;
