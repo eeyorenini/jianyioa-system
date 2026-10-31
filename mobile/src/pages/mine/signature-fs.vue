@@ -45,12 +45,16 @@ const hasInk = ref(false);
 const CHROME = 92;
 
 function syncSize() {
-  let h = 390;
+  let short = 375;
   try {
     const s = uni.getSystemInfoSync();
-    h = s.windowHeight || 390;
+    // ⚠️ 取宽高较小值，不要用 windowHeight：
+    //    本页是 landscape，进页面瞬间 getSystemInfoSync 有可能还报竖屏值（800+），
+    //    那样画布会被算成 700px 高，超出可视区后又被挤压，布局会「跳」一下。
+    //    横屏下画布高度本来就该跟着短边走，取 min 恒等于正确值。
+    short = Math.min(s.windowWidth || 375, s.windowHeight || 375);
   } catch (e) { /* 忽略，用默认值 */ }
-  padH.value = Math.max(160, h - CHROME);
+  padH.value = Math.max(160, short - CHROME);
   nextTick(() => setTimeout(() => padRef.value && padRef.value.resize(), 60));
 }
 

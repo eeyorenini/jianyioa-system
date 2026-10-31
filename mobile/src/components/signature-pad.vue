@@ -63,7 +63,15 @@ const hasInk = ref(false);
 const strokeCount = ref(0);
 
 /**
- * 笔刷参数（宽度单位为「200px 画布」基准，实际会按画布等比缩放）。
+ * 笔刷参数（单位为 CSS px，绝对宽度，**不随画布尺寸缩放**）。
+ *
+ * ⚠️ 曾经这里按画布短边做过等比缩放（sizeScale），想让横屏大字用更粗的笔，
+ *   结果踩了两个坑：
+ *   1) 横屏画布短边 ≈ 283 > 竖屏 200，系数飙到 1.4+，同一个字写出来粗一圈；
+ *   2) 系数依赖「画布量到尺寸」的时机，量早量晚会得到不同宽度，
+ *      表现为同一块画布上一会儿粗一会儿细，极不稳定。
+ *   根子上是概念错了：笔宽是屏幕上的物理粗细，画布大不等于手指粗。
+ *   现在一律用固定 px —— 竖版/横版写出来手感与观感完全一致。
  *
  * 只保留签字笔一档：细、变化收敛，接近真实中性笔。
  * 书法档（maxW 13 / 出锋到 10%）已于 2026-10-31 移除 ——
@@ -99,27 +107,9 @@ let lastSp = 0.35;
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
-/** 画布尺度：以 200px 短边为基准，横屏大字时笔宽同步放大 */
-function sizeScale() {
-  const m = Math.min(curSize.w || 200, curSize.h || 200);
-  return clamp(m / 200, 0.85, 2.6);
-}
-
-function preset() {
-  const P = PEN;
-  const k = sizeScale();
-  return {
-    ...P,
-    maxW: P.maxW * k,
-    minW: P.minW * k,
-    speedRef: P.speedRef * k,
-  };
-}
-
-/** 原始速度(px/ms) → 归一化 0~1，跨画布尺寸可比 */
+/** 原始速度(px/ms) → 归一化 0~1（固定基准，与画布尺寸无关） */
 function normSpeed(sp) {
-  const P = preset();
-  return clamp(sp / P.speedRef, 0, 1);
+  return clamp(sp / PEN.speedRef, 0, 1);
 }
 
 function initCtx() {
@@ -222,7 +212,7 @@ function resample(pts) {
 
 /** 逐点宽度：速度 + 起笔顿 + 收笔锋 + 墨感微扰 */
 function widthsOf(pts) {
-  const P = preset();
+  const P = PEN;
   const n = pts.length;
   const seed = pts.length ? pts[0].x * 0.17 + pts[0].y * 0.11 : 0;
   const ws = new Array(n);
@@ -315,22 +305,27 @@ function buildStroke(raw) {
 
 /* ───────────────── 绘制 ───────────────── */
 
+/**
+ * 三叠墨边一次铺完。实时绘制和抬手重绘**必须共用这一份**，
+ * 否则落笔时两层、抬手后三层，笔画会在抬手那一刻突然变粗变黑（也属「不稳定」）。
+ */
+function paintLayers(pts, ws) {
+  LAYERS.forEach((ly) => {
+    ctx.setFillStyle(`rgba(17,17,17,${ly.a})`);
+    fillRibbon(pts, ws, ly.k);
+  });
+}
+
 function redrawAll() {
   if (!ctx) return;
   ctx.clearRect(0, 0, curSize.w || 9999, curSize.h || 9999);
-  const P = preset();
   strokes.forEach((raw) => {
     if (raw.length === 1) {
-      fillDot(raw[0], P.maxW);
+      fillDot(raw[0], PEN.maxW);
       return;
     }
     const b = buildStroke(raw);
-    if (!b) return;
-    // 由外到内三遍：淡墨边 → 半透过渡 → 实心笔画
-    LAYERS.forEach((ly) => {
-      ctx.setFillStyle(`rgba(17,17,17,${ly.a})`);
-      fillRibbon(b.pts, b.ws, ly.k);
-    });
+    if (b) paintLayers(b.pts, b.ws);
   });
   ctx.draw();
 }
@@ -338,7 +333,6 @@ function redrawAll() {
 /** 落笔实时绘制：只补「新增这一段」，两端加圆头，和上一段自然衔接 */
 function paintLive(a, b) {
   if (!ctx) return;
-  const P = preset();
   const d = Math.hypot(b.x - a.x, b.y - a.y);
   const segs = Math.max(1, Math.ceil(d / STEP));
   const pts = [];
@@ -354,14 +348,10 @@ function paintLive(a, b) {
 
   const ws = pts.map((p) => {
     const v = clamp(p.v, 0, 1);
-    return Math.max(0.7, P.maxW - (P.maxW - P.minW) * Math.pow(v, P.pow));
+    return Math.max(0.7, PEN.maxW - (PEN.maxW - PEN.minW) * Math.pow(v, PEN.pow));
   });
 
-  // 实时只铺两层（外圈 + 实心），少一次 fill 让手写更跟手
-  ctx.setFillStyle('rgba(17,17,17,0.22)');
-  fillRibbon(pts, ws, 1.26);
-  ctx.setFillStyle(INK);
-  fillRibbon(pts, ws, 1.0);
+  paintLayers(pts, ws);
   ctx.draw(true);
 }
 
@@ -460,7 +450,7 @@ function inkBBox() {
     if (p.y > y1) y1 = p.y;
   }));
   if (!isFinite(x0)) return null;
-  const m = preset().maxW * 0.8;   // 留一圈墨边，别贴死
+  const m = PEN.maxW * 0.8;   // 留一圈墨边，别贴死
   return { x0: x0 - m, y0: y0 - m, x1: x1 + m, y1: y1 + m };
 }
 
