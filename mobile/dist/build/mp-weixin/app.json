@@ -22,6 +22,7 @@
     "pages/inspection/list",
     "pages/purchase/list",
     "pages/mine/index",
+    "pages/mine/signature",
     "pages/agreement/service",
     "pages/agreement/privacy"
   ],
@@ -48,8 +49,9 @@
         "dispatch/add",
         "dispatch/detail",
         "acceptance/list",
-        "acceptance/add",
-        "acceptance/detail",
+        "acceptance/types",
+        "acceptance/fill",
+        "acceptance/report",
         "change/list",
         "change/add"
       ]
