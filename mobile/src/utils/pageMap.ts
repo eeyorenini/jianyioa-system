@@ -22,9 +22,18 @@ export const MAIN_PAGES = [
   '/pages/bind/scan',
   '/pages/home/index',
   '/pages/mine/index',
+  // ⚠️ 2026-10-31 修复：mine 目录横跨两包（index/signature 在主包，
+  // my-logs/my-inspections 在 pkg-misc）。本表下面有 `mine: 'pkg-misc'` 的
+  // 目录级映射，若签名页不在此列出，构建期会被误改写成 /pkg-misc/mine/signature，
+  // 而 pages.json 实际注册在主包 /pages/mine/signature → 点击必报「页面打开失败」。
+  '/pages/mine/signature',
   '/pages/projects/list',
   '/pages/inspection/list',
   '/pages/purchase/list',
+  // 以下 6 页同属主包，此前漏列。它们所在目录当前没有 PAGE_DIR_TO_PKG 映射，
+  // 所以暂时不会被改写；但一旦后续给 identity/customer/agreement 加了分包映射，
+  // 就会立刻踩同一个坑。按「主包页面必须全量列出」的语义补齐。
+  '/pages/identity/select',
   '/pages/customer/home',
   '/pages/customer/projects',
   '/pages/customer/messages',
@@ -32,6 +41,11 @@ export const MAIN_PAGES = [
   '/pages/customer/logs',
   '/pages/customer/project-detail',
   '/pages/customer/family',
+  '/pages/customer/mall',
+  '/pages/customer/mall-cart',
+  '/pages/customer/mall-orders',
+  '/pages/agreement/service',
+  '/pages/agreement/privacy',
 ]
 
 /** 首段目录 → 分包 root（须与 pages.json 的 subPackages.root 一致） */
