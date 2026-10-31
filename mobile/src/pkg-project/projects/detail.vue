@@ -852,7 +852,7 @@ import { absAsset } from "@/utils/api";
 import { authHeader } from "@/utils/permission";
 import { useUserStore } from "@/stores/user";
 import { toDate } from "@/utils/date";
-import StatusWheel from "@/components/status-wheel.vue";
+import StatusWheel from "@/pkg-project/components/status-wheel.vue";
 
 const projectId = ref(0);
 const project = ref({});

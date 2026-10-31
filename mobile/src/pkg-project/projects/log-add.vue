@@ -137,7 +137,7 @@ import { authHeader } from "@/utils/permission";
 import { ref, reactive, onMounted } from "vue";
 import { absAsset } from "@/utils/api";
 import { useUserStore } from "@/stores/user";
-import VoiceInput from "@/components/voice-input.vue";
+import VoiceInput from "@/pkg-project/components/voice-input.vue";
 
 const projectId = ref(0);
 const projectName = ref('');

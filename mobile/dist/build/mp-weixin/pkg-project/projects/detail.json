@@ -2,6 +2,6 @@
   "navigationBarTitleText": "项目详情",
   "navigationStyle": "custom",
   "usingComponents": {
-    "status-wheel": "../../components/status-wheel"
+    "status-wheel": "../components/status-wheel"
   }
 }
