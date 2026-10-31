@@ -228,7 +228,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { absAsset } from "@/utils/api";
 import { toDate } from "@/utils/date";
-import { normalizeRectifyStatus, rectifyStatusText, parseDelayLog } from "@/utils/rectify";
+import { normalizeRectifyStatus, rectifyStatusText, parseDelayLog } from "@/pkg-inspect/utils/rectify";
 
 const loading = ref(true)
 const detail = ref(null)
